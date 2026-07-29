@@ -128,6 +128,19 @@ EOSQL
 ok "agora_login и agora_share_login готовы"
 
 echo
+echo "── Аутентификация (задача #3) ───────────────────────────────────────"
+# 05_auth.sql идёт ПОСЛЕ создания ролей, а не в общем цикле миграций: он раздаёт
+# GRANT EXECUTE роли agora_app, а до предыдущего блока такой роли не существует.
+# Порядок здесь не косметика — GRANT несуществующей роли останавливает скрипт.
+if [ -f "$INIT/05_auth.sql" ]; then
+  echo "   применяю 05_auth.sql"
+  "${PSQL[@]}" -f "$INIT/05_auth.sql" >/dev/null
+  ok "05_auth.sql"
+else
+  warn "нет $INIT/05_auth.sql — вход по паролю работать не будет"
+fi
+
+echo
 echo "── Итог ─────────────────────────────────────────────────────────────"
 TABLES=$(q "SELECT count(*) FROM pg_tables WHERE schemaname = 'public'")
 RLS_ON=$(q "SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
@@ -140,5 +153,9 @@ if [ "$TABLES" != "$RLS_ON" ]; then
 fi
 
 echo
-echo "Дальше: подставьте AGORA_APP_PASSWORD в DATABASE_URL (percent-encoded)"
-echo "и запустите  python3 evals/check.py  — метрика rls_tenant должна стать pass."
+echo "Дальше:"
+echo "  1. python3 evals/check.py                     — метрика rls_tenant должна стать pass"
+echo "  2. заведите владельца команды (задача #3):"
+echo "     node apps/web/scripts/seed-auth.mjs --team 'Моя команда' \\"
+echo "          --email you@example.com --password '…'"
+echo "     без него войти некем: самостоятельной регистрации в продукте нет."

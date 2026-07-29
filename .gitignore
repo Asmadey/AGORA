@@ -27,3 +27,6 @@ agora-unified/evals/last_report.json
 # Системное
 .DS_Store
 *.log
+
+# Инкрементальный кеш TypeScript — машинный артефакт, в репозитории не нужен
+*.tsbuildinfo
