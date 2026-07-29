@@ -1,0 +1,74 @@
+{
+  "goal": "AGORA под ключ (см. docs/AGORA_loop_goal.md)",
+  "revision": "2026-07-27",
+  "mode": "DRY_RUN",
+  "passes": [
+    {
+      "pass": 0,
+      "task_id": "bootstrap/docs",
+      "did": "Сверка документации с репозиторием. Восстановлен граф задач (31 задача: пропавшие «Настройки» #27 + 4 новые фичи #28–#31) с blockedBy/phase/verifies/cdd/acceptance; проверен на ацикличность (18 уровней). Синхронизированы HANDOFF, PRD_FINAL, loop_goal, START_HERE, evals/README, .env.example (Gemini → Qwen/timeweb), check.py (TOTAL_TASKS=31). Добавлены 2 seed-промпта (chat.analyst, chat.persona_followup) → 13.",
+      "verdict": "check.py: pass=1 fail=1 skip=13, green=False. Работает secret_scan; tasks_done 0/31.",
+      "failed_hypotheses": [],
+      "next": "Pass 1: задача #1 — монорепо + docker-compose"
+    },
+    {
+      "pass": 1,
+      "task_id": "1",
+      "did": "CDD red→green по задаче #1. Написан evals/tests/test_task01_monorepo.py (red: 19 невыполненных условий). Реструктуризация: agora-unified → apps/web; evals/, data/, prompts/ подняты в корень; созданы services/agent-core (pyproject, agent_core.config, celery_app, 7 тестов), packages/shared/schemas, infra/ (docker-compose с Postgres 18 / Mongo 8.0 / Valkey 9.1 / web / worker + healthchecks, web.Dockerfile, worker.Dockerfile с ffmpeg, postgres/init). Корневой package.json с npm workspaces. next.config: outputFileTracingRoot на корень. apps/web/app/api/health для healthcheck. check.py: REPO = корень монорепо, build_frontend → workspace, build_worker = pytest + ruff, реализован compose_health вместо заглушки. Пути agora-unified/* вычищены из всей документации.",
+      "verdict": "test_task01_monorepo.py GREEN (docker compose config — skip, нет docker CLI в среде помощника). check.py: pass=2 fail=1 skip=12. build_worker OK (7 тестов + ruff clean), secret_scan OK. tasks_done 0/31 — задача #1 НЕ помечена done: compose_health и build_frontend ещё skip, вердикт выносит верификатор в среде пользователя, а не исполнитель.",
+      "findings": [
+        "secret_scan, расширившись на весь репозиторий, нашёл 6 захардкоженных ключей в backup/ — два реальных (AIza… и sk-…) в трёх копиях старых репозиториев, у одной с .git-историей. Каталог удалён (сохранён в архиве AGORA-pre-monorepo-*.tar.gz). Ключи требуют ПЕРЕВЫПУСКА — это действие пользователя.",
+        "Рабочий ключ провайдера переехал env.env → .env.local (закрыт .gitignore, не сканируется secret_scan)."
+      ],
+      "failed_hypotheses": [],
+      "next": "Подтвердить задачу #1 в среде пользователя (npm ci + npm run build + docker compose up -d + python evals/check.py). После pass по build_frontend и compose_health — пометить #1 как done и брать задачу #2 (Схемы БД + RLS), она единственная разблокируется."
+    },
+    {
+      "pass": 2,
+      "task_id": "2",
+      "did": "CDD red→green по задаче #2. Тест evals/tests/test_task02_db_rls.py — двухуровневый: статический (разбор SQL настоящим парсером PostgreSQL через pglast + структурный контракт) и поведенческий (живой Postgres). Миграции: 01_extensions (pgcrypto, citext, роли agora_app/agora_share, схема app с current_tenant() и current_share_token_hash()), 02_schema (16 таблиц PRD §10 + report_shares/report_share_views/chat_threads/chat_messages/audience_context_files, индексы с tenant_id первым полем, GIN по dna), 03_rls (ENABLE + FORCE на всех, политики, раздельные read/write для промптов, политика доступа по токену шеринга), 04_login_role.sh (agora_login NOINHERIT с членством в рабочих ролях, пароли из env). MongoDB: 5 коллекций с обязательным tenant_id, индексами и TTL на черновики. Слой доступа agent_core/db.py: tenant_scope/share_scope на SET LOCAL, assert_tenant_filter для Mongo, 19 новых тестов. В check.py реализована метрика rls_tenant вместо заглушки.",
+      "verdict": "test_task02_db_rls.py GREEN статически (поведенческий уровень — SKIP, нет живого Postgres в среде исполнителя). check.py: pass=2 fail=1 skip=12, build_worker OK (26 тестов + ruff clean). rls_tenant = skip. Задача #2 НЕ помечена done: изоляция не подтверждена поведенчески.",
+      "findings": [
+        "Обнаружено при реализации: рабочие роли созданы NOLOGIN, поэтому SET LOCAL ROLE требует отдельной логин-роли с членством. Добавлен 04_login_role.sh: agora_login NOINHERIT — без явного SET LOCAL ROLE соединение не имеет прав вовсе, забытый вызов даёт отказ, а не тихую выдачу чужих данных.",
+        "DATABASE_URL в compose переведён с суперпользователя на agora_login: под postgres RLS не работает в принципе.",
+        "Первый прогон теста дал два ложных срабатывания — регулярки считали вхождения в комментариях SQL и не терпели двойной пробел. Тест починен так, чтобы мерить свойство, а не форматирование."
+      ],
+      "failed_hypotheses": [],
+      "next": "Подтвердить #2 в среде пользователя: down -v (init-скрипты идут только на пустом томе) → up -d → DATABASE_URL=... python3 evals/check.py. При rls_tenant=pass пометить #2 done — разблокируются #3 (Auth), #4 (Persona DNA), #23 (датасет)."
+    },
+    {
+      "pass": 3,
+      "task_id": "UI (вне графа, параллельно с проверкой #2)",
+      "did": "Интерфейс на мок-данных: каркас с левым меню и тёмной темой, раздел «Персоны» + полная карточка со всеми 8 категориями DNA, экран отчёта (агрегат, сегменты, групповой синтез, аккордеон по персонам с таймкодами), диалог шеринга с TTL и предупреждением об обходе RLS, чат в двух режимах (аналитик / допрос персоны), визард запуска с «Перекрытием» и предупреждением по гео «иные НП», экран прогресса по узлам пайплайна, Промпт-студия, портреты, Настройки. Типы предметной области в lib/agora-types.ts, моки откалиброваны по реальному корпусу.",
+      "verdict": "Типизация: 0 ошибок (tsc strict, с полными типами React/Next). Синтаксис чист. Полная сборка next build НЕ выполнена — npm install в песочнице не завершился (firebase-tools тянет 1000+ пакетов на медленной смонтированной ФС). check.py без регрессий: pass=2 fail=1 skip=12.",
+      "findings": [
+        "npm install в песочнице упирается в смонтированную ФС: те же пакеты в /tmp ставятся за секунды. Для проверки типов использован симлинк на быстрый node_modules, после проверки удалён.",
+        "Найден и исправлен реальный риск: страницы полагались на never-возврат notFound() для сужения типа. Заменено на явный return — корректность кода больше не зависит от сигнатуры чужой библиотеки.",
+        "firebase-tools в devDependencies apps/web не используется проектом и является главной причиной долгого install. Кандидат на удаление."
+      ],
+      "failed_hypotheses": [],
+      "next": "Интерфейс формально не закрывает задачи #6–#12/#21 — они остаются pending до подключения бэкенда. Приоритет прежний: подтвердить #2 (rls_tenant), затем #3 Auth или #4 Persona DNA."
+    }
+  ],
+  "failed_hypotheses": [],
+  "next": "Pass 3: после подтверждения #2 — задача #3 (Auth и мультиарендность) либо #4 (Persona DNA); обе разблокируются одновременно",
+  "decisions_applied": {
+    "execution": "Вариант B — петля в среде пользователя. Sandbox помощника не подходит: нет docker, node 22 вместо 24, python 3.10 вместо 3.14, api.timeweb.cloud недоступен.",
+    "repo": "Корень монорепо = папка AGORA. Реструктуризация выполнена в Pass 1.",
+    "provider": "Qwen 3.6 через OpenAI-совм. timeweb, ключ подтверждён рабочим.",
+    "persona_grounding": "Распределения проверяются на эталонном (reference) конфиге генерации; калибровка баллов (≤1.0) — всегда.",
+    "new_features": "Задачи #28–#31 блокированы задачей #22 — после первого green-гейта e2e_short, до MVP.",
+    "atlas": "Движок Atlas (plugin:prd:go) не поднялся, MCP-инструменты недоступны. Решено остаться на /goal-петле: PRD и граф задач уже есть, Atlas их бы пересобирал."
+  },
+  "blockers_for_user": [
+    "ПЕРЕВЫПУСТИТЬ два утёкших ключа (AIza… и sk-…) из удалённого backup/ — удаление файлов не отменяет утечку",
+    "Managed БД (Postgres 18 / Mongo 8.0 / Valkey 9.1) + S3-бакет на TimeWeb не развёрнуты",
+    "Новый GitHub-репозиторий (чистая история) не создан",
+    "Фикстура evals/fixtures/long_12min.mp4 отсутствует (нужна для e2e_long, задача #22)",
+    "short_60s.mp4 синтетический (testsrc) — для субъективных оценок нужен реальный контент"
+  ],
+  "budget": {
+    "max_passes": 40,
+    "used_passes": 3
+  }
+}

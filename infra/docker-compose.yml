@@ -1,0 +1,147 @@
+# AGORA — оркестрация локальной/VPS среды (PRD §15, Decision Log #3).
+#
+# Запуск из корня монорепо:
+#   docker compose -f infra/docker-compose.yml --env-file .env.local up -d
+#
+# Managed-БД на TimeWeb в проде заменяют сервисы postgres/mongo/valkey: тогда
+# поднимаются только web и worker, а *_URL в env указывают на managed-хосты.
+#
+# Секреты берутся только из env-файла. Значения по умолчанию через :- заданы
+# ТОЛЬКО для локальной разработки и не содержат ничего чувствительного.
+
+name: agora
+
+services:
+  postgres:
+    image: postgres:18-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-agora}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD обязателен}
+      POSTGRES_DB: ${POSTGRES_DB:-agora}
+      # Пароль ограниченной роли приложения. Под ней ходят web и worker —
+      # НЕ под POSTGRES_USER, иначе RLS обходится владельцем таблиц.
+      AGORA_APP_PASSWORD: ${AGORA_APP_PASSWORD:?AGORA_APP_PASSWORD обязателен}
+      AGORA_SHARE_PASSWORD: ${AGORA_SHARE_PASSWORD:?AGORA_SHARE_PASSWORD обязателен}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./postgres/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-agora} -d ${POSTGRES_DB:-agora}"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 15s
+
+  mongo:
+    image: mongo:8.0
+    restart: unless-stopped
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_USER:-agora}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_PASSWORD:?MONGO_PASSWORD обязателен}
+      MONGO_INITDB_DATABASE: ${MONGO_DB:-agora}
+    ports:
+      - "${MONGO_PORT:-27017}:27017"
+    volumes:
+      - mongo_data:/data/db
+      - ./mongo/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+
+  valkey:
+    image: valkey/valkey:9.1-alpine
+    restart: unless-stopped
+    command: ["valkey-server", "--appendonly", "yes"]
+    ports:
+      - "${VALKEY_PORT:-6379}:6379"
+    volumes:
+      - valkey_data:/data
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 5s
+
+  web:
+    build:
+      context: ..
+      dockerfile: infra/web.Dockerfile
+    restart: unless-stopped
+    ports:
+      - "${WEB_PORT:-3000}:3000"
+    environment:
+      NODE_ENV: production
+      APP_URL: ${APP_URL:-http://localhost:3000}
+      AUTH_URL: ${AUTH_URL:-http://localhost:3000}
+      AUTH_SECRET: ${AUTH_SECRET:?AUTH_SECRET обязателен}
+      DATABASE_URL: ${DATABASE_URL:-postgresql://agora_login:${AGORA_APP_PASSWORD}@postgres:5432/${POSTGRES_DB:-agora}}
+      MONGODB_URL: ${MONGODB_URL:-mongodb://agora:${MONGO_PASSWORD}@mongo:27017/agora?authSource=admin}
+      VALKEY_URL: ${VALKEY_URL:-redis://valkey:6379/0}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:?OPENAI_API_KEY обязателен}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.timeweb.cloud/v1}
+      AI_MODEL: ${AI_MODEL:-qwen3.6}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mongo:
+        condition: service_healthy
+      valkey:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3000/api/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+
+  worker:
+    build:
+      context: ..
+      dockerfile: infra/worker.Dockerfile
+    restart: unless-stopped
+    command: ["celery", "-A", "agent_core.celery_app", "worker", "--loglevel=info", "--concurrency=${WORKER_CONCURRENCY:-4}"]
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-postgresql://agora_login:${AGORA_APP_PASSWORD}@postgres:5432/${POSTGRES_DB:-agora}}
+      MONGODB_URL: ${MONGODB_URL:-mongodb://agora:${MONGO_PASSWORD}@mongo:27017/agora?authSource=admin}
+      VALKEY_URL: ${VALKEY_URL:-redis://valkey:6379/0}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:?OPENAI_API_KEY обязателен}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.timeweb.cloud/v1}
+      AI_MODEL: ${AI_MODEL:-qwen3.6}
+      VLM_MODEL: ${VLM_MODEL:-qwen3.6}
+      WHISPER_MODEL: ${WHISPER_MODEL:-large-v3}
+      WHISPER_COMPUTE_TYPE: ${WHISPER_COMPUTE_TYPE:-int8}
+      PYANNOTE_TOKEN: ${PYANNOTE_TOKEN:-}
+      S3_ENDPOINT: ${S3_ENDPOINT:-}
+      S3_BUCKET: ${S3_BUCKET:-}
+      S3_ACCESS_KEY: ${S3_ACCESS_KEY:-}
+      S3_SECRET_KEY: ${S3_SECRET_KEY:-}
+    volumes:
+      # Кэш весов Whisper/pyannote между перезапусками — модели тяжёлые,
+      # качать их заново на каждый up слишком дорого.
+      - model_cache:/root/.cache
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mongo:
+        condition: service_healthy
+      valkey:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "celery -A agent_core.celery_app inspect ping -d celery@$$HOSTNAME || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+volumes:
+  postgres_data:
+  mongo_data:
+  valkey_data:
+  model_cache:

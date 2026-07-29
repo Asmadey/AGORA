@@ -1,0 +1,43 @@
+[project]
+name = "agora-agent-core"
+version = "0.1.0"
+description = "AGORA backend: FastAPI + Celery + LangGraph pipeline for synthetic focus groups"
+requires-python = ">=3.12"
+
+# Зависимости заводятся по мере реализации задач графа — на #1 нужен только
+# работающий контракт сборки (pytest + ruff проходят). Расширяется на #13 (LangGraph),
+# #14 (ffmpeg), #15 (faster-whisper + pyannote), #16 (PySceneDetect).
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "celery>=5.4",
+    "redis>=5.2",
+    "pydantic>=2.9",
+    "python-dotenv>=1.0",
+    "psycopg[binary,pool]>=3.2",
+    "pymongo>=4.10",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3",
+    "ruff>=0.8",
+]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["agent_core*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]

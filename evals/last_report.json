@@ -1,0 +1,132 @@
+{
+  "mode": "DRY_RUN",
+  "green": false,
+  "summary": {
+    "pass": 2,
+    "fail": 1,
+    "skip": 12,
+    "total": 15
+  },
+  "results": [
+    {
+      "name": "tasks_done",
+      "status": "fail",
+      "required": true,
+      "threshold": "31/31",
+      "actual": "1/31",
+      "detail": ""
+    },
+    {
+      "name": "build_frontend",
+      "status": "skip",
+      "required": true,
+      "threshold": null,
+      "actual": null,
+      "detail": "node_modules not installed (npm ci)"
+    },
+    {
+      "name": "build_worker",
+      "status": "pass",
+      "required": true,
+      "threshold": "pytest+ruff exit 0",
+      "actual": "ok",
+      "detail": ""
+    },
+    {
+      "name": "compose_health",
+      "status": "skip",
+      "required": true,
+      "threshold": null,
+      "actual": null,
+      "detail": "docker CLI unavailable in this env"
+    },
+    {
+      "name": "e2e_short",
+      "status": "skip",
+      "required": true,
+      "threshold": null,
+      "actual": null,
+      "detail": "e2e_short_report.json not produced yet"
+    },
+    {
+      "name": "e2e_long",
+      "status": "skip",
+      "required": true,
+      "threshold": null,
+      "actual": null,
+      "detail": "e2e_long_report.json not produced yet"
+    },
+    {
+      "name": "isolation_persona",
+      "status": "skip",
+      "required": true,
+      "threshold": null,
+      "actual": null,
+      "detail": "subsystem not implemented yet"
+    },
+    {
+      "name": "rls_tenant",
+      "status": "skip",
+      "required": true,
+      "threshold": "cross-tenant rows == 0",
+      "actual": null,
+      "detail": "DATABASE_URL не задан — поднимите compose"
+    },
+    {
+      "name": "persona_grounding",
+      "status": "skip",
+      "required": true,
+      "threshold": "|gen-real|≤0.1",
+      "actual": null,
+      "detail": "no generated personas at /sessions/sleepy-optimistic-dijkstra/mnt/AGORA/evals/artifacts/generated_personas.json (Persona Generator not run)"
+    },
+    {
+      "name": "response_diversity",
+      "status": "skip",
+      "required": true,
+      "threshold": null,
+      "actual": null,
+      "detail": "subsystem not implemented yet"
+    },
+    {
+      "name": "qa_catches_injected",
+      "status": "skip",
+      "required": true,
+      "threshold": null,
+      "actual": null,
+      "detail": "subsystem not implemented yet"
+    },
+    {
+      "name": "prompts_editable",
+      "status": "skip",
+      "required": true,
+      "threshold": null,
+      "actual": null,
+      "detail": "subsystem not implemented yet"
+    },
+    {
+      "name": "secret_scan",
+      "status": "pass",
+      "required": true,
+      "threshold": "0",
+      "actual": "0",
+      "detail": ""
+    },
+    {
+      "name": "subjective_persona_realism",
+      "status": "skip",
+      "required": true,
+      "threshold": null,
+      "actual": null,
+      "detail": "subsystem not implemented yet"
+    },
+    {
+      "name": "subjective_report_quality",
+      "status": "skip",
+      "required": true,
+      "threshold": null,
+      "actual": null,
+      "detail": "subsystem not implemented yet"
+    }
+  ]
+}

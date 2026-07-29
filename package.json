@@ -1,0 +1,26 @@
+{
+  "name": "agora",
+  "version": "0.1.0",
+  "private": true,
+  "description": "AGORA — self-host сервис синтетических фокус-групп для оценки видео",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "npm run build --workspace @agora/web",
+    "dev": "npm run dev --workspace @agora/web",
+    "start": "npm run start --workspace @agora/web",
+    "lint": "npm run lint --workspace @agora/web",
+    "verify": "python3 evals/check.py",
+    "test:task01": "python3 evals/tests/test_task01_monorepo.py",
+    "worker:test": "cd services/agent-core && python3 -m pytest -q",
+    "worker:lint": "cd services/agent-core && ruff check .",
+    "up": "docker compose -f infra/docker-compose.yml --env-file .env.local up -d",
+    "down": "docker compose -f infra/docker-compose.yml down",
+    "logs": "docker compose -f infra/docker-compose.yml logs -f"
+  },
+  "engines": {
+    "node": ">=24"
+  }
+}
