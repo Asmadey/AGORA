@@ -1,0 +1,29 @@
+# ⚠️ СЕКРЕТЫ — не коммитить. env.env содержит живой ключ провайдера.
+# Паттерн `.env*` в agora-unified/.gitignore файл `env.env` НЕ ловит (нет ведущей точки),
+# поэтому он перечислен здесь явно. Лучше вообще вынести его за пределы репозитория.
+env.env
+*.env
+.env
+.env.*
+!.env.example
+!*.env.example
+
+# Артефакты сборки и рантайма
+node_modules/
+.next/
+coverage/
+dist/
+build/
+__pycache__/
+*.pyc
+
+# Локальные артефакты верификатора (генерируются прогоном, не версионируются)
+agora-unified/evals/artifacts/
+agora-unified/evals/last_report.json
+
+# Медиа-фикстуры крупнее пары мегабайт держать в S3/LFS, не в git
+# agora-unified/evals/fixtures/*.mp4
+
+# Системное
+.DS_Store
+*.log
