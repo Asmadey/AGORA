@@ -113,19 +113,32 @@ services:
       VALKEY_URL: ${VALKEY_URL:-redis://valkey:6379/0}
       OPENAI_API_KEY: ${OPENAI_API_KEY:?OPENAI_API_KEY обязателен}
       OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.timeweb.cloud/v1}
+      # Обязательный заголовок агента TimeWeb: помечен required в OpenAPI,
+      # но OpenAI SDK его не шлёт — без него запрос отклоняется до модели.
+      MODEL_PROXY_SOURCE: ${MODEL_PROXY_SOURCE:-agora}
+      # Поле model в запросе агент игнорирует — модель задана в его настройках.
+      # Значения ниже нужны как подпись в отчёте и снимке задачи.
       AI_MODEL: ${AI_MODEL:-qwen3.6}
       VLM_MODEL: ${VLM_MODEL:-qwen3.6}
+      # Второй агент под кадры. Пусто — общий агент, то есть одна модель на всё.
+      VLM_BASE_URL: ${VLM_BASE_URL:-}
       WHISPER_MODEL: ${WHISPER_MODEL:-large-v3}
       WHISPER_COMPUTE_TYPE: ${WHISPER_COMPUTE_TYPE:-int8}
+      # Диаризация локальная. Токен HF нужен и для self-host: веса закрыты
+      # принятием условий, без токена загрузка вернёт 401.
+      DIARIZATION_PIPELINE: ${DIARIZATION_PIPELINE:-pyannote/speaker-diarization-community-1}
       PYANNOTE_TOKEN: ${PYANNOTE_TOKEN:-}
+      PYANNOTE_METRICS_ENABLED: ${PYANNOTE_METRICS_ENABLED:-0}
       S3_ENDPOINT: ${S3_ENDPOINT:-}
       S3_BUCKET: ${S3_BUCKET:-}
       S3_ACCESS_KEY: ${S3_ACCESS_KEY:-}
       S3_SECRET_KEY: ${S3_SECRET_KEY:-}
     volumes:
       # Кэш весов Whisper/pyannote между перезапусками — модели тяжёлые,
-      # качать их заново на каждый up слишком дорого.
-      - model_cache:/root/.cache
+      # качать их заново на каждый up слишком дорого. Путь в домашнем каталоге
+      # celeryuser, а не в /root: контейнер работает под uid 1001 и в /root
+      # (режим 700) писать не может — отказ вылез бы на первой транскрипции.
+      - model_cache:/home/celeryuser/.cache
     depends_on:
       postgres:
         condition: service_healthy

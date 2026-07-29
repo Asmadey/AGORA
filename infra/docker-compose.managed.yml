@@ -1,0 +1,64 @@
+# AGORA — оверрайд для managed-инфраструктуры TimeWeb.
+#
+# Запуск из корня монорепо:
+#   docker compose -f infra/docker-compose.yml -f infra/docker-compose.managed.yml \
+#     --env-file .env.local up -d web worker
+#
+# ─── Что делает этот файл ────────────────────────────────────────────────
+# Базовый compose поднимает postgres/mongo/valkey контейнерами. С managed-БД они
+# не нужны и вредны: контейнерный Postgres молча перехватил бы имя хоста
+# `postgres` и приложение работало бы с пустой локальной базой, считая, что
+# подключилось к managed. Поэтому оверрайд обнуляет `depends_on` у web и worker и
+# заставляет явно перечислять сервисы в команде — `up -d` без имён поднял бы всё.
+#
+# Сервисы БД здесь не переопределяются: их нельзя «удалить» оверрайдом, но и
+# стартовать они не будут, пока не названы явно.
+#
+# ТРЕБОВАНИЕ: Docker Compose ≥ 2.24.4 — тег !reset появился там. На более старой
+# версии compose не поймёт тег и упадёт с ошибкой парсинга; проверить: docker compose version.
+# Списки при слиянии оверрайдов дописываются, а не заменяются, поэтому обнулить
+# depends_on через `depends_on: []` невозможно — только !reset.
+#
+# ─── Про TLS ─────────────────────────────────────────────────────────────
+# TimeWeb требует sslmode=verify-full, а для проверки цепочки нужен их корневой
+# сертификат ВНУТРИ контейнера. Хостовый ~/.cloud-certs контейнеру недоступен,
+# поэтому он монтируется. Понижать до sslmode=require не следует: require
+# шифрует канал, но не проверяет, с тем ли сервером вы говорите, — а строка
+# подключения содержит пароль.
+
+services:
+  web:
+    depends_on: !reset []
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL обязателен для managed}
+      MONGODB_URL: ${MONGODB_URL:?MONGODB_URL обязателен для managed}
+      VALKEY_URL: ${VALKEY_URL:?VALKEY_URL обязателен для managed}
+      PGSSLROOTCERT: /certs/root.crt
+      S3_ENDPOINT: ${S3_ENDPOINT:?}
+      S3_REGION: ${S3_REGION:-ru-1}
+      S3_BUCKET: ${S3_BUCKET:?}
+      S3_ACCESS_KEY: ${S3_ACCESS_KEY:?}
+      S3_SECRET_KEY: ${S3_SECRET_KEY:?}
+      BASIC_AUTH_USER: ${BASIC_AUTH_USER:-}
+      BASIC_AUTH_PASSWORD: ${BASIC_AUTH_PASSWORD:-}
+    volumes:
+      - ${PGSSLROOTCERT_HOST:-$HOME/.cloud-certs}:/certs:ro
+
+  worker:
+    depends_on: !reset []
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL обязателен для managed}
+      MONGODB_URL: ${MONGODB_URL:?MONGODB_URL обязателен для managed}
+      VALKEY_URL: ${VALKEY_URL:?VALKEY_URL обязателен для managed}
+      PGSSLROOTCERT: /certs/root.crt
+      S3_ENDPOINT: ${S3_ENDPOINT:?}
+      S3_REGION: ${S3_REGION:-ru-1}
+      S3_BUCKET: ${S3_BUCKET:?}
+      S3_ACCESS_KEY: ${S3_ACCESS_KEY:?}
+      S3_SECRET_KEY: ${S3_SECRET_KEY:?}
+    volumes:
+      - model_cache:/home/celeryuser/.cache
+      - ${PGSSLROOTCERT_HOST:-$HOME/.cloud-certs}:/certs:ro
+
+volumes:
+  model_cache:

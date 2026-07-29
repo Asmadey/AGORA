@@ -1,0 +1,2896 @@
+{
+  "openapi": "3.0.0",
+  "paths": {
+    "/api/v1/cloud-ai/agents/{agent_access_id}/call": {
+      "post": {
+        "operationId": "CloudAiAgentsClientController_callAgent",
+        "parameters": [
+          {
+            "name": "agent_access_id",
+            "required": true,
+            "in": "path",
+            "description": "Agent access ID",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Authorization",
+            "required": true,
+            "in": "header",
+            "description": "Bearer token",
+            "schema": {
+              "type": "string",
+              "example": "Bearer <token>"
+            }
+          },
+          {
+            "name": "x-proxy-source",
+            "required": true,
+            "in": "header",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AgentCallDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Agent response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentCallResponseDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "404": {
+            "description": "Agent not found"
+          }
+        },
+        "summary": "Call AI agent",
+        "tags": [
+          "ai-agents-client"
+        ]
+      }
+    },
+    "/api/v1/cloud-ai/agents/{agent_access_id}/v1/chat/completions": {
+      "post": {
+        "description": "\nThis endpoint supports both simple text messages and multimodal content:\n\n**Simple text message:**\n```json\n{\n  \"model\": \"gpt-4\",\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": \"Hello, how are you?\"\n    }\n  ]\n}\n```\n\n**Multimodal message with text and image:**\n```json\n{\n  \"model\": \"gpt-4\",\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": [\n        { \"type\": \"text\", \"text\": \"What is in this image?\" },\n        { \"type\": \"image_url\", \"image_url\": { \"url\": \"https://example.com/image.jpg\" } }\n      ]\n    }\n  ]\n}\n```\n\n**Message with audio input:**\n```json\n{\n  \"model\": \"gpt-4\",\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": [\n        { \"type\": \"text\", \"text\": \"Please transcribe this audio:\" },\n        { \"type\": \"input_audio\", \"input_audio\": { \"data\": \"base64_encoded_audio_data\", \"format\": \"wav\" } }\n      ]\n    }\n  ]\n}\n```\n    ",
+        "operationId": "CloudAiAgentsClientController_chatCompletions",
+        "parameters": [
+          {
+            "name": "agent_access_id",
+            "required": true,
+            "in": "path",
+            "description": "Agent access ID",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Authorization",
+            "required": true,
+            "in": "header",
+            "description": "Bearer token",
+            "schema": {
+              "type": "string",
+              "example": "Bearer <token>"
+            }
+          },
+          {
+            "name": "x-proxy-source",
+            "required": true,
+            "in": "header",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChatCompletionCreateParamsDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Chat completion response (non-streaming)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAiChatCompletionResponseDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "404": {
+            "description": "Agent not found"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "OpenAI-compatible chat completions endpoint for AI agent",
+        "tags": [
+          "ai-agents-client"
+        ]
+      }
+    },
+    "/api/v1/cloud-ai/agents/{agent_access_id}/v1/completions": {
+      "post": {
+        "deprecated": true,
+        "operationId": "CloudAiAgentsClientController_textCompletions",
+        "parameters": [
+          {
+            "name": "agent_access_id",
+            "required": true,
+            "in": "path",
+            "description": "Agent access ID",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Authorization",
+            "required": true,
+            "in": "header",
+            "description": "Bearer token",
+            "schema": {
+              "type": "string",
+              "example": "Bearer <token>"
+            }
+          },
+          {
+            "name": "x-proxy-source",
+            "required": true,
+            "in": "header",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OpenAiTextCompletionRequestDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Text completion response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAiTextCompletionResponseDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "404": {
+            "description": "Agent not found"
+          }
+        },
+        "summary": "OpenAI-compatible text completions endpoint for AI agent (legacy)",
+        "tags": [
+          "ai-agents-client"
+        ]
+      }
+    },
+    "/api/v1/cloud-ai/agents/{agent_access_id}/v1/models": {
+      "get": {
+        "operationId": "CloudAiAgentsClientController_getModels",
+        "parameters": [
+          {
+            "name": "agent_access_id",
+            "required": true,
+            "in": "path",
+            "description": "Agent access ID",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Authorization",
+            "required": true,
+            "in": "header",
+            "description": "Bearer token",
+            "schema": {
+              "type": "string",
+              "example": "Bearer <token>"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "List of available models",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAiModelsResponseDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "404": {
+            "description": "Agent not found"
+          }
+        },
+        "summary": "OpenAI-compatible models endpoint for AI agent",
+        "tags": [
+          "ai-agents-client"
+        ]
+      }
+    },
+    "/api/v1/cloud-ai/agents/{agent_access_id}/embed.js": {
+      "get": {
+        "operationId": "CloudAiAgentsClientController_getAgentEmbedCode",
+        "parameters": [
+          {
+            "name": "agent_access_id",
+            "required": true,
+            "in": "path",
+            "description": "Agent Access ID",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "collapsed",
+            "required": false,
+            "in": "query",
+            "description": "Start widget in collapsed mode (default: true)",
+            "schema": {
+              "default": true,
+              "type": "boolean"
+            }
+          },
+          {
+            "name": "referer",
+            "required": true,
+            "in": "header",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "origin",
+            "required": true,
+            "in": "header",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "JavaScript code for embedding the chat widget",
+            "content": {
+              "application/javascript": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Domain not whitelisted or agent suspended"
+          },
+          "404": {
+            "description": "Agent not found"
+          }
+        },
+        "summary": "Get widget embed JavaScript code",
+        "tags": [
+          "ai-agents-client"
+        ]
+      }
+    },
+    "/api/v1/cloud-ai/agents/{agent_access_id}/v1/responses": {
+      "post": {
+        "operationId": "CloudAiAgentsResponsesController_createResponse",
+        "parameters": [
+          {
+            "name": "agent_access_id",
+            "required": true,
+            "in": "path",
+            "description": "ID доступа агента",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "description": "Токен для приватных агентов",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateResponseDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Ответ создан успешно",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAiResponseDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "404": {
+            "description": "Agent not found"
+          }
+        },
+        "summary": "OpenAI-compatible create a response",
+        "tags": [
+          "ai-agents-responses"
+        ]
+      }
+    },
+    "/api/v1/cloud-ai/agents/{agent_access_id}/v1/responses/{response_id}": {
+      "get": {
+        "operationId": "CloudAiAgentsResponsesController_getResponse",
+        "parameters": [
+          {
+            "name": "agent_access_id",
+            "required": true,
+            "in": "path",
+            "description": "Agent Access ID",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "response_id",
+            "required": true,
+            "in": "path",
+            "description": "Response ID",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "include",
+            "required": false,
+            "in": "query",
+            "description": "Дополнительные поля для включения в ответ",
+            "schema": {
+              "example": [
+                "web_search_call.action.sources",
+                "code_interpreter_call.outputs"
+              ],
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "name": "include_obfuscation",
+            "required": false,
+            "in": "query",
+            "description": "Включить обфускацию потока для защиты от атак по побочным каналам",
+            "schema": {
+              "example": true,
+              "type": "boolean"
+            }
+          },
+          {
+            "name": "starting_after",
+            "required": false,
+            "in": "query",
+            "description": "Номер последовательности события, после которого начать потоковую передачу",
+            "schema": {
+              "minimum": 0,
+              "example": 0,
+              "type": "number"
+            }
+          },
+          {
+            "name": "stream",
+            "required": false,
+            "in": "query",
+            "description": "Потоковая передача данных ответа модели",
+            "schema": {
+              "example": false,
+              "type": "boolean"
+            }
+          },
+          {
+            "name": "authorization",
+            "required": true,
+            "in": "header",
+            "description": "Bearer token for private agents",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Response retrieved successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAiResponseDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Response not found"
+          }
+        },
+        "summary": "OpenAI-compatible get a response",
+        "tags": [
+          "ai-agents-responses"
+        ]
+      },
+      "delete": {
+        "operationId": "CloudAiAgentsResponsesController_deleteResponse",
+        "parameters": [
+          {
+            "name": "agent_access_id",
+            "required": true,
+            "in": "path",
+            "description": "Agent Access ID",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "response_id",
+            "required": true,
+            "in": "path",
+            "description": "Response ID",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "authorization",
+            "required": true,
+            "in": "header",
+            "description": "Bearer token for private agents",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Ответ удален успешно"
+          },
+          "404": {
+            "description": "Response not found"
+          }
+        },
+        "summary": "OpenAI-compatible delete a response",
+        "tags": [
+          "ai-agents-responses"
+        ]
+      }
+    },
+    "/api/v1/cloud-ai/agents/{agent_access_id}/v1/responses/{response_id}/cancel": {
+      "post": {
+        "operationId": "CloudAiAgentsResponsesController_cancelResponse",
+        "parameters": [
+          {
+            "name": "agent_access_id",
+            "required": true,
+            "in": "path",
+            "description": "Agent Access ID",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "response_id",
+            "required": true,
+            "in": "path",
+            "description": "Response ID",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "authorization",
+            "required": true,
+            "in": "header",
+            "description": "Bearer token for private agents",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Отмена ответа выполнена успешно",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAiResponseDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Response not found"
+          }
+        },
+        "summary": "OpenAI-compatible cancel a response",
+        "tags": [
+          "ai-agents-responses"
+        ]
+      }
+    },
+    "/api/v1/cloud-ai/agents/{agent_access_id}/v1/conversations": {
+      "post": {
+        "operationId": "CloudAiAgentsConversationsController_createConversation",
+        "parameters": [
+          {
+            "name": "agent_access_id",
+            "required": true,
+            "in": "path",
+            "description": "Agent Access ID",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "authorization",
+            "required": true,
+            "in": "header",
+            "description": "Bearer token for private agents",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateConversationDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Conversation created successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConversationDto"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "404": {
+            "description": "Agent not found"
+          }
+        },
+        "summary": "OpenAI-compatible create a conversation",
+        "tags": [
+          "ai-agents-conversations"
+        ]
+      }
+    },
+    "/api/v1/cloud-ai/agents/{agent_access_id}/v1/conversations/{conversation_id}": {
+      "get": {
+        "operationId": "CloudAiAgentsConversationsController_getConversation",
+        "parameters": [
+          {
+            "name": "agent_access_id",
+            "required": true,
+            "in": "path",
+            "description": "Agent Access ID",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "conversation_id",
+            "required": true,
+            "in": "path",
+            "description": "Conversation ID",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "authorization",
+            "required": true,
+            "in": "header",
+            "description": "Bearer token for private agents",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Conversation retrieved successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConversationDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Conversation not found"
+          }
+        },
+        "summary": "OpenAI-compatible get a conversation",
+        "tags": [
+          "ai-agents-conversations"
+        ]
+      },
+      "post": {
+        "operationId": "CloudAiAgentsConversationsController_updateConversation",
+        "parameters": [
+          {
+            "name": "agent_access_id",
+            "required": true,
+            "in": "path",
+            "description": "Agent Access ID",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "conversation_id",
+            "required": true,
+            "in": "path",
+            "description": "Conversation ID",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "authorization",
+            "required": true,
+            "in": "header",
+            "description": "Bearer token for private agents",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateConversationDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Conversation updated successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConversationDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Conversation not found"
+          }
+        },
+        "summary": "OpenAI-compatible update a conversation",
+        "tags": [
+          "ai-agents-conversations"
+        ]
+      },
+      "delete": {
+        "operationId": "CloudAiAgentsConversationsController_deleteConversation",
+        "parameters": [
+          {
+            "name": "agent_access_id",
+            "required": true,
+            "in": "path",
+            "description": "Agent Access ID",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "conversation_id",
+            "required": true,
+            "in": "path",
+            "description": "Conversation ID",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "authorization",
+            "required": true,
+            "in": "header",
+            "description": "Bearer token for private agents",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Conversation deleted successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConversationDeletedDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Conversation not found"
+          }
+        },
+        "summary": "OpenAI-compatible delete a conversation",
+        "tags": [
+          "ai-agents-conversations"
+        ]
+      }
+    },
+    "/api/v1/cloud-ai/agents/{agent_access_id}/v1/conversations/{conversation_id}/items": {
+      "get": {
+        "operationId": "CloudAiAgentsConversationsController_listItems",
+        "parameters": [
+          {
+            "name": "agent_access_id",
+            "required": true,
+            "in": "path",
+            "description": "Agent Access ID",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "conversation_id",
+            "required": true,
+            "in": "path",
+            "description": "Conversation ID",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "after",
+            "required": false,
+            "in": "query",
+            "description": "An item ID to list items after, used in pagination",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "include",
+            "required": false,
+            "in": "query",
+            "description": "Specify additional output data to include in the model response",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "name": "limit",
+            "required": false,
+            "in": "query",
+            "description": "A limit on the number of objects to be returned. Limit can range between 1 and 100, and the default is 20",
+            "schema": {
+              "minimum": 1,
+              "maximum": 100,
+              "default": 20,
+              "type": "number"
+            }
+          },
+          {
+            "name": "order",
+            "required": false,
+            "in": "query",
+            "description": "The order to return the input items in",
+            "schema": {
+              "default": "desc",
+              "enum": [
+                "asc",
+                "desc"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "name": "authorization",
+            "required": true,
+            "in": "header",
+            "description": "Bearer token for private agents",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Items retrieved successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConversationItemListDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Conversation not found"
+          }
+        },
+        "summary": "OpenAI-compatible list items in a conversation",
+        "tags": [
+          "ai-agents-conversations"
+        ]
+      },
+      "post": {
+        "operationId": "CloudAiAgentsConversationsController_createItems",
+        "parameters": [
+          {
+            "name": "agent_access_id",
+            "required": true,
+            "in": "path",
+            "description": "Agent Access ID",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "conversation_id",
+            "required": true,
+            "in": "path",
+            "description": "Conversation ID",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "include",
+            "required": false,
+            "in": "query",
+            "description": "Additional fields to include in the response",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "name": "authorization",
+            "required": true,
+            "in": "header",
+            "description": "Bearer token for private agents",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateItemsDto"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Items created successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConversationItemListDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Conversation not found"
+          }
+        },
+        "summary": "OpenAI-compatible create items in a conversation",
+        "tags": [
+          "ai-agents-conversations"
+        ]
+      }
+    },
+    "/api/v1/cloud-ai/agents/{agent_access_id}/v1/conversations/{conversation_id}/items/{item_id}": {
+      "get": {
+        "operationId": "CloudAiAgentsConversationsController_getItem",
+        "parameters": [
+          {
+            "name": "agent_access_id",
+            "required": true,
+            "in": "path",
+            "description": "Agent Access ID",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "conversation_id",
+            "required": true,
+            "in": "path",
+            "description": "Conversation ID",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "item_id",
+            "required": true,
+            "in": "path",
+            "description": "Item ID",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "include",
+            "required": false,
+            "in": "query",
+            "description": "Specify additional output data to include in the model response",
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "name": "authorization",
+            "required": true,
+            "in": "header",
+            "description": "Bearer token for private agents",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Item retrieved successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConversationItemDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Item not found"
+          }
+        },
+        "summary": "OpenAI-compatible get a conversation item",
+        "tags": [
+          "ai-agents-conversations"
+        ]
+      },
+      "delete": {
+        "operationId": "CloudAiAgentsConversationsController_deleteItem",
+        "parameters": [
+          {
+            "name": "agent_access_id",
+            "required": true,
+            "in": "path",
+            "description": "Agent Access ID",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "conversation_id",
+            "required": true,
+            "in": "path",
+            "description": "Conversation ID",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "item_id",
+            "required": true,
+            "in": "path",
+            "description": "Item ID",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "authorization",
+            "required": true,
+            "in": "header",
+            "description": "Bearer token for private agents",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Item deleted successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConversationDto"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Item not found"
+          }
+        },
+        "summary": "OpenAI-compatible delete a conversation item",
+        "tags": [
+          "ai-agents-conversations"
+        ]
+      }
+    }
+  },
+  "info": {
+    "title": "Cloud AI API",
+    "description": "API docs for Cloud AI",
+    "version": "1.0",
+    "contact": {}
+  },
+  "tags": [
+    {
+      "name": "ai-agents-client",
+      "description": "API for working with AI agents"
+    },
+    {
+      "name": "ai-agents-responses",
+      "description": "API for managing AI agents responses"
+    },
+    {
+      "name": "ai-agents-conversations",
+      "description": "API for managing AI agents conversations"
+    }
+  ],
+  "servers": [
+    {
+      "url": "https://agent.timeweb.cloud",
+      "description": "Timeweb Cloud AI API"
+    }
+  ],
+  "components": {
+    "securitySchemes": {
+      "JWT-auth": {
+        "scheme": "bearer",
+        "bearerFormat": "JWT",
+        "type": "http",
+        "name": "JWT",
+        "description": "Enter JWT token",
+        "in": "header"
+      }
+    },
+    "schemas": {
+      "AgentCallDto": {
+        "type": "object",
+        "properties": {
+          "message": {
+            "type": "string",
+            "default": ""
+          },
+          "parent_message_id": {
+            "type": "string"
+          },
+          "file_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "metadata": {
+            "type": "object"
+          }
+        }
+      },
+      "AgentCallResponseDto": {
+        "type": "object",
+        "properties": {
+          "message": {
+            "type": "string",
+            "description": "The response message from the agent"
+          },
+          "id": {
+            "type": "string",
+            "description": "Unique ID of the message"
+          },
+          "finish_reason": {
+            "type": "object",
+            "description": "The reason why the response was finished"
+          }
+        },
+        "required": [
+          "message",
+          "id",
+          "finish_reason"
+        ]
+      },
+      "OpenAiChatCompletionMessageDto": {
+        "type": "object",
+        "properties": {
+          "role": {
+            "type": "string",
+            "description": "The role of the author of this message"
+          },
+          "content": {
+            "type": "string",
+            "description": "The contents of the message"
+          }
+        },
+        "required": [
+          "role",
+          "content"
+        ]
+      },
+      "OpenAiChatCompletionChoiceDto": {
+        "type": "object",
+        "properties": {
+          "index": {
+            "type": "number",
+            "description": "The index of the choice in the list of choices"
+          },
+          "message": {
+            "description": "A chat completion message generated by the model",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/OpenAiChatCompletionMessageDto"
+              }
+            ]
+          },
+          "finish_reason": {
+            "type": "string",
+            "description": "The reason the model stopped generating tokens",
+            "enum": [
+              "stop",
+              "length",
+              "content_filter",
+              "tool_calls"
+            ]
+          }
+        },
+        "required": [
+          "index",
+          "message",
+          "finish_reason"
+        ]
+      },
+      "OpenAiUsageDto": {
+        "type": "object",
+        "properties": {
+          "prompt_tokens": {
+            "type": "number",
+            "description": "Number of tokens in the prompt"
+          },
+          "completion_tokens": {
+            "type": "number",
+            "description": "Number of tokens in the generated completion"
+          },
+          "total_tokens": {
+            "type": "number",
+            "description": "Total number of tokens used in the request (prompt + completion)"
+          }
+        },
+        "required": [
+          "prompt_tokens",
+          "completion_tokens",
+          "total_tokens"
+        ]
+      },
+      "OpenAiChatCompletionResponseDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "A unique identifier for the chat completion"
+          },
+          "object": {
+            "type": "string",
+            "description": "The object type, which is always \"chat.completion\"",
+            "example": "chat.completion"
+          },
+          "created": {
+            "type": "number",
+            "description": "The Unix timestamp (in seconds) of when the chat completion was created"
+          },
+          "model": {
+            "type": "string",
+            "description": "The model used for the chat completion"
+          },
+          "choices": {
+            "description": "A list of chat completion choices",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OpenAiChatCompletionChoiceDto"
+            }
+          },
+          "usage": {
+            "description": "Usage statistics for the completion request",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/OpenAiUsageDto"
+              }
+            ]
+          },
+          "system_fingerprint": {
+            "type": "string",
+            "description": "System fingerprint"
+          }
+        },
+        "required": [
+          "id",
+          "object",
+          "created",
+          "model",
+          "choices",
+          "usage"
+        ]
+      },
+      "OpenAiStreamDeltaDto": {
+        "type": "object",
+        "properties": {
+          "content": {
+            "type": "string",
+            "description": "The content delta for the message"
+          },
+          "role": {
+            "type": "string",
+            "description": "The role of the message author (only in first chunk)"
+          }
+        }
+      },
+      "OpenAiStreamChoiceDto": {
+        "type": "object",
+        "properties": {
+          "index": {
+            "type": "number",
+            "description": "The index of the choice in the list of choices"
+          },
+          "delta": {
+            "description": "A chat completion delta generated by the model",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/OpenAiStreamDeltaDto"
+              }
+            ]
+          },
+          "finish_reason": {
+            "type": "string",
+            "description": "The reason the model stopped generating tokens",
+            "enum": [
+              "stop",
+              "length",
+              "content_filter",
+              "tool_calls",
+              null
+            ]
+          }
+        },
+        "required": [
+          "index",
+          "delta"
+        ]
+      },
+      "OpenAiChatCompletionStreamResponseDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "A unique identifier for the chat completion"
+          },
+          "object": {
+            "type": "string",
+            "description": "The object type, which is always \"chat.completion.chunk\"",
+            "example": "chat.completion.chunk"
+          },
+          "created": {
+            "type": "number",
+            "description": "The Unix timestamp (in seconds) of when the chat completion was created"
+          },
+          "model": {
+            "type": "string",
+            "description": "The model used for the chat completion"
+          },
+          "choices": {
+            "description": "A list of chat completion choices",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OpenAiStreamChoiceDto"
+            }
+          },
+          "system_fingerprint": {
+            "type": "string",
+            "description": "System fingerprint"
+          }
+        },
+        "required": [
+          "id",
+          "object",
+          "created",
+          "model",
+          "choices"
+        ]
+      },
+      "OpenAiModelDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Model identifier",
+            "example": "gpt-4o-2024-08-06"
+          },
+          "object": {
+            "type": "string",
+            "description": "Object type, always \"model\"",
+            "example": "model"
+          },
+          "created": {
+            "type": "number",
+            "description": "Unix timestamp when the model was created",
+            "example": 1692901427
+          },
+          "owned_by": {
+            "type": "string",
+            "description": "Organization that owns the model",
+            "example": "openai"
+          }
+        },
+        "required": [
+          "id",
+          "object",
+          "created",
+          "owned_by"
+        ]
+      },
+      "OpenAiModelsResponseDto": {
+        "type": "object",
+        "properties": {
+          "object": {
+            "type": "string",
+            "description": "Object type, always \"list\"",
+            "example": "list"
+          },
+          "data": {
+            "description": "Array of available models",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OpenAiModelDto"
+            }
+          }
+        },
+        "required": [
+          "object",
+          "data"
+        ]
+      },
+      "OpenAiTextCompletionRequestDto": {
+        "type": "object",
+        "properties": {
+          "prompt": {
+            "type": "string",
+            "description": "The prompt to generate completions for",
+            "example": "Write a short story about a robot"
+          },
+          "model": {
+            "type": "string",
+            "description": "The model to use for completion",
+            "example": "gpt-3.5-turbo-instruct",
+            "default": "gpt-3.5-turbo-instruct"
+          },
+          "max_tokens": {
+            "type": "number",
+            "description": "The maximum number of tokens to generate",
+            "example": 100,
+            "minimum": 1,
+            "maximum": 4096,
+            "default": 16
+          },
+          "temperature": {
+            "type": "number",
+            "description": "Controls randomness in the output",
+            "example": 0.7,
+            "minimum": 0,
+            "maximum": 2,
+            "default": 1
+          },
+          "top_p": {
+            "type": "number",
+            "description": "Controls diversity via nucleus sampling",
+            "example": 0.9,
+            "minimum": 0,
+            "maximum": 1,
+            "default": 1
+          },
+          "n": {
+            "type": "number",
+            "description": "How many completions to generate",
+            "example": 1,
+            "minimum": 1,
+            "maximum": 128,
+            "default": 1
+          },
+          "stream": {
+            "type": "boolean",
+            "description": "Whether to stream back partial progress",
+            "example": false,
+            "default": false
+          },
+          "logprobs": {
+            "type": "number",
+            "description": "Include the log probabilities on the logprobs most likely tokens",
+            "example": null,
+            "minimum": 0,
+            "maximum": 5
+          },
+          "echo": {
+            "type": "boolean",
+            "description": "Echo back the prompt in addition to the completion",
+            "example": false,
+            "default": false
+          },
+          "stop": {
+            "description": "Up to 4 sequences where the API will stop generating further tokens",
+            "example": [
+              "\n"
+            ],
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "presence_penalty": {
+            "type": "number",
+            "description": "Number between -2.0 and 2.0. Positive values penalize new tokens based on whether they appear in the text so far",
+            "example": 0,
+            "minimum": -2,
+            "maximum": 2,
+            "default": 0
+          },
+          "frequency_penalty": {
+            "type": "number",
+            "description": "Number between -2.0 and 2.0. Positive values penalize new tokens based on their existing frequency in the text so far",
+            "example": 0,
+            "minimum": -2,
+            "maximum": 2,
+            "default": 0
+          },
+          "best_of": {
+            "type": "number",
+            "description": "Generates best_of completions server-side and returns the \"best\"",
+            "example": 1,
+            "minimum": 1,
+            "maximum": 20,
+            "default": 1
+          },
+          "user": {
+            "type": "string",
+            "description": "A unique identifier representing your end-user",
+            "example": "user-123"
+          }
+        },
+        "required": [
+          "prompt"
+        ]
+      },
+      "TextCompletionLogprobs": {
+        "type": "object",
+        "properties": {
+          "tokens": {
+            "description": "The tokens chosen by the model",
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "token_logprobs": {
+            "description": "The log probability of each token",
+            "type": "array",
+            "items": {
+              "type": "number"
+            }
+          },
+          "top_logprobs": {
+            "type": "object",
+            "description": "The top logprobs for each token",
+            "additionalProperties": true
+          },
+          "text_offset": {
+            "description": "The character offsets for each token",
+            "type": "array",
+            "items": {
+              "type": "number"
+            }
+          }
+        }
+      },
+      "TextCompletionChoice": {
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string",
+            "description": "The generated text",
+            "example": "Once upon a time, there was a robot named R2D2..."
+          },
+          "index": {
+            "type": "number",
+            "description": "The index of this choice",
+            "example": 0
+          },
+          "logprobs": {
+            "description": "Log probability information for the choice",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/TextCompletionLogprobs"
+              }
+            ]
+          },
+          "finish_reason": {
+            "type": "string",
+            "description": "The reason the model stopped generating tokens",
+            "example": "stop",
+            "enum": [
+              "stop",
+              "length",
+              "content_filter"
+            ]
+          }
+        },
+        "required": [
+          "text",
+          "index",
+          "finish_reason"
+        ]
+      },
+      "TextCompletionUsage": {
+        "type": "object",
+        "properties": {
+          "prompt_tokens": {
+            "type": "number",
+            "description": "Number of tokens in the prompt",
+            "example": 10
+          },
+          "completion_tokens": {
+            "type": "number",
+            "description": "Number of tokens in the generated completion",
+            "example": 50
+          },
+          "total_tokens": {
+            "type": "number",
+            "description": "Total number of tokens used",
+            "example": 60
+          }
+        },
+        "required": [
+          "prompt_tokens",
+          "completion_tokens",
+          "total_tokens"
+        ]
+      },
+      "OpenAiTextCompletionResponseDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Unique identifier for the completion",
+            "example": "cmpl-7QyqpwdfhqwajicIEznoc6Q47XAyW"
+          },
+          "object": {
+            "type": "string",
+            "description": "The object type, always \"text_completion\"",
+            "example": "text_completion"
+          },
+          "created": {
+            "type": "number",
+            "description": "Unix timestamp when the completion was created",
+            "example": 1692901427
+          },
+          "model": {
+            "type": "string",
+            "description": "The model used for completion",
+            "example": "gpt-3.5-turbo-instruct"
+          },
+          "choices": {
+            "description": "Array of completion choices",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TextCompletionChoice"
+            }
+          },
+          "usage": {
+            "description": "Usage statistics for the completion",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/TextCompletionUsage"
+              }
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "object",
+          "created",
+          "model",
+          "choices",
+          "usage"
+        ]
+      },
+      "FunctionCallDto": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "The name of the function to call",
+            "example": "get_weather"
+          }
+        },
+        "required": [
+          "name"
+        ]
+      },
+      "ChatMessageDto": {
+        "type": "object",
+        "properties": {
+          "role": {
+            "type": "string",
+            "enum": [
+              "system",
+              "user",
+              "assistant",
+              "tool",
+              "function",
+              "developer"
+            ],
+            "description": "The role of the message author"
+          },
+          "content": {
+            "description": "The contents of the message - can be a string or array of content items",
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "array",
+                "items": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/TextContentDto"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ImageUrlContentDto"
+                    },
+                    {
+                      "$ref": "#/components/schemas/InputAudioContentDto"
+                    },
+                    {
+                      "$ref": "#/components/schemas/FileContentDto"
+                    },
+                    {
+                      "$ref": "#/components/schemas/RefusalContentDto"
+                    }
+                  ]
+                }
+              }
+            ],
+            "examples": [
+              "Simple text message",
+              [
+                {
+                  "type": "text",
+                  "text": "What is in this image?"
+                },
+                {
+                  "type": "image_url",
+                  "image_url": {
+                    "url": "https://example.com/image.jpg"
+                  }
+                }
+              ]
+            ]
+          },
+          "name": {
+            "type": "object",
+            "description": "The name of the author of this message (required for function role)",
+            "example": "user123"
+          },
+          "function_call": {
+            "description": "The name and arguments of a function that should be called",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/FunctionCallDto"
+              }
+            ]
+          },
+          "tool_calls": {
+            "type": "object",
+            "description": "Tool call information"
+          },
+          "tool_call_id": {
+            "type": "object",
+            "description": "Tool call ID (required for tool role messages)",
+            "example": "call_abc123"
+          }
+        },
+        "required": [
+          "role",
+          "content"
+        ]
+      },
+      "StreamOptionsDto": {
+        "type": "object",
+        "properties": {
+          "include_usage": {
+            "type": "boolean",
+            "description": "Whether to include usage information in streaming responses",
+            "example": true
+          }
+        }
+      },
+      "ChatCompletionCreateParamsDto": {
+        "type": "object",
+        "properties": {
+          "model": {
+            "type": "object",
+            "description": "ID of the model to use. This field is ignored as the agent has its own model configuration.",
+            "example": "gpt-4"
+          },
+          "messages": {
+            "description": "A list of messages comprising the conversation so far",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ChatMessageDto"
+            }
+          },
+          "temperature": {
+            "type": "object",
+            "description": "What sampling temperature to use, between 0 and 2. Higher values like 0.8 will make the output more random, while lower values like 0.2 will make it more focused and deterministic.",
+            "example": 0.7,
+            "minimum": 0,
+            "maximum": 2
+          },
+          "top_p": {
+            "type": "object",
+            "description": "An alternative to sampling with temperature, called nucleus sampling, where the model considers the results of the tokens with top_p probability mass.",
+            "example": 1,
+            "minimum": 0,
+            "maximum": 1
+          },
+          "n": {
+            "type": "object",
+            "description": "How many chat completion choices to generate for each input message",
+            "example": 1,
+            "minimum": 1,
+            "maximum": 128
+          },
+          "stream": {
+            "type": "object",
+            "description": "Whether to stream back partial responses",
+            "example": false,
+            "default": false
+          },
+          "stop": {
+            "description": "Up to 4 sequences where the API will stop generating further tokens",
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            ],
+            "example": [
+              "\n",
+              "Human:"
+            ]
+          },
+          "max_tokens": {
+            "type": "object",
+            "deprecated": true,
+            "description": "The maximum number of tokens to generate in the chat completion",
+            "example": 100,
+            "minimum": 1
+          },
+          "max_completion_tokens": {
+            "type": "object",
+            "description": "The maximum number of tokens to generate in the chat completion (alternative to max_tokens)",
+            "example": 100,
+            "minimum": 1
+          },
+          "presence_penalty": {
+            "type": "object",
+            "description": "Number between -2.0 and 2.0. Positive values penalize new tokens based on whether they appear in the text so far, increasing the model's likelihood to talk about new topics.",
+            "example": 0,
+            "minimum": -2,
+            "maximum": 2
+          },
+          "frequency_penalty": {
+            "type": "object",
+            "description": "Number between -2.0 and 2.0. Positive values penalize new tokens based on their existing frequency in the text so far, decreasing the model's likelihood to repeat the same line verbatim.",
+            "example": 0,
+            "minimum": -2,
+            "maximum": 2
+          },
+          "logit_bias": {
+            "type": "object",
+            "description": "Modify the likelihood of specified tokens appearing in the completion",
+            "additionalProperties": {
+              "type": "number"
+            },
+            "example": {
+              "50256": -100
+            }
+          },
+          "user": {
+            "type": "string",
+            "description": "A unique identifier representing your end-user, which can help OpenAI to monitor and detect abuse",
+            "example": "user-1234"
+          },
+          "response_format": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ResponseFormatTextDto"
+              },
+              {
+                "$ref": "#/components/schemas/ResponseFormatJsonObjectDto"
+              },
+              {
+                "$ref": "#/components/schemas/ResponseFormatJsonSchemaDto"
+              }
+            ],
+            "description": "An object specifying the format that the model must output"
+          },
+          "tools": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/FunctionToolDto"
+              },
+              {
+                "$ref": "#/components/schemas/CustomToolDto"
+              }
+            ],
+            "description": "A list of tools the model may call"
+          },
+          "tool_choice": {
+            "description": "Controls which (if any) tool is called by the model",
+            "oneOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "none",
+                  "auto",
+                  "required"
+                ]
+              },
+              {
+                "type": "object"
+              }
+            ],
+            "example": "auto"
+          },
+          "stream_options": {
+            "description": "Options for streaming response",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/StreamOptionsDto"
+              }
+            ]
+          },
+          "logprobs": {
+            "type": "object",
+            "description": "Whether to return log probabilities of the output tokens",
+            "example": false
+          },
+          "top_logprobs": {
+            "type": "object",
+            "description": "An integer between 0 and 5 specifying the number of most likely tokens to return at each token position",
+            "example": 0,
+            "minimum": 0,
+            "maximum": 5
+          }
+        },
+        "required": [
+          "messages"
+        ]
+      },
+      "ResponseFormatTextDto": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "text"
+            ],
+            "description": "The type of response format",
+            "example": "text"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "ResponseFormatJsonObjectDto": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "json_object"
+            ],
+            "description": "The type of response format",
+            "example": "json_object"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "ResponseFormatJsonSchemaDto": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "json_schema"
+            ],
+            "description": "The type of response format",
+            "example": "json_schema"
+          },
+          "json_schema": {
+            "type": "object",
+            "description": "JSON schema for json_schema type",
+            "additionalProperties": true
+          }
+        },
+        "required": [
+          "type",
+          "json_schema"
+        ]
+      },
+      "FunctionToolDto": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "function"
+            ],
+            "description": "The type of tool",
+            "example": "function"
+          },
+          "function": {
+            "type": "object",
+            "description": "The function definition",
+            "additionalProperties": true
+          }
+        },
+        "required": [
+          "type",
+          "function"
+        ]
+      },
+      "CustomToolDto": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "custom"
+            ],
+            "description": "The type of tool",
+            "example": "custom"
+          },
+          "custom": {
+            "type": "object",
+            "description": "Custom tool definition",
+            "additionalProperties": true
+          }
+        },
+        "required": [
+          "type",
+          "custom"
+        ]
+      },
+      "TextContentDto": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "text"
+            ],
+            "description": "Content type - always \"text\"",
+            "example": "text"
+          },
+          "text": {
+            "type": "string",
+            "description": "The text content",
+            "example": "What is in this image?"
+          }
+        },
+        "required": [
+          "type",
+          "text"
+        ]
+      },
+      "ImageUrlDto": {
+        "type": "object",
+        "properties": {
+          "url": {
+            "type": "string",
+            "description": "The URL of the image",
+            "example": "https://example.com/image.jpg"
+          },
+          "detail": {
+            "type": "string",
+            "description": "The detail level of the image",
+            "enum": [
+              "low",
+              "high",
+              "auto"
+            ],
+            "example": "auto"
+          }
+        },
+        "required": [
+          "url"
+        ]
+      },
+      "ImageUrlContentDto": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "image_url"
+            ],
+            "description": "Content type - always \"image_url\"",
+            "example": "image_url"
+          },
+          "image_url": {
+            "description": "Image URL object",
+            "example": {
+              "url": "https://example.com/image.jpg",
+              "detail": "auto"
+            },
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ImageUrlDto"
+              }
+            ]
+          }
+        },
+        "required": [
+          "type",
+          "image_url"
+        ]
+      },
+      "InputAudioDto": {
+        "type": "object",
+        "properties": {
+          "data": {
+            "type": "string",
+            "description": "Base64 encoded audio data",
+            "example": "UklGRnoGAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQoGAACBhYqFbF1fdJivrJBhNjVgodDbq2EcBj+a2/LDciUFLIHO8tiJNwgZaLvt559NEAxQp+PwtmMcBjiR1/LMeSwFJHfH8N2QQAoUXrTp66hVFApGn+DyvmwhBSuBzvLZiTYIG2m98OScTgwOUarm7bllHgU7jdXzzn0uBSF+zO/eizEIHWq+8+OWT"
+          },
+          "format": {
+            "type": "string",
+            "description": "Audio format",
+            "enum": [
+              "wav",
+              "mp3",
+              "m4a",
+              "ogg",
+              "flac",
+              "webm"
+            ],
+            "example": "wav"
+          }
+        },
+        "required": [
+          "data",
+          "format"
+        ]
+      },
+      "InputAudioContentDto": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "input_audio"
+            ],
+            "description": "Content type - always \"input_audio\"",
+            "example": "input_audio"
+          },
+          "input_audio": {
+            "description": "Input audio object",
+            "example": {
+              "data": "UklGRnoGAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQoGAACBhYqFbF1fdJivrJBhNjVgodDbq2EcBj+a2/LDciUFLIHO8tiJNwgZaLvt559NEAxQp+PwtmMcBjiR1/LMeSwFJHfH8N2QQAoUXrTp66hVFApGn+DyvmwhBSuBzvLZiTYIG2m98OScTgwOUarm7bllHgU7jdXzzn0uBSF+zO/eizEIHWq+8+OWT",
+              "format": "wav"
+            },
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/InputAudioDto"
+              }
+            ]
+          }
+        },
+        "required": [
+          "type",
+          "input_audio"
+        ]
+      },
+      "FileContentDto": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "file"
+            ],
+            "description": "Content type - always \"file\"",
+            "example": "file"
+          },
+          "file": {
+            "type": "object",
+            "description": "File object (OpenAI File type)",
+            "additionalProperties": true
+          }
+        },
+        "required": [
+          "type",
+          "file"
+        ]
+      },
+      "RefusalContentDto": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": [
+              "refusal"
+            ],
+            "description": "Content type - always \"refusal\"",
+            "example": "refusal"
+          },
+          "refusal": {
+            "type": "string",
+            "description": "Refusal message",
+            "example": "I cannot help with that request"
+          }
+        },
+        "required": [
+          "type",
+          "refusal"
+        ]
+      },
+      "CreateResponseDto": {
+        "type": "object",
+        "properties": {
+          "model": {
+            "type": "string",
+            "description": "Модель для использования в ответе. Это поле игнорируется, так как агент имеет свою конфигурацию модели.",
+            "example": "gpt-4"
+          },
+          "instructions": {
+            "type": "string",
+            "description": "Инструкции для генерации ответа",
+            "example": "Ты - полезный помощник."
+          },
+          "input": {
+            "description": "Входной текст или сообщения для ответа",
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "array",
+                "items": {
+                  "type": "object"
+                }
+              }
+            ]
+          },
+          "max_output_tokens": {
+            "type": "number",
+            "description": "Максимальное количество токенов для генерации в ответе",
+            "example": 1000,
+            "minimum": 1
+          },
+          "temperature": {
+            "type": "number",
+            "description": "Температура для генерации ответа",
+            "example": 0.7,
+            "minimum": 0,
+            "maximum": 2
+          },
+          "metadata": {
+            "type": "object",
+            "description": "Дополнительные метаданные для ответа",
+            "additionalProperties": true
+          },
+          "tools": {
+            "type": "array",
+            "description": "Инструменты, доступные для модели"
+          },
+          "stream": {
+            "type": "boolean",
+            "description": "Флаг, указывающий на то, что ответ нужно передавать по частям",
+            "example": false,
+            "default": false
+          },
+          "stream_options": {
+            "type": "object",
+            "description": "Опции для потоковой передачи. Устанавливается только при stream: true",
+            "additionalProperties": true
+          },
+          "background": {
+            "type": "boolean",
+            "description": "Запуск модели в фоновом режиме",
+            "example": false,
+            "default": false
+          },
+          "text": {
+            "type": "object",
+            "description": "Конфигурация для текстового ответа от модели",
+            "additionalProperties": true
+          },
+          "tool_choice": {
+            "description": "Как модель должна выбирать инструменты при генерации ответа",
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "object"
+              }
+            ]
+          },
+          "parallel_tool_calls": {
+            "type": "boolean",
+            "description": "Разрешить модели выполнять вызовы инструментов параллельно",
+            "example": true,
+            "default": true
+          },
+          "max_tool_calls": {
+            "type": "number",
+            "description": "Максимальное количество вызовов встроенных инструментов",
+            "example": 10
+          },
+          "previous_response_id": {
+            "type": "string",
+            "description": "ID предыдущего ответа для создания многоходовых диалогов",
+            "example": "resp_abc123"
+          },
+          "conversation": {
+            "description": "Диалог, к которому принадлежит этот ответ",
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "object"
+              }
+            ]
+          },
+          "include": {
+            "type": "array",
+            "description": "Дополнительные выходные данные для включения в ответ модели",
+            "items": {
+              "type": "string"
+            },
+            "example": [
+              "web_search_call.action.sources",
+              "code_interpreter_call.outputs"
+            ]
+          },
+          "store": {
+            "type": "boolean",
+            "description": "Хранить ли сгенерированный ответ модели для последующего получения через API",
+            "example": true,
+            "default": true
+          },
+          "top_p": {
+            "type": "number",
+            "description": "Альтернатива temperature. Модель рассматривает токены с top_p вероятностной массой",
+            "example": 1,
+            "minimum": 0,
+            "maximum": 1,
+            "default": 1
+          },
+          "top_logprobs": {
+            "type": "number",
+            "description": "Количество наиболее вероятных токенов для возврата на каждой позиции токена",
+            "example": 5,
+            "minimum": 0,
+            "maximum": 20
+          },
+          "truncation": {
+            "type": "string",
+            "description": "Стратегия усечения для ответа модели",
+            "enum": [
+              "auto",
+              "disabled"
+            ],
+            "default": "disabled"
+          },
+          "service_tier": {
+            "type": "string",
+            "description": "Уровень обслуживания для обработки запроса",
+            "enum": [
+              "auto",
+              "default",
+              "flex",
+              "priority"
+            ],
+            "default": "auto"
+          },
+          "safety_identifier": {
+            "type": "string",
+            "description": "Стабильный идентификатор для обнаружения пользователей, нарушающих политику использования",
+            "example": "user-hash-12345"
+          },
+          "prompt_cache_key": {
+            "type": "string",
+            "description": "Используется OpenAI для кэширования ответов на похожие запросы",
+            "example": "cache-key-12345"
+          },
+          "prompt": {
+            "type": "object",
+            "description": "Ссылка на шаблон промпта и его переменные",
+            "additionalProperties": true
+          },
+          "reasoning": {
+            "type": "object",
+            "description": "Конфигурация для reasoning моделей (gpt-5 и o-series)",
+            "additionalProperties": true
+          },
+          "user": {
+            "type": "string",
+            "description": "Устарело. Используйте safety_identifier или prompt_cache_key",
+            "example": "user-12345",
+            "deprecated": true
+          }
+        }
+      },
+      "GetResponseQueryDto": {
+        "type": "object",
+        "properties": {
+          "include": {
+            "description": "Дополнительные поля для включения в ответ",
+            "example": [
+              "web_search_call.action.sources",
+              "code_interpreter_call.outputs"
+            ],
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "include_obfuscation": {
+            "type": "boolean",
+            "description": "Включить обфускацию потока для защиты от атак по побочным каналам",
+            "example": true
+          },
+          "starting_after": {
+            "type": "number",
+            "description": "Номер последовательности события, после которого начать потоковую передачу",
+            "example": 0,
+            "minimum": 0
+          },
+          "stream": {
+            "type": "boolean",
+            "description": "Потоковая передача данных ответа модели",
+            "example": false
+          }
+        }
+      },
+      "ResponseUsageDto": {
+        "type": "object",
+        "properties": {
+          "prompt_tokens": {
+            "type": "number",
+            "description": "Количество токенов в промпте",
+            "example": 150
+          },
+          "completion_tokens": {
+            "type": "number",
+            "description": "Количество токенов в ответе",
+            "example": 300
+          },
+          "total_tokens": {
+            "type": "number",
+            "description": "Общее количество токенов",
+            "example": 450
+          }
+        },
+        "required": [
+          "prompt_tokens",
+          "completion_tokens",
+          "total_tokens"
+        ]
+      },
+      "OpenAiResponseDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Уникальный идентификатор ответа",
+            "example": "resp_abc123"
+          },
+          "object": {
+            "type": "string",
+            "description": "Тип объекта",
+            "example": "response"
+          },
+          "created_at": {
+            "type": "number",
+            "description": "Временная метка создания",
+            "example": 1234567890
+          },
+          "model": {
+            "type": "string",
+            "description": "Идентификатор модели",
+            "example": "gpt-4"
+          },
+          "status": {
+            "type": "string",
+            "description": "Статус ответа",
+            "example": "completed"
+          },
+          "usage": {
+            "description": "Информация об использовании токенов",
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ResponseUsageDto"
+              }
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "object",
+          "created_at",
+          "model",
+          "status"
+        ]
+      },
+      "ConversationItemContentInputText": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "description": "Content type",
+            "example": "input_text"
+          },
+          "text": {
+            "type": "string",
+            "description": "Text content",
+            "example": "Hello!"
+          }
+        },
+        "required": [
+          "type",
+          "text"
+        ]
+      },
+      "ConversationItemMessage": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "description": "Item type",
+            "example": "message"
+          },
+          "role": {
+            "type": "string",
+            "description": "Role of the message",
+            "example": "user",
+            "enum": [
+              "user",
+              "assistant"
+            ]
+          },
+          "content": {
+            "description": "Content of the message",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ConversationItemContentInputText"
+            }
+          }
+        },
+        "required": [
+          "type",
+          "role"
+        ]
+      },
+      "CreateConversationDto": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "description": "Initial items to include in the conversation context. You may add up to 20 items at a time.",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ConversationItemMessage"
+            }
+          },
+          "metadata": {
+            "type": "object",
+            "description": "Set of 16 key-value pairs that can be attached to an object",
+            "example": {
+              "topic": "demo"
+            },
+            "nullable": true
+          }
+        }
+      },
+      "UpdateConversationDto": {
+        "type": "object",
+        "properties": {
+          "metadata": {
+            "type": "object",
+            "description": "Set of 16 key-value pairs that can be attached to an object",
+            "example": {
+              "topic": "project-x"
+            }
+          }
+        },
+        "required": [
+          "metadata"
+        ]
+      },
+      "ConversationDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "The unique ID of the conversation",
+            "example": "conv_123"
+          },
+          "object": {
+            "type": "string",
+            "description": "The object type, which is always conversation",
+            "example": "conversation"
+          },
+          "created_at": {
+            "type": "number",
+            "description": "The time at which the conversation was created, measured in seconds since the Unix epoch",
+            "example": 1741900000
+          },
+          "metadata": {
+            "type": "object",
+            "description": "Set of 16 key-value pairs that can be attached to an object",
+            "example": {
+              "topic": "demo"
+            },
+            "nullable": true
+          }
+        },
+        "required": [
+          "id",
+          "object",
+          "created_at"
+        ]
+      },
+      "ConversationDeletedDto": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "The ID of the deleted conversation",
+            "example": "conv_123"
+          },
+          "object": {
+            "type": "string",
+            "description": "The object type",
+            "example": "conversation.deleted"
+          },
+          "deleted": {
+            "type": "boolean",
+            "description": "Whether the conversation was deleted",
+            "example": true
+          }
+        },
+        "required": [
+          "id",
+          "object",
+          "deleted"
+        ]
+      },
+      "ConversationItemContentDto": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "description": "Content type",
+            "example": "input_text"
+          },
+          "text": {
+            "type": "string",
+            "description": "Text content",
+            "example": "Hello!"
+          }
+        },
+        "required": [
+          "type"
+        ]
+      },
+      "ConversationItemDto": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "description": "Item type",
+            "example": "message"
+          },
+          "id": {
+            "type": "string",
+            "description": "The unique ID of the item",
+            "example": "msg_abc"
+          },
+          "status": {
+            "type": "string",
+            "description": "Status of the item",
+            "example": "completed"
+          },
+          "role": {
+            "type": "string",
+            "description": "Role of the message",
+            "example": "user"
+          },
+          "content": {
+            "description": "Content of the item",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ConversationItemContentDto"
+            }
+          }
+        },
+        "required": [
+          "type",
+          "id",
+          "status"
+        ]
+      },
+      "ConversationItemListDto": {
+        "type": "object",
+        "properties": {
+          "object": {
+            "type": "string",
+            "description": "The type of object returned",
+            "example": "list"
+          },
+          "data": {
+            "description": "A list of conversation items",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ConversationItemDto"
+            }
+          },
+          "first_id": {
+            "type": "string",
+            "description": "The ID of the first item in the list",
+            "example": "msg_abc"
+          },
+          "last_id": {
+            "type": "string",
+            "description": "The ID of the last item in the list",
+            "example": "msg_abc"
+          },
+          "has_more": {
+            "type": "boolean",
+            "description": "Whether there are more items available",
+            "example": false
+          }
+        },
+        "required": [
+          "object",
+          "data",
+          "first_id",
+          "last_id",
+          "has_more"
+        ]
+      },
+      "ListItemsQueryDto": {
+        "type": "object",
+        "properties": {
+          "after": {
+            "type": "string",
+            "description": "An item ID to list items after, used in pagination"
+          },
+          "include": {
+            "description": "Specify additional output data to include in the model response",
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "limit": {
+            "type": "number",
+            "description": "A limit on the number of objects to be returned. Limit can range between 1 and 100, and the default is 20",
+            "default": 20,
+            "minimum": 1,
+            "maximum": 100
+          },
+          "order": {
+            "type": "string",
+            "description": "The order to return the input items in",
+            "enum": [
+              "asc",
+              "desc"
+            ],
+            "default": "desc"
+          }
+        }
+      },
+      "GetItemQueryDto": {
+        "type": "object",
+        "properties": {
+          "include": {
+            "description": "Specify additional output data to include in the model response",
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "ItemContentDto": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "description": "Content type",
+            "example": "input_text"
+          },
+          "text": {
+            "type": "string",
+            "description": "Text content",
+            "example": "Hello!"
+          }
+        },
+        "required": [
+          "type",
+          "text"
+        ]
+      },
+      "CreateItemDto": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "description": "Item type",
+            "example": "message"
+          },
+          "role": {
+            "type": "string",
+            "description": "Role of the message",
+            "example": "user",
+            "enum": [
+              "user",
+              "assistant"
+            ]
+          },
+          "content": {
+            "description": "Content of the message",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ItemContentDto"
+            }
+          }
+        },
+        "required": [
+          "type",
+          "role",
+          "content"
+        ]
+      },
+      "CreateItemsDto": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "description": "The items to add to the conversation. You may add up to 20 items at a time",
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CreateItemDto"
+            }
+          }
+        },
+        "required": [
+          "items"
+        ]
+      },
+      "CreateItemsQueryDto": {
+        "type": "object",
+        "properties": {
+          "include": {
+            "description": "Additional fields to include in the response",
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    }
+  }
+}
