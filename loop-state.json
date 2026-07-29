@@ -62,10 +62,40 @@
       ],
       "failed_hypotheses": [],
       "next": "Подтвердить #2 поведенчески (DATABASE_URL на managed Postgres → python3 evals/check.py, метрика rls_tenant). Затем #3 Auth — он разблокирует настоящее хранение настроек и промптов."
+    },
+    {
+      "pass": 5,
+      "task_id": "3",
+      "did": "CDD red→green по задаче #3 «Auth и мультиарендность». Тест evals/tests/test_task03_auth.py (red: 29 невыполненных условий) — статический уровень по исходникам + поведенческий по трём пунктам CDD с настоящим входом через /api/auth/csrf → callback/credentials. Миграция 05_auth.sql: users.password_hash, три функции SECURITY DEFINER с фиксированным search_path (find_user_by_email, memberships_of_user, membership_role), REVOKE от PUBLIC + GRANT только agora_app — иначе логин упирается в RLS на team_members, а снятие политики открыло бы изоляцию целиком. apps/web/lib/server: db.ts (пул pg, withTenant/withoutTenant, транзакция + SET LOCAL ROLE agora_app + set_config('app.tenant_id',$1,true)), auth.config.ts (edge-safe: PUBLIC_PATHS, JWT, trustHost, 401 для /api вместо редиректа на форму), auth.ts (Credentials + argon2id, сравнение с фиктивным хешем при отсутствии пользователя), guard.ts (requireSession→401, requireOwner→403 с перечиткой роли из team_members). middleware.ts переписан с basic-auth на сессию, правило по умолчанию «закрыто». Страница /login, маршрут /api/auth/[...nextauth], типы next-auth.d.ts, скрипт посева apps/web/scripts/seed-auth.mjs. app/api/settings/route.ts: хранилище из памяти процесса заменено на таблицу settings, чтение — любому участнику, запись — только owner. Секреты в .env.local сгенерированы (4 CHANGE_ME), 05_auth.sql подключён в migrate.sh после создания ролей.",
+      "verdict": "test_task03_auth.py GREEN по статическому уровню (поведенческий — skip: нет BASE_URL/DATABASE_URL в среде исполнителя). tsc --noEmit 0 ошибок; next build exit 0, 36 страниц, middleware 85.6 kB, /login статическая, /api/auth/[...nextauth] и /api/settings динамические. test_task01 и test_task02 без регрессий. Задача #3 НЕ помечена done: три пункта CDD (401, 403, tenant в RLS-контексте) выносит верификатор в среде пользователя.",
+      "findings": [
+        "В test_task02_db_rls.py был латентный дефект: `SET LOCAL app.tenant_id = %s`. Команда SET в PostgreSQL не принимает параметры запроса, psycopg шлёт их расширенным протоколом — поведенческая проверка изоляции упала бы синтаксической ошибкой при первом же прогоне на живой базе. Заменено на set_config(name, value, true) и там, и в приложении.",
+        "Вход невозможен без обхода RLS на team_members: тенант-контекст ещё не установлен, политика отдаёт ноль строк. Обход сведён к трём функциям SECURITY DEFINER с узким контрактом вместо снятия политики или BYPASSRLS.",
+        "Роль в JWT живёт неделю, а членство может быть отозвано раньше. requireOwner перечитывает роль из базы на каждом owner-действии, а не верит токену.",
+        "settings.cost_cap_calls IS NULL кодирует режим «авто», и числовое значение при этом хранить негде — после переключения на «авто» ползунок показывает умолчание. Кандидат: колонка settings.cost_cap_value.",
+        "api-1.json (2896 строк сырого дампа OpenAPI) уехал в коммит v2 в корень репозитория."
+      ],
+      "failed_hypotheses": [],
+      "next": "Подтвердить #2 и #3 в среде пользователя: preflight.py → migrate.sh → check.py (rls_tenant), затем seed-auth.mjs (owner + member) и BASE_URL=… MEMBER_EMAIL=… MEMBER_PASSWORD=… python3 evals/tests/test_task03_auth.py. После этого #4 Persona DNA — единственная разблокированная задача фазы Ф0."
+    },
+    {
+      "pass": 6,
+      "task_id": "3 (починка по прогону пользователя)",
+      "did": "Пользователь подтвердил #2 на managed Postgres (rls_tenant = pass) и прогнал #3 — вскрылись два дефекта. 01_extensions.sql: ветка ELSE делала ALTER ROLE agora_app NOSUPERUSER NOBYPASSRLS, а снятие этих атрибутов разрешено только суперпользователю — на managed-инстансе миграция падала, даже когда роль уже была в нужном состоянии. Принуждение заменено на проверку pg_temp.ensure_restricted_role(): роль с SUPERUSER/BYPASSRLS останавливает миграцию с внятным текстом, безопасная пропускается, CREATEDB/CREATEROLE снимаются с перехватом insufficient_privilege. Хеширование переведено с @node-rs/argon2 (нативный) на hash-wasm (WebAssembly, тот же argon2id): каталог node_modules общий для macOS пользователя, Linux помощника и alpine-образа воркера, нативная сборка ставится под одну платформу и ломает две другие. DUMMY_HASH перегенерирован боевыми параметрами. seed-auth.mjs печатает готовую команду для второго вызова с подставленным uuid команды. В тест добавлена проверка «реализация хеша не привязана к платформе».",
+      "verdict": "tsc --noEmit 0 ошибок; next build exit 0 (36 страниц); test_task03 GREEN статически, живьём подтверждены GET /api/settings → 401 и GET /api/health → 200; test_task02 без регрессий. Пункты CDD 403 и tenant-контекст ждут посева пользователей в среде пользователя.",
+      "findings": [
+        "ALTER ROLE … NOSUPERUSER/NOBYPASSRLS требует суперпользователя даже когда атрибут уже снят. Любой скрипт, приводящий роль к безопасному виду принуждением, неработоспособен на managed-инстансе.",
+        "node_modules общий между macOS пользователя и Linux песочницы помощника. Нативные npm-модули в apps/web запрещены де-факто: установка с одной стороны ломает запуск с другой. Ограничение закреплено проверкой в тесте.",
+        "gen_user на TimeWeb не владелец базы (WARN в preflight) — часть DDL может быть недоступна; на текущих миграциях не сказалось."
+      ],
+      "failed_hypotheses": [
+        "«Нативный argon2 (@node-rs) — правильный выбор для self-host»: неверно в этой конфигурации. Общий node_modules между платформами делает нативную сборку неработоспособной, WASM решает это без смены алгоритма."
+      ],
+      "next": "Пользователю: bash infra/postgres/migrate.sh (01 починен) → seed-auth.mjs owner + member → дождаться готовности dev-сервера → BASE_URL/MEMBER_EMAIL/MEMBER_PASSWORD python3 evals/tests/test_task03_auth.py. Затем #4 Persona DNA."
     }
   ],
   "failed_hypotheses": [],
-  "next": "Pass 5: подтвердить #2 на развёрнутом Postgres (rls_tenant), затем #3 Auth и мультиарендность",
+  "next": "Pass 7: подтвердить #3 (403 + tenant-контекст) в среде пользователя, затем #4 Persona DNA",
   "decisions_applied": {
     "execution": "Вариант B — петля в среде пользователя. Sandbox помощника не подходит: нет docker, node 22 вместо 24, python 3.10 вместо 3.14, api.timeweb.cloud недоступен.",
     "repo": "Корень монорепо = папка AGORA. Реструктуризация выполнена в Pass 1.",
@@ -78,10 +108,11 @@
     "ПЕРЕВЫПУСТИТЬ два утёкших ключа (AIza… и sk-…) из удалённого backup/ — удаление файлов не отменяет утечку",
     "Новый GitHub-репозиторий (чистая история) не создан",
     "Фикстура evals/fixtures/long_12min.mp4 отсутствует (нужна для e2e_long, задача #22)",
-    "short_60s.mp4 синтетический (testsrc) — для субъективных оценок нужен реальный контент"
+    "short_60s.mp4 синтетический (testsrc) — для субъективных оценок нужен реальный контент",
+    "Клиенты БД на машине пользователя: pip install 'psycopg[binary]' pymongo redis boto3; psql (brew install libpq)"
   ],
   "budget": {
     "max_passes": 40,
-    "used_passes": 4
+    "used_passes": 6
   }
 }

@@ -16,28 +16,53 @@ CREATE EXTENSION IF NOT EXISTS citext;
 -- владельца таблицы не действует без FORCE. Поэтому приложение обязано ходить в
 -- базу под отдельной ограниченной ролью, а не под postgres. Владелец таблиц —
 -- миграционная роль; приложение получает только DML-права.
-DO $$
+-- Существующая роль НЕ приводится к безопасному виду через ALTER: снятие
+-- SUPERUSER и BYPASSRLS разрешено только суперпользователю, а на managed-инстансе
+-- (TimeWeb, RDS и подобные) выданная роль им не является. Прежняя редакция
+-- падала на `ALTER ROLE agora_app NOSUPERUSER …` даже тогда, когда роль уже была
+-- в нужном состоянии. Поэтому здесь проверка вместо принуждения: небезопасная
+-- роль останавливает миграцию с внятным текстом, безопасная — пропускается.
+-- Это честнее: скрипт не делает вид, что починил то, чего починить не может.
+CREATE OR REPLACE FUNCTION pg_temp.ensure_restricted_role(p_role text)
+RETURNS void
+LANGUAGE plpgsql
+AS $fn$
+DECLARE
+  r record;
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'agora_app') THEN
-    CREATE ROLE agora_app NOLOGIN NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE;
-  ELSE
-    -- Если роль уже была — приводим к безопасному состоянию принудительно.
-    ALTER ROLE agora_app NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE;
+  SELECT rolsuper, rolbypassrls, rolcreatedb, rolcreaterole
+    INTO r FROM pg_roles WHERE rolname = p_role;
+
+  IF NOT FOUND THEN
+    EXECUTE format(
+      'CREATE ROLE %I NOLOGIN NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE', p_role);
+    RETURN;
+  END IF;
+
+  IF r.rolsuper OR r.rolbypassrls THEN
+    RAISE EXCEPTION
+      'роль % имеет SUPERUSER или BYPASSRLS: политики RLS на неё не действуют и изоляция арендаторов не работает. Снимите атрибуты от имени суперпользователя: ALTER ROLE % NOSUPERUSER NOBYPASSRLS',
+      p_role, p_role;
+  END IF;
+
+  -- CREATEDB/CREATEROLE снимаются и без суперпользователя, но только владельцем
+  -- роли. Если и это запрещено — предупреждение, а не остановка: на изоляцию
+  -- арендаторов эти два атрибута не влияют.
+  IF r.rolcreatedb OR r.rolcreaterole THEN
+    BEGIN
+      EXECUTE format('ALTER ROLE %I NOCREATEDB NOCREATEROLE', p_role);
+    EXCEPTION WHEN insufficient_privilege THEN
+      RAISE WARNING 'у роли % остались CREATEDB/CREATEROLE, снять их текущими правами нельзя', p_role;
+    END;
   END IF;
 END
-$$;
+$fn$;
+
+SELECT pg_temp.ensure_restricted_role('agora_app');
 
 -- Роль, под которой отдаётся публичная страница расшаренного отчёта (#29).
 -- Прав ещё меньше: только чтение, и только то, что разрешит политика по токену.
-DO $$
-BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'agora_share') THEN
-    CREATE ROLE agora_share NOLOGIN NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE;
-  ELSE
-    ALTER ROLE agora_share NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE;
-  END IF;
-END
-$$;
+SELECT pg_temp.ensure_restricted_role('agora_share');
 
 
 -- ─────────────────────────────────────────────────────────────────────────

@@ -301,8 +301,13 @@ else:
                 with conn.cursor() as cur:
                     # Готовим два арендатора и по строке проекта у каждого.
                     cur.execute("SET LOCAL role agora_app")
+                    # SET LOCAL app.tenant_id = %s НЕ работает: команда SET в PostgreSQL
+                    # не принимает параметры запроса, а psycopg отправляет их по
+                    # расширенному протоколу — получится синтаксическая ошибка. То же
+                    # ограничение действует и в приложении, поэтому и там, и здесь
+                    # используется обычная функция set_config(name, value, is_local).
                     for t, name in ((tenant_a, "tenant-a"), (tenant_b, "tenant-b")):
-                        cur.execute("SET LOCAL app.tenant_id = %s", (str(t),))
+                        cur.execute("SELECT set_config('app.tenant_id', %s, true)", (str(t),))
                         cur.execute(
                             "INSERT INTO teams (id, name) VALUES (%s, %s) "
                             "ON CONFLICT DO NOTHING",
@@ -314,7 +319,7 @@ else:
                         )
 
                     # Смотрим из-под A: строк B быть не должно нигде.
-                    cur.execute("SET LOCAL app.tenant_id = %s", (str(tenant_a),))
+                    cur.execute("SELECT set_config('app.tenant_id', %s, true)", (str(tenant_a),))
                     leaks = []
                     for table in ["projects"]:
                         cur.execute(

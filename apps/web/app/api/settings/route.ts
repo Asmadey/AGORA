@@ -1,51 +1,107 @@
-import { NextResponse } from "next/server";
 import { DEFAULT_SETTINGS, parseSettings, type TenantSettings } from "@/lib/settings";
+import { withTenant } from "@/lib/server/db";
+import { requireOwner, requireSession, toResponse } from "@/lib/server/guard";
 
 /**
- * Настройки арендатора (задача #27).
+ * Настройки арендатора (задача #27), этап 2 из 2.
  *
- * ЭТАП 1 из 2. Контракт и валидация — настоящие; хранилище — временное.
+ * Хранилище в памяти процесса, стоявшее здесь до задачи #3, заменено на таблицу
+ * settings. Появление сессии сняло причину заглушки: теперь есть tenant_id, от
+ * чьего имени идёт запись, и RLS отвечает за то, что команда видит только свою
+ * строку. Форма запроса и ответа, а также валидация в lib/settings.ts не
+ * изменились — как и обещал комментарий этапа 1.
  *
- * Значения лежат в памяти процесса, а не в Postgres, потому что таблица settings
- * scoped по tenant_id, а tenant_id берётся из сессии Auth.js — то есть до задачи #3
- * писать в базу физически некуда: не существует арендатора, от чьего имени идёт
- * запись. Класть настройки в БД без tenant_id значит завести строку, которую потом
- * придётся мигрировать вручную и которая до миграции видна всем.
+ * ─── Кто что может ─────────────────────────────────────────────────────
+ * Чтение — любой участник команды: значения влияют на все её прогоны, и member
+ * должен видеть, по каким правилам считается его исследование.
+ * Запись — только owner: смена модели транскрипции и потолка стоимости меняет
+ * цену и длительность прогонов для всей команды.
  *
- * Что переживёт переезд на БД без изменений: форма запроса и ответа, валидация в
- * lib/settings.ts, поведение интерфейса. Меняются только две строки ниже —
- * чтение и запись.
- *
- * ВНИМАНИЕ: память процесса обнуляется при перезапуске сервера и не разделяется
- * между воркерами Node. Это приемлемо ровно потому, что это заглушка на один шаг.
+ * ─── Известное ограничение ─────────────────────────────────────────────
+ * В схеме cost_cap_calls IS NULL означает «авто». Числовое значение при этом
+ * хранить негде, поэтому после переключения на «авто» и перезагрузки страницы
+ * ползунок показывает значение по умолчанию, а не последнее выбранное.
+ * Кандидат на исправление — отдельная колонка settings.cost_cap_value; заводить
+ * её вместе с миграцией аутентификации было бы не к месту.
  */
 
 export const dynamic = "force-dynamic";
+export const runtime = "nodejs";
 
-let stored: TenantSettings = { ...DEFAULT_SETTINGS };
+interface SettingsRow {
+  cost_cap_calls: number | null;
+  whisper_model: TenantSettings["whisperModel"];
+  default_replication_count: number;
+}
+
+function rowToSettings(row: SettingsRow): TenantSettings {
+  return {
+    costCap: row.cost_cap_calls === null ? "auto" : "hard",
+    costCapValue: row.cost_cap_calls ?? DEFAULT_SETTINGS.costCapValue,
+    whisperModel: row.whisper_model,
+    defaultReplication: row.default_replication_count as TenantSettings["defaultReplication"],
+  };
+}
 
 export async function GET() {
-  return NextResponse.json({
-    settings: stored,
-    persistence: "memory",
-    note: "Постоянное хранение появится вместе с таблицей settings (задачи #2, #3).",
-  });
+  try {
+    const { tenantId } = await requireSession();
+
+    const settings = await withTenant(tenantId, async (client) => {
+      const { rows } = await client.query<SettingsRow>(
+        "SELECT cost_cap_calls, whisper_model, default_replication_count FROM settings WHERE tenant_id = $1",
+        [tenantId],
+      );
+      // Строки может не быть: команда заведена, настройки ни разу не сохранялись.
+      // Это не ошибка — отдаём умолчания, те же, что показывает интерфейс.
+      return rows[0] ? rowToSettings(rows[0]) : DEFAULT_SETTINGS;
+    });
+
+    return Response.json({ settings, persistence: "postgres" });
+  } catch (error) {
+    return toResponse(error);
+  }
 }
 
 export async function PUT(request: Request) {
-  let body: unknown;
   try {
-    body = await request.json();
-  } catch {
-    return NextResponse.json({ error: "тело запроса не является корректным JSON" }, { status: 400 });
+    const { tenantId } = await requireOwner();
+
+    let body: unknown;
+    try {
+      body = await request.json();
+    } catch {
+      return Response.json({ error: "тело запроса не является корректным JSON" }, { status: 400 });
+    }
+
+    const parsed = parseSettings(body);
+    if (!parsed.ok) {
+      return Response.json(
+        { error: "настройки не прошли валидацию", details: parsed.errors },
+        { status: 400 },
+      );
+    }
+
+    const value = parsed.value;
+    const costCapCalls = value.costCap === "auto" ? null : value.costCapValue;
+
+    const settings = await withTenant(tenantId, async (client) => {
+      const { rows } = await client.query<SettingsRow>(
+        `INSERT INTO settings (tenant_id, cost_cap_calls, whisper_model, default_replication_count)
+         VALUES ($1, $2, $3, $4)
+         ON CONFLICT (tenant_id) DO UPDATE SET
+           cost_cap_calls            = EXCLUDED.cost_cap_calls,
+           whisper_model             = EXCLUDED.whisper_model,
+           default_replication_count = EXCLUDED.default_replication_count,
+           updated_at                = now()
+         RETURNING cost_cap_calls, whisper_model, default_replication_count`,
+        [tenantId, costCapCalls, value.whisperModel, value.defaultReplication],
+      );
+      return rowToSettings(rows[0]);
+    });
+
+    return Response.json({ settings, persistence: "postgres" });
+  } catch (error) {
+    return toResponse(error);
   }
-
-  const parsed = parseSettings(body);
-  if (!parsed.ok) {
-    return NextResponse.json({ error: "настройки не прошли валидацию", details: parsed.errors }, { status: 400 });
-  }
-
-  stored = parsed.value;
-
-  return NextResponse.json({ settings: stored, persistence: "memory" });
 }
