@@ -105,8 +105,11 @@ GRANT EXECUTE ON FUNCTION app.find_user_by_email(text)    TO agora_app;
 GRANT EXECUTE ON FUNCTION app.memberships_of_user(uuid)   TO agora_app;
 GRANT EXECUTE ON FUNCTION app.membership_role(uuid, uuid) TO agora_app;
 
--- users не входит в список таблиц с RLS (миграция 03): пользователь — глобальная
--- сущность, один человек состоит в нескольких командах, и политика по tenant_id
--- к нему неприменима. Доступ ограничивается правами на колонки.
-GRANT SELECT (id, email, name, image, email_verified) ON users TO agora_app;
-GRANT UPDATE (name, image, password_hash) ON users TO agora_app;
+-- Права на саму таблицу users выданы в 03_rls.sql (SELECT, INSERT, UPDATE для
+-- agora_app) и здесь не повторяются. Колоночные GRANT добавлять бессмысленно:
+-- они расширяют доступ, а не сужают его, и рядом с уже выданным табличным
+-- правом создавали бы ложное впечатление ограничения.
+--
+-- users намеренно не под RLS (миграция 03): пользователь — глобальная сущность,
+-- один человек состоит в нескольких командах, и политика по tenant_id к нему
+-- неприменима. Изоляцию даёт team_members, который под политикой.

@@ -1,6 +1,5 @@
 import "server-only";
 
-import { readFileSync } from "node:fs";
 import { Pool, type PoolClient } from "pg";
 
 /**
@@ -34,25 +33,35 @@ const APP_ROLE = "agora_app";
 
 let pool: Pool | null = null;
 
-function sslOptions() {
+/**
+ * Строка подключения с корневым сертификатом внутри.
+ *
+ * Передать `ssl: { ca }` отдельным полем НЕЛЬЗЯ: pg собирает конфигурацию как
+ * `Object.assign({}, config, parse(connectionString))`, то есть разобранная
+ * строка перезаписывает явно заданные поля. `sslmode=verify-full` даёт
+ * `ssl: { rejectUnauthorized: true }` без ca — и корневой сертификат молча
+ * исчезает, а соединение падает с SELF_SIGNED_CERT_IN_CHAIN. Поэтому путь к
+ * сертификату уезжает параметром самой строки: pg-connection-string прочитает
+ * файл сам.
+ *
+ * Дубликат этой логики есть в apps/web/scripts/seed-auth.mjs — скрипт запускается
+ * отдельным процессом и не может импортировать модуль с "server-only".
+ */
+function connectionString(): string {
+  const url = process.env.DATABASE_URL;
+  if (!url) {
+    throw new Error("DATABASE_URL не задан: серверные маршруты не могут работать без базы");
+  }
   const caPath = process.env.PGSSLROOTCERT;
-  if (!caPath) return undefined;
-  // verify-full: проверяем и цепочку, и имя хоста. Понижение до rejectUnauthorized:false
-  // здесь недопустимо — в строке подключения едет пароль.
-  return { ca: readFileSync(caPath, "utf8"), rejectUnauthorized: true };
+  if (!caPath || url.includes("sslrootcert=")) return url;
+  return `${url}${url.includes("?") ? "&" : "?"}sslrootcert=${encodeURIComponent(caPath)}`;
 }
 
 function getPool(): Pool {
   if (pool) return pool;
 
-  const connectionString = process.env.DATABASE_URL;
-  if (!connectionString) {
-    throw new Error("DATABASE_URL не задан: серверные маршруты не могут работать без базы");
-  }
-
   pool = new Pool({
-    connectionString,
-    ssl: sslOptions(),
+    connectionString: connectionString(),
     max: Number(process.env.PGPOOL_MAX ?? 10),
     idleTimeoutMillis: 30_000,
     connectionTimeoutMillis: 10_000,

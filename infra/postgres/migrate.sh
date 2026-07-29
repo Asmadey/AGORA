@@ -99,24 +99,37 @@ echo "── Логин-роли ───────────────�
   -v app_password="$AGORA_APP_PASSWORD" \
   -v share_password="$AGORA_SHARE_PASSWORD" \
   -v dbname="$(q 'SELECT current_database()')" <<'EOSQL' >/dev/null
+-- Существующая роль проверяется, а не переписывается: NOSUPERUSER и NOBYPASSRLS
+-- умеет ставить только суперпользователь, причём даже когда атрибут уже снят.
+-- На managed-инстансе выданная роль суперпользователем не является, и прежний
+-- безусловный ALTER останавливал скрипт на роли, которая и так была в порядке.
 DO $$
+DECLARE r record;
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'agora_login') THEN
+  SELECT rolsuper, rolbypassrls INTO r FROM pg_roles WHERE rolname = 'agora_login';
+  IF NOT FOUND THEN
     CREATE ROLE agora_login LOGIN NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE;
-  ELSE
-    ALTER ROLE agora_login LOGIN NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE;
+  ELSIF r.rolsuper OR r.rolbypassrls THEN
+    RAISE EXCEPTION 'роль agora_login имеет SUPERUSER или BYPASSRLS — приложение обходило бы RLS. Снимите атрибуты суперпользователем: ALTER ROLE agora_login NOSUPERUSER NOBYPASSRLS';
   END IF;
 END
 $$;
 ALTER ROLE agora_login PASSWORD :'app_password';
+-- NOINHERIT обязателен: без него соединение получает права agora_app сразу,
+-- и забытый SET LOCAL ROLE перестаёт быть заметен. Менять этот атрибут
+-- суперпользователем быть не нужно — достаточно прав владельца роли.
 ALTER ROLE agora_login NOINHERIT;
 GRANT agora_app   TO agora_login;
 GRANT agora_share TO agora_login;
 
 DO $$
+DECLARE r record;
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'agora_share_login') THEN
+  SELECT rolsuper, rolbypassrls INTO r FROM pg_roles WHERE rolname = 'agora_share_login';
+  IF NOT FOUND THEN
     CREATE ROLE agora_share_login LOGIN NOSUPERUSER NOBYPASSRLS NOCREATEDB NOCREATEROLE NOINHERIT;
+  ELSIF r.rolsuper OR r.rolbypassrls THEN
+    RAISE EXCEPTION 'роль agora_share_login имеет SUPERUSER или BYPASSRLS';
   END IF;
 END
 $$;
