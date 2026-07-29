@@ -48,10 +48,24 @@
       ],
       "failed_hypotheses": [],
       "next": "Интерфейс формально не закрывает задачи #6–#12/#21 — они остаются pending до подключения бэкенда. Приоритет прежний: подтвердить #2 (rls_tenant), затем #3 Auth или #4 Persona DNA."
+    },
+    {
+      "pass": 4,
+      "task_id": "UI-фиксы по замечаниям пользователя (#10, #26, #27 частично)",
+      "did": "Каркас: удалена кнопка «Новое исследование» из бокового меню, скролл отдан только рабочей области (h-screen + overflow-hidden на контейнере, overflow-y-auto на main). Конструктор анкеты components/agora/SurveyBuilder.tsx: карандаш/корзина у каждого вопроса, 5 типов из acceptance #10 (шкала/эмоции/удержание/рекомендация/открытый), редактор с валидацией пустой подписи и границ шкалы, рабочее «Добавить вопрос», правка базовых 5 разрешена с плашкой об отключении сравнения с корпусом и restore на вопрос и на всю пятёрку. Типы SurveyQuestion/QuestionType/BaseCriterionKey в agora-types. Настройки: lib/settings.ts (контракт + валидация), app/api/settings (GET/PUT, хранилище в памяти процесса как явный этап 1), страница с draft/saved, кнопкой «Сохранить», отменой, beforeunload на грязном состоянии. Промпт-студия: lib/prompt-registry.ts читает настоящие prompts/*.md, счётчик переменных из шаблона, страница /prompts/[key] с подсветкой плейсхолдеров. Воркер: TranscriptionConfig.for_task(snapshot) с приоритетом снимка над env и ConfigError на невалидном значении, 4 новых теста. Проект связки настройки→воркер в docs/settings_to_worker.md. middleware.ts: убрана захардкоженная пара admin/admin, basic-auth включается только при заданных BASIC_AUTH_USER/PASSWORD.",
+      "verdict": "tsc --noEmit 0 ошибок; next build exit 0 (30 маршрутов, /prompts/[key] пререндерится по 13 ключам); живой сервер: /, /studies/new, /settings, /prompts, /prompts/qa.consistency → 200, /prompts/nope → 404; PUT /api/settings валидный → 200 и читается обратно, мусорный → 400 с перечнем полей, битый JSON → 400. Воркер: 30 тестов + ruff clean. check.py: pass=2 fail=2 skip=11 — build_frontend fail только из-за отсутствия node_modules в песочнице исполнителя, в /tmp с зависимостями сборка зелёная.",
+      "findings": [
+        "Базовые 5 критериев по решению пользователя сделаны редактируемыми вопреки формулировке acceptance #10 («убрать нельзя»). Компенсация: ключи overall_impression…cinematography остаются в модели данных, а расхождение с калибровкой корпуса показано плашкой и обратимо одним кликом. Acceptance #10 требует уточнения формулировки.",
+        "Настройки намеренно не пишутся в Postgres: таблица settings scoped по tenant_id, а tenant_id даёт Auth.js (#3). Запись без арендатора создала бы строку, видимую всем и требующую ручной миграции.",
+        "WHISPER_MODEL как переменная compose не может обслуживать per-tenant настройку в принципе — нужен снимок настроек в задаче по образцу prompts_snapshot. Добавлена колонка-кандидат tasks.settings_snapshot, описана в docs/settings_to_worker.md.",
+        "Пользователь развернул managed Postgres 18 / Mongo 8.0 / Valkey 9.1 + S3 на TimeWeb — блокер снят, задача #2 может быть подтверждена поведенчески."
+      ],
+      "failed_hypotheses": [],
+      "next": "Подтвердить #2 поведенчески (DATABASE_URL на managed Postgres → python3 evals/check.py, метрика rls_tenant). Затем #3 Auth — он разблокирует настоящее хранение настроек и промптов."
     }
   ],
   "failed_hypotheses": [],
-  "next": "Pass 3: после подтверждения #2 — задача #3 (Auth и мультиарендность) либо #4 (Persona DNA); обе разблокируются одновременно",
+  "next": "Pass 5: подтвердить #2 на развёрнутом Postgres (rls_tenant), затем #3 Auth и мультиарендность",
   "decisions_applied": {
     "execution": "Вариант B — петля в среде пользователя. Sandbox помощника не подходит: нет docker, node 22 вместо 24, python 3.10 вместо 3.14, api.timeweb.cloud недоступен.",
     "repo": "Корень монорепо = папка AGORA. Реструктуризация выполнена в Pass 1.",
@@ -62,13 +76,12 @@
   },
   "blockers_for_user": [
     "ПЕРЕВЫПУСТИТЬ два утёкших ключа (AIza… и sk-…) из удалённого backup/ — удаление файлов не отменяет утечку",
-    "Managed БД (Postgres 18 / Mongo 8.0 / Valkey 9.1) + S3-бакет на TimeWeb не развёрнуты",
     "Новый GitHub-репозиторий (чистая история) не создан",
     "Фикстура evals/fixtures/long_12min.mp4 отсутствует (нужна для e2e_long, задача #22)",
     "short_60s.mp4 синтетический (testsrc) — для субъективных оценок нужен реальный контент"
   ],
   "budget": {
     "max_passes": 40,
-    "used_passes": 3
+    "used_passes": 4
   }
 }

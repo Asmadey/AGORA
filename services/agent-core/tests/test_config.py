@@ -8,7 +8,14 @@ from __future__ import annotations
 import pytest
 
 from agent_core import __version__
-from agent_core.config import ConfigError, ModelConfig, StorageConfig, TranscriptionConfig
+from agent_core.config import (
+    DIARIZATION_PIPELINES,
+    ConfigError,
+    DiarizationConfig,
+    ModelConfig,
+    StorageConfig,
+    TranscriptionConfig,
+)
 
 
 def test_package_importable():
@@ -74,3 +81,62 @@ def test_transcription_for_task_rejects_unsupported_model(monkeypatch):
     monkeypatch.setenv("WHISPER_MODEL", "large-v3")
     with pytest.raises(ConfigError, match="payload.settings.whisper_model"):
         TranscriptionConfig.for_task("whisper-1")
+
+
+# ─── Провайдер моделей: агент TimeWeb ─────────────────────────────────────
+
+def test_model_config_sends_required_proxy_header(monkeypatch):
+    """x-proxy-source помечен required в OpenAPI провайдера; SDK его не шлёт.
+    Без заголовка запрос отклоняется до модели, поэтому он часть конфигурации."""
+    monkeypatch.setenv("OPENAI_API_KEY", "k")
+    assert ModelConfig.from_env().default_headers == {"x-proxy-source": "agora"}
+
+
+def test_vlm_falls_back_to_same_agent(monkeypatch):
+    """Один агент = одна модель. Пустой VLM_BASE_URL означает общий агент —
+    и это должно быть видно в конфигурации, а не выясняться по счёту."""
+    monkeypatch.setenv("OPENAI_API_KEY", "k")
+    monkeypatch.setenv("OPENAI_BASE_URL", "https://agent.timeweb.cloud/api/v1/cloud-ai/agents/abc/v1")
+    monkeypatch.delenv("VLM_BASE_URL", raising=False)
+    cfg = ModelConfig.from_env()
+    assert cfg.vlm_base_url == cfg.base_url
+    assert cfg.vlm_shares_agent is True
+
+
+def test_separate_vlm_agent_is_detected(monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "k")
+    monkeypatch.setenv("OPENAI_BASE_URL", "https://agent.timeweb.cloud/api/v1/cloud-ai/agents/text/v1")
+    monkeypatch.setenv("VLM_BASE_URL", "https://agent.timeweb.cloud/api/v1/cloud-ai/agents/vision/v1")
+    assert ModelConfig.from_env().vlm_shares_agent is False
+
+
+# ─── Диаризация: pyannote на своём железе ─────────────────────────────────
+
+def test_diarization_requires_hf_token(monkeypatch):
+    """Веса закрыты принятием условий на HF — без токена загрузка вернёт 401."""
+    monkeypatch.delenv("PYANNOTE_TOKEN", raising=False)
+    with pytest.raises(ConfigError, match="PYANNOTE_TOKEN"):
+        DiarizationConfig.from_env()
+
+
+def test_diarization_rejects_hosted_premium_pipeline(monkeypatch):
+    """precision-2 исполняется на серверах pyannoteAI. Для self-host-продукта это
+    молчаливая передача пользовательского аудио третьей стороне."""
+    monkeypatch.setenv("PYANNOTE_TOKEN", "hf_x")
+    monkeypatch.setenv("DIARIZATION_PIPELINE", "pyannote/speaker-diarization-precision-2")
+    with pytest.raises(ConfigError, match="self-host"):
+        DiarizationConfig.from_env()
+
+
+def test_diarization_telemetry_off_by_default(monkeypatch):
+    """pyannote.audio 4.x включает телеметрию по умолчанию."""
+    monkeypatch.setenv("PYANNOTE_TOKEN", "hf_x")
+    monkeypatch.delenv("PYANNOTE_METRICS_ENABLED", raising=False)
+    assert DiarizationConfig.from_env().telemetry is False
+
+
+@pytest.mark.parametrize("pipeline", list(DIARIZATION_PIPELINES))
+def test_diarization_accepts_both_local_pipelines(monkeypatch, pipeline):
+    monkeypatch.setenv("PYANNOTE_TOKEN", "hf_x")
+    monkeypatch.setenv("DIARIZATION_PIPELINE", pipeline)
+    assert DiarizationConfig.from_env().pipeline == pipeline

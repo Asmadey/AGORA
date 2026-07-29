@@ -3,8 +3,8 @@
   "green": false,
   "summary": {
     "pass": 2,
-    "fail": 1,
-    "skip": 12,
+    "fail": 2,
+    "skip": 11,
     "total": 15
   },
   "results": [
@@ -18,11 +18,11 @@
     },
     {
       "name": "build_frontend",
-      "status": "skip",
+      "status": "fail",
       "required": true,
-      "threshold": null,
-      "actual": null,
-      "detail": "node_modules not installed (npm ci)"
+      "threshold": "exit 0",
+      "actual": "exit 1",
+      "detail": "cycle script `build` failed with error:\nnpm error code 1\nnpm error path /sessions/sleepy-optimistic-dijkstra/mnt/AGORA/apps/web\nnpm error workspace @agora/web@0.1.0\nnpm error location /sessions/sleepy-optimistic-dijkstra/mnt/AGORA/apps/web\nnpm error command failed\nnpm error command sh -c next build\n"
     },
     {
       "name": "build_worker",
