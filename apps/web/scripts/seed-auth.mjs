@@ -17,7 +17,7 @@
  *   node apps/web/scripts/seed-auth.mjs --team-id <uuid> --email m@example.com --password '…' --role member
  */
 import { randomBytes, randomUUID } from "node:crypto";
-import { readFileSync } from "node:fs";
+
 import { parseArgs } from "node:util";
 
 import { argon2id } from "hash-wasm";
@@ -46,11 +46,22 @@ if (!["owner", "member"].includes(values.role)) {
   process.exit(2);
 }
 
-const ca = process.env.PGSSLROOTCERT ? readFileSync(process.env.PGSSLROOTCERT, "utf8") : undefined;
-const client = new pg.Client({
-  connectionString: process.env.DATABASE_URL,
-  ssl: ca ? { ca, rejectUnauthorized: true } : undefined,
-});
+// Сертификат передаётся параметром строки подключения, а не полем ssl: pg
+// собирает конфигурацию как Object.assign({}, config, parse(connectionString)),
+// и разобранная строка затирает явно заданный ssl вместе с корневым
+// сертификатом. Та же логика в apps/web/lib/server/db.ts — там же объяснение.
+function dsn() {
+  const url = process.env.DATABASE_URL;
+  if (!url) {
+    console.error("DATABASE_URL не задан: сделайте `set -a; source .env.local; set +a`");
+    process.exit(2);
+  }
+  const caPath = process.env.PGSSLROOTCERT;
+  if (!caPath || url.includes("sslrootcert=")) return url;
+  return `${url}${url.includes("?") ? "&" : "?"}sslrootcert=${encodeURIComponent(caPath)}`;
+}
+
+const client = new pg.Client({ connectionString: dsn() });
 
 // Параметры argon2id по OWASP: 19 МиБ памяти, 2 прохода, параллелизм 1.
 // Они уезжают внутрь строки хеша (формат PHC), поэтому поднять их позже можно
