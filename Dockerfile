@@ -1,11 +1,18 @@
-# apps/web — Next.js (Node 24, PRD §15). Контекст сборки — корень монорепо.
-# syntax=docker/dockerfile:1
+# AGORA — корневой Dockerfile для TimeWeb App Platform
+#
+# TimeWeb App Platform требует Dockerfile в корне репозитория.
+# Реальный Dockerfile — в infra/web.Dockerfile (сборка Next.js standalone).
+# Этот файл делегирует туда.
+#
+# Вариант деплоя в панели TimeWeb:
+#   Тип: Dockerfile
+#   Источник: GitHub → Asmadey/AGORA → main
+#   Dockerfile: /Dockerfile (этот файл, в корне)
 
 FROM node:24-alpine AS deps
 WORKDIR /repo
 COPY package.json package-lock.json* ./
 COPY apps/web/package.json apps/web/package.json
-# npm ci требует lock-файл; если его нет — падаем на install, но в CI должен быть ci.
 RUN npm ci --workspaces --include-workspace-root || npm install
 
 FROM node:24-alpine AS builder
@@ -20,7 +27,6 @@ FROM node:24-alpine AS runner
 WORKDIR /app
 ENV NODE_ENV=production NEXT_TELEMETRY_DISABLED=1
 
-# Непривилегированный пользователь — контейнер не должен ходить под root.
 RUN addgroup -g 1001 -S nodejs && adduser -S nextjs -u 1001
 
 COPY --from=builder --chown=nextjs:nodejs /repo/apps/web/.next/standalone ./
