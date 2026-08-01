@@ -201,15 +201,16 @@ else:
         import psycopg
         with psycopg.connect(dsn) as conn:
             with conn.cursor() as cur:
-                # Get existing team (seeded)
+                cur.execute("BEGIN")
+                cur.execute("SET LOCAL ROLE agora_app")
+                # Get existing team via definer function (bypasses RLS)
                 cur.execute("SELECT id FROM teams LIMIT 1")
                 row = cur.fetchone()
                 if not row:
-                    skip("INSERT персоны в Postgres", "нет команд в базе — выполните seed-auth.mjs")
+                    check("INSERT персоны с валидной DNA", False, "нет команд в базе")
+                    conn.rollback()
                 else:
                     tenant = str(row[0])
-                    cur.execute("BEGIN")
-                    cur.execute("SET LOCAL ROLE agora_app")
                     cur.execute("SELECT set_config('app.tenant_id', %s, true)", (tenant,))
                     cur.execute("INSERT INTO persona_sets (tenant_id, name, size) VALUES (%s, %s, %s) RETURNING id",
                                 (tenant, "test-dna", 1))
