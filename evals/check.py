@@ -468,6 +468,123 @@ def _todo(name):
     return _res(name, "skip", detail="subsystem not implemented yet")
 
 
+def check_prompts_editable():
+    """Метрика prompts_editable (задача #26).
+
+    Проверяет, что правка промпта у арендатора меняет то, что уходит в модель,
+    и не задевает другого арендатора. Без живой базы — честно skip.
+
+    Поведенческая проверка: два арендатора, у одного — своя версия, у второго
+    дефолт. Резолвер отдаёт каждому свою версию. Без БД проверяется только
+    наличие файлов: миграции, резолвера и API-роутов.
+    """
+    init_dir = REPO / "infra" / "postgres" / "init"
+    if not (init_dir / "07_prompts_seed.sql").exists():
+        return _res("prompts_editable", "skip",
+                    detail="07_prompts_seed.sql ещё не сгенерирован (задача #26)")
+
+    # Статическая проверка: резолвер использует ORDER BY tenant_id NULLS LAST
+    resolver = WEB / "lib" / "server" / "prompts.ts"
+    if not resolver.exists():
+        return _res("prompts_editable", "skip",
+                    detail="apps/web/lib/server/prompts.ts не найден (задача #26)")
+    src = resolver.read_text(encoding="utf-8", errors="ignore")
+    if "ORDER BY tenant_id NULLS LAST" not in src:
+        return _res("prompts_editable", "fail",
+                    threshold="ORDER BY tenant_id NULLS LAST",
+                    actual="не найдено в резолвере",
+                    detail="резолвер должен использовать один запрос с ORDER BY tenant_id NULLS LAST")
+
+    # API-роуты существуют
+    api_dir = WEB / "app" / "api" / "prompts"
+    required_routes = [
+        api_dir / "route.ts",
+        api_dir / "[key]" / "route.ts",
+        api_dir / "[key]" / "activate" / "route.ts",
+        api_dir / "[key]" / "preview" / "route.ts",
+    ]
+    missing_routes = [str(p.relative_to(WEB)) for p in required_routes if not p.exists()]
+    if missing_routes:
+        return _res("prompts_editable", "skip",
+                    detail=f"API-роуты не найдены: {', '.join(missing_routes)}")
+
+    # Поведенческая проверка требует живой БД
+    dsn = os.environ.get("DATABASE_URL")
+    if not dsn:
+        return _res("prompts_editable", "skip",
+                    threshold="cross-tenant prompt isolation",
+                    detail="DATABASE_URL не задан — проверка требует живой Postgres")
+    try:
+        import psycopg
+    except ImportError:
+        return _res("prompts_editable", "skip",
+                    threshold="cross-tenant prompt isolation",
+                    detail="psycopg не установлен: pip install 'psycopg[binary]'")
+
+    import uuid as _uuid
+    tenant_a, tenant_b = _uuid.uuid4(), _uuid.uuid4()
+    test_key = "qa.grounding"  # один из 13 засеянных ключей
+    test_marker = f"TEST_MARKER_{_uuid.uuid4().hex[:8]}"
+
+    try:
+        with psycopg.connect(dsn, autocommit=False) as conn:
+            with conn.cursor() as cur:
+                cur.execute("SET LOCAL ROLE agora_app")
+
+                # Создаём двух арендаторов
+                for t, nm in ((tenant_a, "prompt-verif-a"), (tenant_b, "prompt-verif-b")):
+                    cur.execute("SELECT set_config('app.tenant_id', %s, true)", (str(t),))
+                    cur.execute("INSERT INTO teams (id, name) VALUES (%s, %s)", (t, nm))
+
+                # Арендатор A сохраняет свою версию промпта с маркером
+                cur.execute("SELECT set_config('app.tenant_id', %s, true)", (str(tenant_a),))
+                cur.execute(
+                    "INSERT INTO prompts (tenant_id, key, stage, template, variables, "
+                    "model_params, version, is_active, is_default) "
+                    "VALUES (%s, %s, (SELECT stage FROM prompts WHERE key = %s LIMIT 1), "
+                    "%s, '[]'::jsonb, '{}'::jsonb, 2, true, false)",
+                    (tenant_a, test_key, test_key, test_marker),
+                )
+
+                # Арендатор A видит свою версию (с маркером)
+                cur.execute(
+                    "SELECT template FROM prompts WHERE key = %s AND is_active = true "
+                    "ORDER BY tenant_id NULLS LAST LIMIT 1",
+                    (test_key,),
+                )
+                a_template = cur.fetchone()[0]
+                if test_marker not in a_template:
+                    return _res("prompts_editable", "fail",
+                                threshold="арендатор A видит свою версию",
+                                actual="маркер не найден в резолве A",
+                                detail=f"ожидался маркер {test_marker}")
+
+                # Арендатор B видит дефолт (без маркера)
+                cur.execute("SELECT set_config('app.tenant_id', %s, true)", (str(tenant_b),))
+                cur.execute(
+                    "SELECT template FROM prompts WHERE key = %s AND is_active = true "
+                    "ORDER BY tenant_id NULLS LAST LIMIT 1",
+                    (test_key,),
+                )
+                b_template = cur.fetchone()[0]
+                if test_marker in b_template:
+                    return _res("prompts_editable", "fail",
+                                threshold="арендатор B видит дефолт, а не версию A",
+                                actual="маркер A найден в резолве B",
+                                detail="правка A утекла в B — изоляция нарушена")
+
+            conn.rollback()
+
+        return _res("prompts_editable", "pass",
+                    threshold="cross-tenant prompt isolation",
+                    actual="A видит свою, B — дефолт",
+                    detail="изоляция версий промптов работает")
+    except Exception as e:
+        return _res("prompts_editable", "fail",
+                    threshold="cross-tenant prompt isolation",
+                    detail=f"{type(e).__name__}: {str(e)[:180]}")
+
+
 CHECKS = [
     check_tasks_done,
     _npm_build,
@@ -481,7 +598,7 @@ CHECKS = [
     check_persona_grounding,
     lambda: _todo("response_diversity"),
     lambda: _todo("qa_catches_injected"),
-    lambda: _todo("prompts_editable"),
+    check_prompts_editable,
     check_secret_scan,
     lambda: _todo("subjective_persona_realism"),   # external LLM grader, blind, ≥7/10
     lambda: _todo("subjective_report_quality"),     # external LLM grader, blind, ≥7/10
