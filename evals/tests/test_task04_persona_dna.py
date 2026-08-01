@@ -206,8 +206,8 @@ else:
                 import uuid as _u
                 tenant = str(_u.uuid4())
                 cur.execute("SELECT set_config('app.tenant_id', %s, true)", (tenant,))
-                cur.execute("INSERT INTO persona_sets (tenant_id, name) VALUES (%s, %s) RETURNING id",
-                            (tenant, "test-dna"))
+                cur.execute("INSERT INTO persona_sets (tenant_id, name, size) VALUES (%s, %s, %s) RETURNING id",
+                            (tenant, "test-dna", 1))
                 ps_id = cur.fetchone()[0]
                 fixture_str = json.dumps(fixture)
                 cur.execute(
