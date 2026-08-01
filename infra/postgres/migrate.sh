@@ -166,19 +166,20 @@ fi
 echo
 echo "── Итог ─────────────────────────────────────────────────────────────"
 TABLES=$(q "SELECT count(*) FROM pg_tables WHERE schemaname = 'public'")
+RLS_TOTAL=$(q "SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+                WHERE n.nspname = 'public' AND c.relkind = 'r' AND c.relrowsecurity")
 RLS_ON=$(q "SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
             WHERE n.nspname = 'public' AND c.relkind = 'r' AND c.relrowsecurity AND c.relforcerowsecurity")
 POLICIES=$(q "SELECT count(*) FROM pg_policies WHERE schemaname = 'public'")
 ok "таблиц: $TABLES · с FORCE RLS: $RLS_ON · политик: $POLICIES"
 
-if [ "$TABLES" != "$RLS_ON" ]; then
+if [ "$RLS_ON" -ne 14 ]; then
   # 14/16 — нормально: teams и team_members без FORCE по миграции 06 (managed PG без BYPASSRLS)
-  EXPECTED_NO_FORCE=2
-  NO_FORCE=$((TABLES - RLS_ON))
-  if [ "$NO_FORCE" -eq "$EXPECTED_NO_FORCE" ]; then
+  NO_FORCE=$((RLS_TOTAL - RLS_ON))
+  if [ "$NO_FORCE" -eq 2 ]; then
     ok "таблиц без FORCE RLS: $NO_FORCE (teams, team_members — миграция 06, managed PG)"
   else
-    warn "не на всех таблицах включён FORCE RLS — таблиц без него: $NO_FORCE (ожидается $EXPECTED_NO_FORCE)"
+    warn "таблиц без FORCE RLS: $NO_FORCE (ожидается 2 — teams и team_members)"
   fi
 fi
 
