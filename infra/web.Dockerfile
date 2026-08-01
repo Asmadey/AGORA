@@ -28,16 +28,7 @@ COPY --from=builder --chown=nextjs:nodejs /repo/apps/web/.next/static ./apps/web
 # hash-wasm (argon2id) — Next.js standalone не включает WASM-модули автоматически.
 COPY --from=builder --chown=nextjs:nodejs /repo/node_modules/hash-wasm ./node_modules/hash-wasm
 
-# TLS-сертификат TimeWeb для sslmode=verify-full (managed Postgres)
-# chmod 0644 — сертификат должен быть читаем пользователем nextjs (uid 1001)
-RUN apk add --no-cache wget && \
-    mkdir -p /certs && \
-    wget -q -O /certs/root.crt https://st.timeweb.com/cloud-static/ca.crt && \
-    chmod 0644 /certs/root.crt && \
-    apk del wget
-
 USER nextjs
 EXPOSE 3000
 ENV PORT=3000 HOSTNAME=0.0.0.0
-ENV PGSSLROOTCERT=/certs/root.crt
 CMD ["node", "apps/web/server.js"]
