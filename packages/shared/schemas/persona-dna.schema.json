@@ -1,0 +1,361 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agora.dev/schemas/persona-dna.schema.json",
+  "title": "Persona DNA",
+  "description": "Контракт между фронтом и воркером: полное описание синтетической персоны. Восемь обязательных категорий, narrative и seed. Валидируется при INSERT в personas.dna.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "demographics",
+    "big_five",
+    "values_and_beliefs",
+    "viewer_behavior",
+    "communication_style",
+    "decision_making",
+    "technology_usage",
+    "lifestyle_and_interests",
+    "narrative",
+    "seed"
+  ],
+  "properties": {
+    "demographics": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["gender", "age", "age_group", "geo", "city", "children"],
+      "properties": {
+        "gender": {
+          "type": "string",
+          "enum": ["муж", "жен"],
+          "description": "Пол. Совпадает со значениями корпуса unified_respondent_sessions.json."
+        },
+        "age": {
+          "type": "integer",
+          "minimum": 14,
+          "maximum": 80,
+          "description": "Возраст в годах."
+        },
+        "age_group": {
+          "type": "string",
+          "enum": ["14-17", "18-24", "25-34", "35-44", "45-59", "60+"],
+          "description": "Возрастная группа. Перечисление взято из фактических значений корпуса."
+        },
+        "geo": {
+          "type": "string",
+          "enum": ["столицы", "центры субъектов", "иные НП"],
+          "description": "Тип населённого пункта. Перечисление из корпуса."
+        },
+        "city": {
+          "type": "string",
+          "description": "Название города."
+        },
+        "children": {
+          "type": "string",
+          "enum": ["Да, есть ребенок / дети", "Нет детей", "Не указано"],
+          "description": "Наличие детей."
+        }
+      }
+    },
+    "big_five": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["openness", "conscientiousness", "extraversion", "agreeableness", "neuroticism"],
+      "description": "Большая пятёрка (OCEAN). Decision Log #7: целые 1–5, не 0–1 и не проценты.",
+      "properties": {
+        "openness": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 5,
+          "description": "Открытость опыту."
+        },
+        "conscientiousness": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 5,
+          "description": "Добросовестность."
+        },
+        "extraversion": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 5,
+          "description": "Экстраверсия."
+        },
+        "agreeableness": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 5,
+          "description": "Доброжелательность."
+        },
+        "neuroticism": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 5,
+          "description": "Нейротизм."
+        }
+      }
+    },
+    "values_and_beliefs": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["important_values", "worldview", "political_orientation", "religious_attitude"],
+      "properties": {
+        "important_values": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "description": "Значения из корпуса: Справедливость, Крепкая семья, Патриотизм и т.д."
+          }
+        },
+        "worldview": {
+          "type": "string",
+          "enum": ["традиционалистская", "либеральная", "консервативная", "прагматическая", "неопределённая"],
+          "description": "Мировоззренческая ориентация."
+        },
+        "political_orientation": {
+          "type": "string",
+          "enum": ["аполитичен", "умеренно-консервативный", "умеренно-либеральный", "активно-консервативный", "активно-либеральный"],
+          "description": "Политическая ориентация."
+        },
+        "religious_attitude": {
+          "type": "string",
+          "enum": ["воцерковлённый", "верующий невоцерковлённый", "agnostic", "атеист"],
+          "description": "Отношение к религии."
+        }
+      }
+    },
+    "viewer_behavior": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "preferred_genres",
+        "violence_tolerance",
+        "pacing_tolerance",
+        "length_tolerance",
+        "franchise_loyalty",
+        "actor_loyalty",
+        "recommendation_influence",
+        "ideological_response",
+        "ad_response",
+        "production_expectations",
+        "attention_span"
+      ],
+      "description": "Зрительское поведение. Минимум 8 полей. Термин viewer_*, не consumer_*.",
+      "properties": {
+        "preferred_genres": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "enum": ["драма", "комедия", "триллер", "детектив", "мелодрама", "фантастика", "фэнтези", "исторический", "документальный", "реалити-шоу", "анимация", "хоррор", "боевик", "криминал", "военный", "спорт"]
+          }
+        },
+        "violence_tolerance": {
+          "type": "string",
+          "enum": ["низкая", "средняя", "высокая"],
+          "description": "Толерантность к насилию на экране."
+        },
+        "pacing_tolerance": {
+          "type": "string",
+          "enum": ["медленный", "умеренный", "быстрый"],
+          "description": "Предпочитаемый темп повествования."
+        },
+        "length_tolerance": {
+          "type": "string",
+          "enum": ["короткие ролики", "серии 20-40 мин", "полноценные серии 40-60 мин", "полные фильмы"],
+          "description": "Толерантность к длине контента."
+        },
+        "franchise_loyalty": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 5,
+          "description": "Лояльность к франшизам (1 — не важна, 5 — определяет просмотр)."
+        },
+        "actor_loyalty": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 5,
+          "description": "Лояльность к актёрам (1 — не важна, 5 — определяет просмотр)."
+        },
+        "recommendation_influence": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 5,
+          "description": "Влияние рекомендаций (1 — не влияют, 5 — решающее)."
+        },
+        "ideological_response": {
+          "type": "string",
+          "enum": ["отвергает", "критичен", "нейтрален", "восприимчив", "ищет"],
+          "description": "Реакция на идеологические посылы."
+        },
+        "ad_response": {
+          "type": "string",
+          "enum": ["раздражение", "игнорирование", "нейтральное", "интерес", "доверие"],
+          "description": "Реакция на рекламные посылы."
+        },
+        "production_expectations": {
+          "type": "string",
+          "enum": ["низкие", "средние", "высокие"],
+          "description": "Ожидания от качества продакшена."
+        },
+        "attention_span": {
+          "type": "string",
+          "enum": ["короткий", "средний", "длинный"],
+          "description": "Способность удерживать внимание."
+        }
+      }
+    },
+    "communication_style": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["verbosity", "directness", "emotionality", "humor", "conflict_style"],
+      "properties": {
+        "verbosity": {
+          "type": "string",
+          "enum": ["лаконичный", "умеренный", "подробный"],
+          "description": "Многословность."
+        },
+        "directness": {
+          "type": "string",
+          "enum": ["прямой", "окольный", "завуалированный"],
+          "description": "Прямота высказываний."
+        },
+        "emotionality": {
+          "type": "string",
+          "enum": ["сдержанный", "умеренный", "эмоциональный"],
+          "description": "Эмоциональная выразительность."
+        },
+        "humor": {
+          "type": "string",
+          "enum": ["без юмора", "ироничный", "добродушный", "саркастический"],
+          "description": "Стиль юмора."
+        },
+        "conflict_style": {
+          "type": "string",
+          "enum": ["избегание", "компромисс", "конфронтация", "сотрудничество"],
+          "description": "Стиль поведения в конфликте."
+        }
+      }
+    },
+    "decision_making": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["style", "risk_appetite", "brand_loyalty", "impulsivity"],
+      "properties": {
+        "style": {
+          "type": "string",
+          "enum": ["рациональный", "эмоциональный", "интуитивный", "смешанный"],
+          "description": "Стиль принятия решений."
+        },
+        "risk_appetite": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 5,
+          "description": "Склонность к риску (1 — избегает, 5 — ищет)."
+        },
+        "brand_loyalty": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 5,
+          "description": "Лояльность к брендам/платформам (1 — легко меняет, 5 — предан)."
+        },
+        "impulsivity": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 5,
+          "description": "Импульсивность решений (1 — взвешенный, 5 — спонтанный)."
+        }
+      }
+    },
+    "technology_usage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["devices", "platforms", "social_media", "streaming_frequency", "tech_savviness"],
+      "properties": {
+        "devices": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "enum": ["smartphone", "tablet", "laptop", "smart-tv", "desktop"]
+          }
+        },
+        "platforms": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "enum": ["YouTube", "Кинопоиск", "Иви", "Okko", "Premier", "Wink", "VK Видео", "Telegram", "Яндекс.Дзен", "VK", "Одноклассники"]
+          }
+        },
+        "social_media": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "enum": ["Telegram", "VK", "Одноклассники", "WhatsApp", "Viber", "не пользуется"]
+          }
+        },
+        "streaming_frequency": {
+          "type": "string",
+          "enum": ["редко", "раз в неделю", "несколько раз в неделю", "ежедневно"],
+          "description": "Частота просмотра стримингового контента."
+        },
+        "tech_savviness": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 5,
+          "description": "Техническая грамотность (1 — базовая, 5 — продвинутая)."
+        }
+      }
+    },
+    "lifestyle_and_interests": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["hobbies", "media_consumption", "social_activity", "work_status", "education_level"],
+      "properties": {
+        "hobbies": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "enum": ["чтение", "кино/сериалы", "спорт", "путешествия", "готовка", "музыка", "игры", "рукоделие", "садоводство", "рыбалка/охота", "коллекционирование", "волонтёрство", "танцы", "фотография"]
+          }
+        },
+        "media_consumption": {
+          "type": "string",
+          "enum": ["минимальное", "умеренное", "высокое", "очень высокое"],
+          "description": "Общий уровень потребления медиа."
+        },
+        "social_activity": {
+          "type": "string",
+          "enum": ["одиночка", "малый круг", "широкий круг", "тусовщик"],
+          "description": "Уровень социальной активности."
+        },
+        "work_status": {
+          "type": "string",
+          "enum": ["работает", "учится", "работает и учится", "домохозяйка/домохозяин", "пенсионер", "безработный"],
+          "description": "Занятость."
+        },
+        "education_level": {
+          "type": "string",
+          "enum": ["неполное среднее", "среднее", "среднее специальное", "неполное высшее", "высшее", "учёная степень"],
+          "description": "Уровень образования."
+        }
+      }
+    },
+    "narrative": {
+      "type": "string",
+      "minLength": 100,
+      "description": "Текстовое описание персоны в свободной форме: backstory, мотивация, характер."
+    },
+    "seed": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Seed для воспроизводимости генерации."
+    }
+  }
+}
