@@ -345,6 +345,125 @@ def check_rls_tenant():
                     detail=f"{type(e).__name__}: {str(e)[:180]}")
 
 
+def check_schema_drift():
+    """Расхождение между миграциями и живой базой.
+
+    Сравнивает фактическое состояние (relrowsecurity, relforcerowsecurity,
+    pg_policies, атрибуты ролей rolsuper/rolbypassrls) с тем, что следует
+    из миграций. Расхождение — красная метрика.
+
+    Что проверяется:
+    1. FORCE RLS на всех таблицах, где миграции его объявляют (03_rls.sql).
+    2. agora_login НЕ имеет BYPASSRLS (01_extensions.sql, AGENTS.md §5).
+    3. Количество политик соответствует ожидаемому из миграций.
+    4. Нет «призраков» — политик, которых нет в миграциях (заведены руками).
+
+    Без живой базы — честно skip.
+    """
+    init_dir = REPO / "infra" / "postgres" / "init"
+    if not (init_dir / "03_rls.sql").exists():
+        return _res("schema_drift", "skip", detail="миграции RLS ещё не написаны (задача #2)")
+
+    dsn = os.environ.get("DATABASE_URL") or os.environ.get("POSTGRES_ADMIN_URL")
+    if not dsn:
+        return _res("schema_drift", "skip", threshold="0 drifts",
+                    detail="DATABASE_URL не задан — нет подключения к живой базе")
+    try:
+        import psycopg
+    except ImportError:
+        return _res("schema_drift", "skip", threshold="0 drifts",
+                    detail="psycopg не установлен: pip install 'psycopg[binary]'")
+
+    # Ожидаемое множество таблиц с FORCE RLS — парсим 03_rls.sql.
+    rls_sql = (init_dir / "03_rls.sql").read_text(encoding="utf-8", errors="ignore")
+    expected_force_tables = set(re.findall(
+        r"ALTER\s+TABLE\s+(\w+)\s+FORCE\s+ROW\s+LEVEL\s+SECURITY", rls_sql, re.IGNORECASE
+    ))
+
+    # Ожидаемое количество политик — парсим все миграции.
+    expected_policy_count = 0
+    for sql_file in sorted(init_dir.glob("*.sql")):
+        text = sql_file.read_text(encoding="utf-8", errors="ignore")
+        # CREATE POLICY ... ON <table> — считаем уникальные (table, policy_name).
+        expected_policy_count += len(re.findall(
+            r"CREATE\s+POLICY\s+\w+\s+ON\s+\w+", text, re.IGNORECASE
+        ))
+
+    drifts = []
+    try:
+        with psycopg.connect(dsn, autocommit=True) as conn:
+            with conn.cursor() as cur:
+                # 1. FORCE RLS: все ли таблицы из 03_rls.sql имеют force=true?
+                cur.execute("""
+                    SELECT c.relname, c.relrowsecurity, c.relforcerowsecurity
+                    FROM pg_class c
+                    JOIN pg_namespace n ON n.oid = c.relnamespace
+                    WHERE n.nspname = 'public' AND c.relkind = 'r'
+                      AND c.relrowsecurity = true
+                    ORDER BY c.relname
+                """)
+                actual_rls = {r[0]: {"rls": r[1], "force": r[2]} for r in cur.fetchall()}
+
+                for tbl in sorted(expected_force_tables):
+                    info = actual_rls.get(tbl)
+                    if not info:
+                        drifts.append(f"таблица {tbl} — нет в базе (миграция не применена?)")
+                    elif not info["force"]:
+                        drifts.append(f"таблица {tbl} — FORCE RLS снят (ожидается ON)")
+
+                # 2. agora_login не должен иметь BYPASSRLS.
+                cur.execute("""
+                    SELECT rolname, rolbypassrls, rolsuper
+                    FROM pg_roles
+                    WHERE rolname IN ('agora_login', 'agora_app', 'agora_share_login')
+                    ORDER BY rolname
+                """)
+                for rname, bypass, sup in cur.fetchall():
+                    if bypass:
+                        drifts.append(f"роль {rname} имеет BYPASSRLS — нарушение AGENTS.md §5")
+                    if sup and rname != "agora":
+                        drifts.append(f"роль {rname} — суперпользователь (неожиданно)")
+
+                # 3. Количество политик.
+                cur.execute("""
+                    SELECT count(*) FROM pg_policies WHERE schemaname = 'public'
+                """)
+                actual_policies = cur.fetchone()[0]
+                if actual_policies != expected_policy_count:
+                    drifts.append(
+                        f"политик: {actual_policies} в базе vs {expected_policy_count} в миграциях"
+                    )
+
+                # 4. Призраки: политики, которых нет ни в одной миграции.
+                cur.execute("""
+                    SELECT policyname FROM pg_policies WHERE schemaname = 'public'
+                    ORDER BY policyname
+                """)
+                actual_policy_names = {r[0] for r in cur.fetchall()}
+
+                expected_policy_names = set()
+                for sql_file in sorted(init_dir.glob("*.sql")):
+                    text = sql_file.read_text(encoding="utf-8", errors="ignore")
+                    expected_policy_names.update(
+                        m.group(1)
+                        for m in re.finditer(
+                            r"CREATE\s+POLICY\s+(\w+)\s+ON", text, re.IGNORECASE
+                        )
+                    )
+
+                ghosts = actual_policy_names - expected_policy_names
+                if ghosts:
+                    drifts.append(f"политики-призраки (нет в миграциях): {', '.join(sorted(ghosts))}")
+
+        return _res("schema_drift", "pass" if not drifts else "fail",
+                    threshold="0 drifts",
+                    actual="0" if not drifts else f"{len(drifts)} drifts",
+                    detail="; ".join(drifts[:8]))
+    except Exception as e:
+        return _res("schema_drift", "fail", threshold="0 drifts",
+                    detail=f"{type(e).__name__}: {str(e)[:180]}")
+
+
 def _todo(name):
     return _res(name, "skip", detail="subsystem not implemented yet")
 
@@ -358,6 +477,7 @@ CHECKS = [
     check_e2e_long,
     lambda: _todo("isolation_persona"),
     check_rls_tenant,
+    check_schema_drift,
     check_persona_grounding,
     lambda: _todo("response_diversity"),
     lambda: _todo("qa_catches_injected"),
