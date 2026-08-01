@@ -1,0 +1,65 @@
+{
+  "demographics": {
+    "gender": "жен",
+    "age": 33,
+    "age_group": "25-34",
+    "geo": "столицы",
+    "city": "Москва",
+    "children": "Да, есть ребенок / дети"
+  },
+  "big_five": {
+    "openness": 4,
+    "conscientiousness": 3,
+    "extraversion": 3,
+    "agreeableness": 4,
+    "neuroticism": 3
+  },
+  "values_and_beliefs": {
+    "important_values": ["Справедливость", "Крепкая семья"],
+    "worldview": "прагматическая",
+    "political_orientation": "аполитичен",
+    "religious_attitude": "верующий невоцерковлённый"
+  },
+  "viewer_behavior": {
+    "preferred_genres": ["драма", "мелодрама", "комедия"],
+    "violence_tolerance": "низкая",
+    "pacing_tolerance": "умеренный",
+    "length_tolerance": "серии 20-40 мин",
+    "franchise_loyalty": 3,
+    "actor_loyalty": 2,
+    "recommendation_influence": 4,
+    "ideological_response": "нейтрален",
+    "ad_response": "игнорирование",
+    "production_expectations": "средние",
+    "attention_span": "средний"
+  },
+  "communication_style": {
+    "verbosity": "умеренный",
+    "directness": "прямой",
+    "emotionality": "умеренный",
+    "humor": "добродушный",
+    "conflict_style": "компромисс"
+  },
+  "decision_making": {
+    "style": "смешанный",
+    "risk_appetite": 2,
+    "brand_loyalty": 3,
+    "impulsivity": 2
+  },
+  "technology_usage": {
+    "devices": ["smartphone", "laptop", "smart-tv"],
+    "platforms": ["Кинопоиск", "YouTube", "Telegram"],
+    "social_media": ["Telegram", "VK", "WhatsApp"],
+    "streaming_frequency": "несколько раз в неделю",
+    "tech_savviness": 3
+  },
+  "lifestyle_and_interests": {
+    "hobbies": ["кино/сериалы", "чтение", "путешествия"],
+    "media_consumption": "высокое",
+    "social_activity": "малый круг",
+    "work_status": "работает",
+    "education_level": "высшее"
+  },
+  "narrative": "Анна, 33 года, Москва. Работает маркетологом в средней компании, воспитывает дочь 5 лет. Сериалы смотрит вечером после работы — это её способ переключиться. Любит драмы и мелодрамы, избегает жестокости. Выбирает контент по рекомендациям подруг и алгоритмов Кинопоиска. К рекламе относится равнодушно, к идеологическим посылам — скептически. Технически подкована средне: смартфон и ноутбук — основные устройства, Smart TV — для вечернего просмотра.",
+  "seed": 42
+}
