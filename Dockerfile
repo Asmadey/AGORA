@@ -1,13 +1,5 @@
-# AGORA — корневой Dockerfile для TimeWeb App Platform
-#
-# TimeWeb App Platform требует Dockerfile в корне репозитория.
-# Реальный Dockerfile — в infra/web.Dockerfile (сборка Next.js standalone).
-# Этот файл делегирует туда.
-#
-# Вариант деплоя в панели TimeWeb:
-#   Тип: Dockerfile
-#   Источник: GitHub → Asmadey/AGORA → main
-#   Dockerfile: /Dockerfile (этот файл, в корне)
+# AGORA — корневой Dockerfile
+# Next.js standalone build for local Docker (self-hosted Postgres, no SSL needed)
 
 FROM node:24-alpine AS deps
 WORKDIR /repo
@@ -32,19 +24,9 @@ COPY --from=builder --chown=nextjs:nodejs /repo/apps/web/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /repo/apps/web/.next/static ./apps/web/.next/static
 
 # hash-wasm (argon2id) — Next.js standalone не включает WASM-модули автоматически.
-# Без этого authorize() падает с Cannot find module 'hash-wasm'.
 COPY --from=builder --chown=nextjs:nodejs /repo/node_modules/hash-wasm ./node_modules/hash-wasm
-
-# TLS-сертификат TimeWeb для sslmode=verify-full (managed Postgres)
-# chmod 0644 — сертификат должен быть читаем пользователем nextjs (uid 1001)
-RUN apk add --no-cache wget && \
-    mkdir -p /certs && \
-    wget -q -O /certs/root.crt https://st.timeweb.com/cloud-static/ca.crt && \
-    chmod 0644 /certs/root.crt && \
-    apk del wget
 
 USER nextjs
 EXPOSE 3000
 ENV PORT=3000 HOSTNAME=0.0.0.0
-ENV PGSSLROOTCERT=/certs/root.crt
 CMD ["node", "apps/web/server.js"]
