@@ -1,0 +1,45 @@
+# AGORA — TimeWeb App Platform (Docker Compose)
+#
+# Этот файл адаптирован для деплоя через TimeWeb App Platform:
+# - docker-compose.yml в корне репозитория (требование платформы)
+# - без volumes (запрещены платформой)
+# - только web (БД — managed, воркер — отдельно)
+# - переменные окружения задаются в панели TimeWeb
+#
+# Локальный запуск (не для TimeWeb):
+#   docker compose -f infra/docker-compose.yml --env-file .env.local up -d
+#
+# Локальный запуск с managed-БД:
+#   docker compose -f infra/docker-compose.yml -f infra/docker-compose.managed.yml \
+#     --env-file .env.local up -d web worker
+
+services:
+  web:
+    build:
+      context: .
+      dockerfile: infra/web.Dockerfile
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      NODE_ENV: production
+      AUTH_SECRET: ${AUTH_SECRET:?AUTH_SECRET обязателен}
+      AUTH_URL: ${AUTH_URL:-http://localhost:3000}
+      APP_URL: ${APP_URL:-http://localhost:3000}
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL обязателен}
+      MONGODB_URL: ${MONGODB_URL:-}
+      VALKEY_URL: ${VALKEY_URL:-}
+      S3_ENDPOINT: ${S3_ENDPOINT:-}
+      S3_REGION: ${S3_REGION:-ru-1}
+      S3_BUCKET: ${S3_BUCKET:-}
+      S3_ACCESS_KEY: ${S3_ACCESS_KEY:-}
+      S3_SECRET_KEY: ${S3_SECRET_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
+      MODEL_PROXY_SOURCE: ${MODEL_PROXY_SOURCE:-agora}
+      AI_MODEL: ${AI_MODEL:-qwen3.7-plus}
+      VLM_MODEL: ${VLM_MODEL:-qwen3.7-plus}
+      WHISPER_MODEL: ${WHISPER_MODEL:-large-v3}
+      WHISPER_COMPUTE_TYPE: ${WHISPER_COMPUTE_TYPE:-int8}
+      BASIC_AUTH_USER: ${BASIC_AUTH_USER:-}
+      BASIC_AUTH_PASSWORD: ${BASIC_AUTH_PASSWORD:-}
