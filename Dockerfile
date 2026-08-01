@@ -30,7 +30,6 @@ RUN addgroup -g 1001 -S nodejs && adduser -S nextjs -u 1001
 
 COPY --from=builder --chown=nextjs:nodejs /repo/apps/web/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /repo/apps/web/.next/static ./apps/web/.next/static
-COPY --from=builder --chown=nextjs:nodejs /repo/apps/web/public ./apps/web/public
 
 # TLS-сертификат TimeWeb для sslmode=verify-full (managed Postgres)
 RUN apk add --no-cache wget && \
