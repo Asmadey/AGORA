@@ -19,7 +19,8 @@
     "up": "docker compose -f infra/docker-compose.yml --env-file .env.local up -d",
     "down": "docker compose -f infra/docker-compose.yml down",
     "logs": "docker compose -f infra/docker-compose.yml logs -f",
-    "codegen": "json-schema-to-typescript packages/shared/schemas/persona-dna.schema.json -o packages/shared/types/persona-dna.ts && datamodel-codegen --input packages/shared/schemas/persona-dna.schema.json --output services/agent-core/agent_core/schemas/persona_dna.py"
+    "codegen": "json-schema-to-typescript packages/shared/schemas/persona-dna.schema.json -o packages/shared/types/persona-dna.ts && datamodel-codegen --input packages/shared/schemas/persona-dna.schema.json --output services/agent-core/agent_core/schemas/persona_dna.py",
+    "prompts:seed:sql": "node apps/web/scripts/generate-prompts-seed.mjs"
   },
   "engines": {
     "node": ">=24"
