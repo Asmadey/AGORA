@@ -201,23 +201,28 @@ else:
         import psycopg
         with psycopg.connect(dsn) as conn:
             with conn.cursor() as cur:
-                cur.execute("BEGIN")
-                cur.execute("SET LOCAL ROLE agora_app")
-                import uuid as _u
-                tenant = str(_u.uuid4())
-                cur.execute("SELECT set_config('app.tenant_id', %s, true)", (tenant,))
-                cur.execute("INSERT INTO persona_sets (tenant_id, name, size) VALUES (%s, %s, %s) RETURNING id",
-                            (tenant, "test-dna", 1))
-                ps_id = cur.fetchone()[0]
-                fixture_str = json.dumps(fixture)
-                cur.execute(
-                    "INSERT INTO personas (tenant_id, persona_set_id, name, dna) "
-                    "VALUES (%s, %s, %s, %s::jsonb) RETURNING id",
-                    (tenant, ps_id, "test-persona", fixture_str)
-                )
-                pid = cur.fetchone()
-                check("INSERT персоны с валидной DNA", pid is not None)
-                conn.rollback()
+                # Get existing team (seeded)
+                cur.execute("SELECT id FROM teams LIMIT 1")
+                row = cur.fetchone()
+                if not row:
+                    skip("INSERT персоны в Postgres", "нет команд в базе — выполните seed-auth.mjs")
+                else:
+                    tenant = str(row[0])
+                    cur.execute("BEGIN")
+                    cur.execute("SET LOCAL ROLE agora_app")
+                    cur.execute("SELECT set_config('app.tenant_id', %s, true)", (tenant,))
+                    cur.execute("INSERT INTO persona_sets (tenant_id, name, size) VALUES (%s, %s, %s) RETURNING id",
+                                (tenant, "test-dna", 1))
+                    ps_id = cur.fetchone()[0]
+                    fixture_str = json.dumps(fixture)
+                    cur.execute(
+                        "INSERT INTO personas (tenant_id, persona_set_id, name, dna) "
+                        "VALUES (%s, %s, %s, %s::jsonb) RETURNING id",
+                        (tenant, ps_id, "test-persona", fixture_str)
+                    )
+                    pid = cur.fetchone()
+                    check("INSERT персоны с валидной DNA", pid is not None)
+                    conn.rollback()
     except ImportError:
         skip("INSERT персоны в Postgres", "psycopg не установлен")
     except Exception as e:
