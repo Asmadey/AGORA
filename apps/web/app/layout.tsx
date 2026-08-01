@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import "./globals.css";
 import { AppShell } from "@/components/AppShell";
+import { Providers } from "@/components/Providers";
 
 export const metadata: Metadata = {
   title: "AGORA — синтетические фокус-группы",
@@ -15,7 +16,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         suppressHydrationWarning
         className="min-h-screen bg-background font-sans text-foreground antialiased"
       >
-        <AppShell>{children}</AppShell>
+        <Providers>
+          <AppShell>{children}</AppShell>
+        </Providers>
       </body>
     </html>
   );
