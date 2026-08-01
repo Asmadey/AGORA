@@ -25,6 +25,9 @@ RUN addgroup -g 1001 -S nodejs && adduser -S nextjs -u 1001
 COPY --from=builder --chown=nextjs:nodejs /repo/apps/web/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /repo/apps/web/.next/static ./apps/web/.next/static
 
+# hash-wasm (argon2id) — Next.js standalone не включает WASM-модули автоматически.
+COPY --from=builder --chown=nextjs:nodejs /repo/node_modules/hash-wasm ./node_modules/hash-wasm
+
 # TLS-сертификат TimeWeb для sslmode=verify-full (managed Postgres)
 # chmod 0644 — сертификат должен быть читаем пользователем nextjs (uid 1001)
 RUN apk add --no-cache wget && \
