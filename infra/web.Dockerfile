@@ -26,10 +26,11 @@ COPY --from=builder --chown=nextjs:nodejs /repo/apps/web/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /repo/apps/web/.next/static ./apps/web/.next/static
 
 # TLS-сертификат TimeWeb для sslmode=verify-full (managed Postgres)
+# chmod 0644 — сертификат должен быть читаем пользователем nextjs (uid 1001)
 RUN apk add --no-cache wget && \
     mkdir -p /certs && \
     wget -q -O /certs/root.crt https://st.timeweb.com/cloud-static/ca.crt && \
-    chmod 0600 /certs/root.crt && \
+    chmod 0644 /certs/root.crt && \
     apk del wget
 
 USER nextjs
