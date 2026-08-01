@@ -153,34 +153,16 @@ else
   warn "нет $INIT/05_auth.sql — вход по паролю работать не будет"
 fi
 
-# 06_no_force_auth_tables.sql — снимает FORCE RLS с teams и team_members.
-# Причина: managed PostgreSQL (TimeWeb) не предоставляет BYPASSRLS — без этого
-# SECURITY DEFINER функции не могут читать эти таблицы при логине (tenant_id
-# ещё не установлен). ENABLE RLS остаётся — agora_app изолирован.
-if [ -f "$INIT/06_no_force_auth_tables.sql" ]; then
-  echo "   применяю 06_no_force_auth_tables.sql"
-  "${PSQL[@]}" -f "$INIT/06_no_force_auth_tables.sql" >/dev/null
-  ok "06_no_force_auth_tables.sql"
-fi
-
 echo
 echo "── Итог ─────────────────────────────────────────────────────────────"
 TABLES=$(q "SELECT count(*) FROM pg_tables WHERE schemaname = 'public'")
-RLS_TOTAL=$(q "SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
-                WHERE n.nspname = 'public' AND c.relkind = 'r' AND c.relrowsecurity")
 RLS_ON=$(q "SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
             WHERE n.nspname = 'public' AND c.relkind = 'r' AND c.relrowsecurity AND c.relforcerowsecurity")
 POLICIES=$(q "SELECT count(*) FROM pg_policies WHERE schemaname = 'public'")
 ok "таблиц: $TABLES · с FORCE RLS: $RLS_ON · политик: $POLICIES"
 
-if [ "$RLS_ON" -ne 14 ]; then
-  # 14/16 — нормально: teams и team_members без FORCE по миграции 06 (managed PG без BYPASSRLS)
-  NO_FORCE=$((RLS_TOTAL - RLS_ON))
-  if [ "$NO_FORCE" -eq 2 ]; then
-    ok "таблиц без FORCE RLS: $NO_FORCE (teams, team_members — миграция 06, managed PG)"
-  else
-    warn "таблиц без FORCE RLS: $NO_FORCE (ожидается 2 — teams и team_members)"
-  fi
+if [ "$TABLES" != "$RLS_ON" ]; then
+  warn "не на всех таблицах включён FORCE RLS — таблица без него доступна владельцу целиком"
 fi
 
 echo
