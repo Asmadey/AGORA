@@ -11,7 +11,6 @@ RUN npm ci --workspaces --include-workspace-root || npm install
 FROM node:24-alpine AS builder
 WORKDIR /repo
 COPY --from=deps /repo/node_modules ./node_modules
-COPY --from=deps /repo/apps/web/node_modules ./apps/web/node_modules
 COPY . .
 ENV NEXT_TELEMETRY_DISABLED=1
 RUN npm run build --workspace @agora/web
