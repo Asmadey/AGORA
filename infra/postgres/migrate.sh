@@ -153,6 +153,15 @@ else
   warn "нет $INIT/05_auth.sql — вход по паролю работать не будет"
 fi
 
+# 06_owner_read_auth_tables.sql — политики SELECT для владельца на teams и
+# team_members. FORCE RLS остаётся. Без этой политики SECURITY DEFINER функции
+# не могут читать таблицы при логине (tenant_id ещё не установлен).
+if [ -f "$INIT/06_owner_read_auth_tables.sql" ]; then
+  echo "   применяю 06_owner_read_auth_tables.sql"
+  "${PSQL[@]}" -f "$INIT/06_owner_read_auth_tables.sql" >/dev/null
+  ok "06_owner_read_auth_tables.sql"
+fi
+
 echo
 echo "── Итог ─────────────────────────────────────────────────────────────"
 TABLES=$(q "SELECT count(*) FROM pg_tables WHERE schemaname = 'public'")
