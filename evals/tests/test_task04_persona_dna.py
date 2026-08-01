@@ -197,33 +197,36 @@ if not dsn:
     skip("Pydantic принимает эталонную персону", "Pydantic не установлен")
     skip("Pydantic отвергает невалидные варианты", "Pydantic не установлен")
 else:
+    # Use admin URL if available for fetching team, then switch to app role for INSERT
+    admin_dsn = os.environ.get("POSTGRES_ADMIN_URL", dsn)
     try:
         import psycopg
-        with psycopg.connect(dsn) as conn:
+        with psycopg.connect(admin_dsn) as conn:
             with conn.cursor() as cur:
-                cur.execute("BEGIN")
-                cur.execute("SET LOCAL ROLE agora_app")
-                # Get existing team via definer function (bypasses RLS)
                 cur.execute("SELECT id FROM teams LIMIT 1")
                 row = cur.fetchone()
                 if not row:
                     check("INSERT персоны с валидной DNA", False, "нет команд в базе")
-                    conn.rollback()
                 else:
                     tenant = str(row[0])
-                    cur.execute("SELECT set_config('app.tenant_id', %s, true)", (tenant,))
-                    cur.execute("INSERT INTO persona_sets (tenant_id, name, size) VALUES (%s, %s, %s) RETURNING id",
-                                (tenant, "test-dna", 1))
-                    ps_id = cur.fetchone()[0]
-                    fixture_str = json.dumps(fixture)
-                    cur.execute(
-                        "INSERT INTO personas (tenant_id, persona_set_id, name, dna) "
-                        "VALUES (%s, %s, %s, %s::jsonb) RETURNING id",
-                        (tenant, ps_id, "test-persona", fixture_str)
-                    )
-                    pid = cur.fetchone()
-                    check("INSERT персоны с валидной DNA", pid is not None)
-                    conn.rollback()
+                    # Now test INSERT under agora_app with tenant context
+                    with psycopg.connect(dsn) as app_conn:
+                        with app_conn.cursor() as app_cur:
+                            app_cur.execute("BEGIN")
+                            app_cur.execute("SET LOCAL ROLE agora_app")
+                            app_cur.execute("SELECT set_config('app.tenant_id', %s, true)", (tenant,))
+                            app_cur.execute("INSERT INTO persona_sets (tenant_id, name, size) VALUES (%s, %s, %s) RETURNING id",
+                                        (tenant, "test-dna", 1))
+                            ps_id = app_cur.fetchone()[0]
+                            fixture_str = json.dumps(fixture)
+                            app_cur.execute(
+                                "INSERT INTO personas (tenant_id, persona_set_id, name, dna) "
+                                "VALUES (%s, %s, %s, %s::jsonb) RETURNING id",
+                                (tenant, ps_id, "test-persona", fixture_str)
+                            )
+                            pid = app_cur.fetchone()
+                            check("INSERT персоны с валидной DNA", pid is not None)
+                            app_conn.rollback()
     except ImportError:
         skip("INSERT персоны в Postgres", "psycopg не установлен")
     except Exception as e:
