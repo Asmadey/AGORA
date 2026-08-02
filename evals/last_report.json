@@ -3,8 +3,8 @@
   "green": false,
   "summary": {
     "pass": 2,
-    "fail": 3,
-    "skip": 11,
+    "fail": 2,
+    "skip": 12,
     "total": 16
   },
   "results": [
@@ -18,27 +18,27 @@
     },
     {
       "name": "build_frontend",
-      "status": "pass",
+      "status": "fail",
       "required": true,
       "threshold": "exit 0",
-      "actual": "exit 0",
-      "detail": ""
+      "actual": "exit 1",
+      "detail": "cycle script `build` failed with error:\nnpm error code 1\nnpm error path /sessions/sleepy-optimistic-dijkstra/mnt/AGORA/apps/web\nnpm error workspace @agora/web@0.1.0\nnpm error location /sessions/sleepy-optimistic-dijkstra/mnt/AGORA/apps/web\nnpm error command failed\nnpm error command sh -c next build\n"
     },
     {
       "name": "build_worker",
-      "status": "fail",
+      "status": "pass",
       "required": true,
       "threshold": "pytest+ruff exit 0",
-      "actual": "ruff findings",
+      "actual": "ok",
       "detail": ""
     },
     {
       "name": "compose_health",
-      "status": "fail",
+      "status": "skip",
       "required": true,
-      "threshold": "config valid + all healthy",
-      "actual": "invalid config",
-      "detail": "error while interpolating services.web.environment.OPENAI_API_KEY: required variable OPENAI_API_KEY is missing a value: OPENAI_API_KEY обязателен\n"
+      "threshold": null,
+      "actual": null,
+      "detail": "docker CLI unavailable in this env"
     },
     {
       "name": "e2e_short",
@@ -86,7 +86,7 @@
       "required": true,
       "threshold": "|gen-real|≤0.1",
       "actual": null,
-      "detail": "no generated personas at /Users/asmadey/AntiGravity/AGORA/evals/artifacts/generated_personas.json (Persona Generator not run)"
+      "detail": "no generated personas at /sessions/sleepy-optimistic-dijkstra/mnt/AGORA/evals/artifacts/generated_personas.json (Persona Generator not run)"
     },
     {
       "name": "response_diversity",
