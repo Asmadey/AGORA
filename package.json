@@ -19,8 +19,15 @@
     "up": "docker compose -f infra/docker-compose.yml --env-file .env.local up -d",
     "down": "docker compose -f infra/docker-compose.yml down",
     "logs": "docker compose -f infra/docker-compose.yml logs -f",
-    "codegen": "json-schema-to-typescript packages/shared/schemas/persona-dna.schema.json -o packages/shared/types/persona-dna.ts && json-schema-to-typescript packages/shared/schemas/survey.schema.json -o packages/shared/types/survey.ts && datamodel-codegen --input packages/shared/schemas/persona-dna.schema.json --output services/agent-core/agent_core/schemas/persona_dna.py",
+    "_comment:codegen": "Исполняемый файл пакета json-schema-to-typescript называется json2ts — другого он не ставит. Прежний скрипт вызывал бинарник по имени пакета и падал с command not found; артефакты, лежащие в репозитории, были получены не этой командой.",
+    "codegen": "npm run codegen:persona && npm run codegen:corpus",
+    "codegen:persona": "json2ts packages/shared/schemas/persona-dna.schema.json -o packages/shared/types/persona-dna.ts && datamodel-codegen --input packages/shared/schemas/persona-dna.schema.json --input-file-type jsonschema --output services/agent-core/agent_core/schemas/persona_dna.py --output-model-type pydantic_v2.BaseModel",
+    "codegen:corpus": "json2ts packages/shared/schemas/respondent-session.schema.json -o packages/shared/types/respondent-session.ts && datamodel-codegen --input packages/shared/schemas/respondent-session.schema.json --input-file-type jsonschema --output services/agent-core/agent_core/schemas/respondent_session.py --output-model-type pydantic_v2.BaseModel",
+    "typecheck": "npm run typecheck --workspace @agora/web",
     "prompts:seed:sql": "node apps/web/scripts/generate-prompts-seed.mjs"
+  },
+  "devDependencies": {
+    "json-schema-to-typescript": "^15.0.4"
   },
   "engines": {
     "node": ">=24"

@@ -30,3 +30,9 @@ agora-unified/evals/last_report.json
 
 # Инкрементальный кеш TypeScript — машинный артефакт, в репозитории не нужен
 *.tsbuildinfo
+
+# Анкеты живых респондентов (docs/quiz/) — персональные данные. Исходные XLSX/DOCX
+# не хранятся в git; в репозитории только обезличенный корпус
+# data/grounding/unified_respondent_sessions.json (задача #23, вариант А).
+# Файлы остаются в истории до очистки filter-repo/BFG — см. loop-state blockers.
+docs/quiz/

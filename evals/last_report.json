@@ -3,8 +3,8 @@
   "green": false,
   "summary": {
     "pass": 2,
-    "fail": 2,
-    "skip": 12,
+    "fail": 3,
+    "skip": 11,
     "total": 16
   },
   "results": [
@@ -13,7 +13,7 @@
       "status": "fail",
       "required": true,
       "threshold": "31/31",
-      "actual": "1/31",
+      "actual": "12/31",
       "detail": ""
     },
     {
@@ -26,19 +26,19 @@
     },
     {
       "name": "build_worker",
-      "status": "pass",
+      "status": "fail",
       "required": true,
       "threshold": "pytest+ruff exit 0",
-      "actual": "ok",
+      "actual": "ruff findings",
       "detail": ""
     },
     {
       "name": "compose_health",
-      "status": "skip",
+      "status": "fail",
       "required": true,
-      "threshold": null,
-      "actual": null,
-      "detail": "docker CLI unavailable in this env"
+      "threshold": "config valid + all healthy",
+      "actual": "invalid config",
+      "detail": "error while interpolating services.web.environment.OPENAI_API_KEY: required variable OPENAI_API_KEY is missing a value: OPENAI_API_KEY обязателен\n"
     },
     {
       "name": "e2e_short",
@@ -86,7 +86,7 @@
       "required": true,
       "threshold": "|gen-real|≤0.1",
       "actual": null,
-      "detail": "no generated personas at /sessions/sleepy-optimistic-dijkstra/mnt/AGORA/evals/artifacts/generated_personas.json (Persona Generator not run)"
+      "detail": "no generated personas at /Users/asmadey/AntiGravity/AGORA/evals/artifacts/generated_personas.json (Persona Generator not run)"
     },
     {
       "name": "response_diversity",
@@ -108,17 +108,17 @@
       "name": "prompts_editable",
       "status": "skip",
       "required": true,
-      "threshold": null,
+      "threshold": "cross-tenant prompt isolation",
       "actual": null,
-      "detail": "subsystem not implemented yet"
+      "detail": "DATABASE_URL не задан — проверка требует живой Postgres"
     },
     {
       "name": "secret_scan",
-      "status": "fail",
+      "status": "pass",
       "required": true,
       "threshold": "0",
-      "actual": "1",
-      "detail": "docs/_leak_probe.md:1"
+      "actual": "0",
+      "detail": ""
     },
     {
       "name": "subjective_persona_realism",

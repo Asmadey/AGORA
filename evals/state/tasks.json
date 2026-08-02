@@ -332,16 +332,15 @@
   {
     "id": 23,
     "legacy_id": 31,
-    "subject": "Датасет XLS+DOCX (grounding-пайплайн)",
+    "subject": "Grounding-корпус: схема, паспорт, единая точка доступа",
     "phase": "Ф3",
-    "status": "done",
+    "status": "pending",
     "blockedBy": [
       2
     ],
     "verifies": [],
-    "cdd": "пайплайн унификации воспроизводит существующие 165 записей из исходных XLS+DOCX побайтово-эквивалентно по ключевым полям; новая анкета добавляется без ручной правки",
-    "acceptance": "Воспроизводимая сборка data/grounding/unified_respondent_sessions.json из XLS-анкет + DOCX-стенограмм (промпт dataset.unification). Обезличивание. Сейчас файл существует как данность — задача делает его воспроизводимым.",
-    "note": "Static CDD test GREEN. Behavioral: SKIP (no live env) or verified on VPS."
+    "cdd": "все 165 записей валидны по canonical JSON Schema; паспорт согласован с датасетом (records и sha256 совпадают с фактом); respondent_id уникальны и обезличены; перечисления age_group/geo/gender покрывают фактические значения и совпадают со схемой Persona DNA — иначе persona_grounding невычислима; в корпусе нет телефонов, e-mail, дат рождения и паспортных данных; перегенерация Pydantic из схемы совпадает с закоммиченной (генерация во временный каталог, а не git diff по неизменённому файлу); датасет читается только через загрузчики; известные дефекты из паспорта соответствуют реальности.",
+    "acceptance": "Корпус data/grounding/unified_respondent_sessions.json принят источником истины (решение 02.08.2026, вариант А: focus_group_verbatims получены моделью и побайтово не воспроизводимы). Требуется: canonical JSON Schema respondent-session.schema.json, написанная по фактическим данным; паспорт corpus.meta.json с числом записей, sha256, происхождением, известными дефектами и процедурой добавления исследования; сгенерированные из схемы TS-тип и Pydantic-модель; по одному загрузчику на язык (agent_core/grounding/corpus.py и apps/web/lib/server/corpus.ts) как единственная точка чтения; обезличенность. Исходные XLSX и DOCX в репозитории не хранятся."
   },
   {
     "id": 24,

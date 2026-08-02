@@ -22,6 +22,16 @@ dependencies = [
 dev = [
     "pytest>=8.3",
     "ruff>=0.8",
+    # Валидация корпуса и Persona DNA по canonical JSON Schema. Нужна именно 4.x:
+    # Draft 2020-12 появился в ней, в 3.2 валидатора для него нет — тест задачи #4
+    # на этом падал трассировкой вместо честного SKIP.
+    "jsonschema>=4",
+    # Генерация Pydantic-моделей из схем (npm run codegen). Без объявления здесь
+    # codegen не выполнится ни в CI, ни на чистой машине.
+    "datamodel-code-generator>=0.25",
+    # Чтение исходных анкет и стенограмм при добавлении нового исследования.
+    "openpyxl>=3.1",
+    "python-docx>=1.1",
 ]
 
 [build-system]
@@ -38,6 +48,11 @@ addopts = "-q"
 [tool.ruff]
 line-length = 100
 target-version = "py312"
+# Каталог schemas/ целиком генерируется из canonical JSON Schema (npm run codegen).
+# Линтовать его бессмысленно: править файлы руками запрещено, а длина строк там
+# определяется длиной описаний в схеме. Замечание линтера в таком файле можно
+# закрыть только правкой того, что линтер не видит.
+extend-exclude = ["agent_core/schemas"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]

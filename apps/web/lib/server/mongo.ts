@@ -13,15 +13,23 @@ import { MongoClient, type Db, type Collection } from "mongodb";
  * Нарушение любого из этих правил означает чужие данные.
  */
 
-const MONGODB_URI = process.env.MONGODB_URI!;
-const DB_NAME = process.env.MONGODB_DB || "agora";
+// Имена переменных — MONGODB_URL и MONGO_DB: именно так они заданы в .env.local,
+// в .env.example, в обоих сервисах docker-compose.yml и в agent_core/config.py.
+// Прежняя редакция читала MONGODB_URI и MONGODB_DB, которых не существует нигде,
+// а восклицательный знак глушил проверку типов — падение случилось бы в рантайме
+// на разборе URI, далеко от причины.
+const MONGODB_URL = process.env.MONGODB_URL;
+const DB_NAME = process.env.MONGO_DB || "agora";
 
 let client: MongoClient | null = null;
 let db: Db | null = null;
 
 async function getDb(): Promise<Db> {
   if (!client) {
-    client = new MongoClient(MONGODB_URI);
+    if (!MONGODB_URL) {
+      throw new Error("MONGODB_URL не задан: черновики визарда не могут работать без MongoDB");
+    }
+    client = new MongoClient(MONGODB_URL);
     await client.connect();
   }
   if (!db) {
