@@ -175,6 +175,18 @@ else
   warn "нет $INIT/07_prompts_seed.sql — Промпт-студия будет без дефолтных промптов (задача #26)"
 fi
 
+# 08_portrait_versions.sql — история версий портретов аудиторий (задача #24).
+# CREATE TABLE IF NOT EXISTS, политика изоляции по арендатору, GRANT для agora_app —
+# та же схема, что у остальных шестнадцати таблиц. FORCE RLS не снимается.
+# Выполняется от имени владельца вне RLS-контекста.
+if [ -f "$INIT/08_portrait_versions.sql" ]; then
+  echo "   применяю 08_portrait_versions.sql"
+  "${PSQL[@]}" -f "$INIT/08_portrait_versions.sql" >/dev/null
+  ok "08_portrait_versions.sql"
+else
+  warn "нет $INIT/08_portrait_versions.sql — история версий портретов недоступна (задача #24)"
+fi
+
 echo
 echo "── Итог ─────────────────────────────────────────────────────────────"
 TABLES=$(q "SELECT count(*) FROM pg_tables WHERE schemaname = 'public'")
