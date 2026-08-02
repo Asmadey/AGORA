@@ -221,7 +221,7 @@ def distill_portrait_deterministic(
     lines.append("## Мета")
     lines.append(f"- Сегмент: {label}")
     lines.append(f"- Размер выборки: {n} записей")
-    lines.append(f"- Источник: авто-дистилляция из корпуса (unified_respondent_sessions)")
+    lines.append("- Источник: авто-дистилляция из корпуса (unified_respondent_sessions)")
     lines.append("")
 
     lines.append("## Соцдем-профиль")
@@ -418,11 +418,11 @@ def distill_all_segments(
 
 
 if __name__ == "__main__":
-    import sys
     import argparse
 
     parser = argparse.ArgumentParser(description="Distill audience portraits from corpus")
-    parser.add_argument("--no-llm", action="store_true", help="Skip LLM, use deterministic mode only")
+    parser.add_argument("--no-llm", action="store_true",
+                        help="Skip LLM, use deterministic mode only")
     parser.add_argument("--json", action="store_true", help="Output results as JSON array")
     parser.add_argument("--corpus", type=str, default=None, help="Path to corpus JSON")
     parser.add_argument("--prompt", type=str, default=None, help="Path to prompt template")
