@@ -2,10 +2,10 @@
   "mode": "DRY_RUN",
   "green": false,
   "summary": {
-    "pass": 3,
-    "fail": 1,
-    "skip": 11,
-    "total": 15
+    "pass": 2,
+    "fail": 2,
+    "skip": 12,
+    "total": 16
   },
   "results": [
     {
@@ -73,6 +73,14 @@
       "detail": "DATABASE_URL не задан — поднимите compose"
     },
     {
+      "name": "schema_drift",
+      "status": "skip",
+      "required": true,
+      "threshold": "0 drifts",
+      "actual": null,
+      "detail": "DATABASE_URL не задан — нет подключения к живой базе"
+    },
+    {
       "name": "persona_grounding",
       "status": "skip",
       "required": true,
@@ -106,11 +114,11 @@
     },
     {
       "name": "secret_scan",
-      "status": "pass",
+      "status": "fail",
       "required": true,
       "threshold": "0",
-      "actual": "0",
-      "detail": ""
+      "actual": "1",
+      "detail": "docs/_leak_probe.md:1"
     },
     {
       "name": "subjective_persona_realism",
