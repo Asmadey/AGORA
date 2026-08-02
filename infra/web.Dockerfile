@@ -11,6 +11,11 @@ RUN npm ci --workspaces --include-workspace-root || npm install
 FROM node:24-alpine AS builder
 WORKDIR /repo
 COPY --from=deps /repo/node_modules ./node_modules
+# Вложенные зависимости воркспейса: npm ci --workspaces кладёт часть пакетов в
+# apps/web/node_modules (например mongodb, xstate), а не в корень. Без копирования
+# next build их не резолвит («Can't resolve 'mongodb'»). Это общий случай той же
+# болезни, что точечный COPY hash-wasm ниже — здесь лечится корнем, а не пакетом.
+COPY --from=deps /repo/apps/web/node_modules ./apps/web/node_modules
 COPY . .
 ENV NEXT_TELEMETRY_DISABLED=1
 RUN npm run build --workspace @agora/web
