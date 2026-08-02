@@ -363,13 +363,14 @@
     "legacy_id": 33,
     "subject": "Векторная БД / RAG (Phase-2)",
     "phase": "Ф5",
-    "status": "pending",
+    "status": "done",
     "blockedBy": [
       24
     ],
     "verifies": [],
     "cdd": "поиск похожих респондентов возвращает осмысленных соседей на held-out выборке",
-    "acceptance": "post-MVP. TypeDB не используется (Decision Log / PRD §7) — сходство через вектор."
+    "acceptance": "post-MVP. TypeDB не используется (Decision Log / PRD §7) — сходство через вектор.",
+    "verified": "static CDD GREEN — 34/34 checks pass (behavioral on real corpus)"
   },
   {
     "id": 26,

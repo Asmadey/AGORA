@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from fastapi import FastAPI
 
-from agent_core.api.routers import personas
+from agent_core.api.routers import matching, personas
 
 app = FastAPI(
     title="AGORA Agent-Core",
@@ -29,6 +29,7 @@ app = FastAPI(
 )
 
 app.include_router(personas.router)
+app.include_router(matching.router)
 
 
 @app.get("/api/health")
