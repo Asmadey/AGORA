@@ -1,0 +1,1 @@
+# agent_core.grounding package — датасет XLS+DOCX grounding pipeline (задача #23)
