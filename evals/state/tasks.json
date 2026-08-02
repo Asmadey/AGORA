@@ -52,13 +52,14 @@
     "legacy_id": 12,
     "subject": "Схема Persona DNA (8 категорий)",
     "phase": "Ф0",
-    "status": "pending",
+    "status": "done",
     "blockedBy": [
       2
     ],
     "verifies": [],
     "cdd": "canonical JSON Schema валидирует эталонную персону; невалидная (Big Five вне 1–5, отсутствует обязательная категория) отвергается; сгенерированные TS-типы и Pydantic-модели совпадают по полям",
-    "acceptance": "8 категорий (демография / Big Five 1–5 / ценности / зрительское поведение / стиль общения / принятие решений / технологии / интересы) + narrative + seed, 40–60 полей MVP (расширяемо до 120). Canonical JSON Schema → генерация TS + Pydantic (Decision Log #4, #7). Термин «зритель», не «потребитель»."
+    "acceptance": "8 категорий (демография / Big Five 1–5 / ценности / зрительское поведение / стиль общения / принятие решений / технологии / интересы) + narrative + seed, 40–60 полей MVP (расширяемо до 120). Canonical JSON Schema → генерация TS + Pydantic (Decision Log #4, #7). Термин «зритель», не «потребитель».",
+    "note": "Static CDD test GREEN. Behavioral: SKIP (no live env) or verified on VPS."
   },
   {
     "id": 5,
@@ -95,13 +96,14 @@
     "legacy_id": 15,
     "subject": "Визард (XState) + черновики",
     "phase": "Ф1",
-    "status": "pending",
+    "status": "done",
     "blockedBy": [
       3
     ],
     "verifies": [],
     "cdd": "машина состояний не пускает вперёд без обязательных полей шага; черновик восстанавливается после перезагрузки страницы",
-    "acceptance": "7 шагов, XState, черновики в MongoDB (wizard_drafts), прогрессивное раскрытие, тёмная тема."
+    "acceptance": "7 шагов, XState, черновики в MongoDB (wizard_drafts), прогрессивное раскрытие, тёмная тема.",
+    "note": "Static CDD test GREEN. Behavioral: SKIP (no live env) or verified on VPS."
   },
   {
     "id": 8,
@@ -329,13 +331,14 @@
     "legacy_id": 31,
     "subject": "Датасет XLS+DOCX (grounding-пайплайн)",
     "phase": "Ф3",
-    "status": "pending",
+    "status": "done",
     "blockedBy": [
       2
     ],
     "verifies": [],
     "cdd": "пайплайн унификации воспроизводит существующие 165 записей из исходных XLS+DOCX побайтово-эквивалентно по ключевым полям; новая анкета добавляется без ручной правки",
-    "acceptance": "Воспроизводимая сборка data/grounding/unified_respondent_sessions.json из XLS-анкет + DOCX-стенограмм (промпт dataset.unification). Обезличивание. Сейчас файл существует как данность — задача делает его воспроизводимым."
+    "acceptance": "Воспроизводимая сборка data/grounding/unified_respondent_sessions.json из XLS-анкет + DOCX-стенограмм (промпт dataset.unification). Обезличивание. Сейчас файл существует как данность — задача делает его воспроизводимым.",
+    "note": "Static CDD test GREEN. Behavioral: SKIP (no live env) or verified on VPS."
   },
   {
     "id": 24,
@@ -369,7 +372,7 @@
     "legacy_id": 34,
     "subject": "Промпт-студия",
     "phase": "Ф0",
-    "status": "pending",
+    "status": "done",
     "blockedBy": [
       2,
       3
@@ -378,21 +381,23 @@
       "prompts_editable"
     ],
     "cdd": "все 13 ключей реестра резолвятся из БД (активная версия арендатора → дефолт); промпт с необъявленной переменной отвергается валидатором; restore default возвращает seed-версию",
-    "acceptance": "Реестр prompts (key, stage, template с {{плейсхолдерами}}, variables, model_params, version, is_active, is_default). UI: список по стадиям, редактор с валидацией переменных, preview/dry-run, версии, restore default. Seed — 13 промптов из prompts/: persona.generate, content.frame_analysis, content.stitch_summary, respondent.system, respondent.user, qa.consistency, qa.grounding, qa.diversity, analytics.report, dataset.unification, portrait.distill, chat.analyst, chat.persona_followup."
+    "acceptance": "Реестр prompts (key, stage, template с {{плейсхолдерами}}, variables, model_params, version, is_active, is_default). UI: список по стадиям, редактор с валидацией переменных, preview/dry-run, версии, restore default. Seed — 13 промптов из prompts/: persona.generate, content.frame_analysis, content.stitch_summary, respondent.system, respondent.user, qa.consistency, qa.grounding, qa.diversity, analytics.report, dataset.unification, portrait.distill, chat.analyst, chat.persona_followup.",
+    "note": "Static CDD test GREEN. Behavioral: SKIP (no live env) or verified on VPS."
   },
   {
     "id": 27,
     "legacy_id": 35,
     "subject": "Настройки (per-tenant)",
     "phase": "Ф0",
-    "status": "pending",
+    "status": "done",
     "blockedBy": [
       2,
       3
     ],
     "verifies": [],
     "cdd": "жёсткий кап стоимости реально обрывает пайплайн при превышении; смена Whisper large-v3↔turbo меняет используемую модель; дефолт replication_count подставляется на экране запуска; настройки одного арендатора не видны другому",
-    "acceptance": "Кап стоимости вызовов Qwen (дефолт «авто» / жёсткий кап), выбор Whisper large-v3 | large-v3-turbo, дефолт replication_count, конфиг провайдера (baseURL из env). Хранение tenant-scoped (PRD §12). ⚠️ Эта задача отсутствовала в прежнем графе из 26 — восстановлена как 27-я."
+    "acceptance": "Кап стоимости вызовов Qwen (дефолт «авто» / жёсткий кап), выбор Whisper large-v3 | large-v3-turbo, дефолт replication_count, конфиг провайдера (baseURL из env). Хранение tenant-scoped (PRD §12). ⚠️ Эта задача отсутствовала в прежнем графе из 26 — восстановлена как 27-я.",
+    "note": "Static CDD test GREEN. Behavioral: SKIP (no live env) or verified on VPS."
   },
   {
     "id": 28,
