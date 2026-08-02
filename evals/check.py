@@ -114,21 +114,58 @@ def check_secret_scan():
     # ⚠️ ОБЛАСТЬ: сканируется только REPO. Файлы уровнем выше (напр. AGORA/env.env
     # с живым ключом) сюда не попадают. После реструктуризации в монорепо (задача #1)
     # REPO становится корнем репозитория и покрывает всё, что уедет в git.
-    pat = re.compile(r"sk-[A-Za-z0-9_\-]{12,}|AIza[0-9A-Za-z_\-]{20,}|dangerouslyAllowBrowser")
+    #
+    # Расширено 01.08.2026. Прежняя редакция смотрела только код (.ts/.js/.py/.env)
+    # и знала два шаблона — sk-… и AIza…. Мимо неё прошла выгрузка рабочего чата в
+    # docs/ с root-паролем VPS, паролем managed-инстанса в строке подключения и
+    # паролями учётных записей приложения: .md не сканировался, пароль в DSN не
+    # распознавался. Зелёная метрика при живом пароле в дереве хуже, чем её отсутствие.
+    # Границы слова у sk- обязательны: без них «task-command-router» в любом
+    # манифесте читается как ключ OpenAI и метрика краснеет на ровном месте.
+    # Ложное срабатывание опаснее, чем кажется: гейт, который врёт, начинают
+    # игнорировать, и он перестаёт ловить настоящее.
+    pat = re.compile(
+        r"(?<![A-Za-z0-9])sk-[A-Za-z0-9]{16,}"          # OpenAI-совместимые ключи
+        r"|(?<![A-Za-z0-9])AIza[0-9A-Za-z_\-]{20,}"     # Google
+        r"|(?<![A-Za-z0-9])hf_[A-Za-z0-9]{20,}"         # Hugging Face
+        r"|(?<![A-Za-z0-9])xox[baprs]-[A-Za-z0-9\-]{10,}"   # Slack
+        r"|(?<![A-Za-z0-9])gh[pousr]_[A-Za-z0-9]{20,}"      # GitHub
+        r"|-----BEGIN [A-Z ]*PRIVATE KEY-----"          # приватные ключи
+        # Пароль внутри строки подключения. Ссылка на переменную окружения
+        # (${VAR} или $VAR) паролем не является — это как раз правильный способ.
+        r"|(?:postgresql|postgres|mongodb(?:\+srv)?|redis|amqp)://[^\s:/@]+:"
+        r"(?!\$)[^\s@$]{6,}@"
+    )
+    # Только для кода: в документации это слово встречается как описание давнего
+    # дефекта, а не как сам дефект.
+    code_pat = re.compile(r"dangerouslyAllowBrowser")
+    # Плейсхолдеры в примерах и документации — не утечка. Список намеренно короткий:
+    # чем он длиннее, тем проще спрятать в нём настоящий секрет.
+    placeholder = re.compile(
+        r"CHANGE_ME|ПАРОЛЬ|сгенерируйте|your-|example|placeholder|xxx+|\*{3,}|…|<[^>]+>",
+        re.IGNORECASE,
+    )
     skip_dirs = {"node_modules", ".git", ".next", "dist", "build", "__pycache__",
                  "fixtures", "grounding", "artifacts", "evals"}
+    code_exts = (".ts", ".tsx", ".js", ".jsx", ".mjs", ".py", ".env", ".yml", ".yaml")
+    # .md/.sql/.sh/.txt/.json добавлены: выгрузки переписки, дампы и отчёты живут
+    # именно там, а секрет в них ничем не безопаснее секрета в коде.
+    doc_exts = (".md", ".sql", ".sh", ".txt", ".json", ".toml")
     hits = []
     for root, dirs, files in os.walk(REPO):
         dirs[:] = [d for d in dirs if d not in skip_dirs]
         for f in files:
-            if not f.endswith((".ts", ".tsx", ".js", ".jsx", ".py", ".env", ".yml", ".yaml")):
+            is_code = f.endswith(code_exts)
+            if not is_code and not f.endswith(doc_exts):
                 continue
-            if f == ".env.example":
+            if f in (".env.example", "package-lock.json"):
                 continue
             p = Path(root) / f
             try:
                 for i, line in enumerate(p.read_text(encoding="utf-8", errors="ignore").splitlines(), 1):
-                    if pat.search(line):
+                    if placeholder.search(line):
+                        continue
+                    if pat.search(line) or (is_code and code_pat.search(line)):
                         hits.append(f"{p.relative_to(REPO)}:{i}")
             except Exception:
                 pass

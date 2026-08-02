@@ -6,7 +6,12 @@
     "phase": "Ф0",
     "status": "done",
     "blockedBy": [],
-    "verifies": ["compose_health", "build_frontend", "build_worker", "secret_scan"],
+    "verifies": [
+      "compose_health",
+      "build_frontend",
+      "build_worker",
+      "secret_scan"
+    ],
     "cdd": "docker compose config валиден; `docker compose up -d` → все healthchecks green; `npm run build` в apps/web exit 0; `pytest -q` в services/agent-core exit 0",
     "acceptance": "Монорепо приведён к контракту Decision Log #4: apps/web (перенос agora-unified) + services/agent-core + packages/shared + infra + evals + data + prompts + docs. Docker Compose поднимает Postgres 18 / MongoDB 8.0 / Valkey 9.1 / web / worker. evals/check.py переезжает в корень монорепо, пути REPO/DATASET/ART правятся. Секреты только из env; env.env выведен из-под git."
   },
@@ -15,22 +20,32 @@
     "legacy_id": 10,
     "subject": "Схемы БД + RLS",
     "phase": "Ф0",
-    "status": "pending",
-    "blockedBy": [1],
-    "verifies": ["rls_tenant"],
+    "status": "done",
+    "blockedBy": [
+      1
+    ],
+    "verifies": [
+      "rls_tenant"
+    ],
     "cdd": "запрос из-под tenant A к строкам tenant B возвращает rows == 0 по каждой таблице с tenant_id",
-    "acceptance": "Postgres: teams, users, projects, personas, persona_sets, audience_portraits, prompts, surveys, tasks (+prompts_snapshot, +replication_count, +parent_task_id, +carry_over_memory), reports, settings, report_shares (публичные ссылки: token, expires_at, revoked_at, scope, audit-лог просмотров), chat_threads / chat_messages (чат по результатам, tenant-scoped) — все с RLS по tenant_id. MongoDB: chunk_analyses, persona_answers, wizard_drafts, grounding_dataset, audience_context_files. Миграции идемпотентны. ВАЖНО: report_shares — единственный легальный обход RLS в системе, доступ по токену реализуется отдельной политикой и покрывается тестом (задача #29)."
+    "acceptance": "Postgres: teams, users, projects, personas, persona_sets, audience_portraits, prompts, surveys, tasks (+prompts_snapshot, +replication_count, +parent_task_id, +carry_over_memory), reports, settings, report_shares (публичные ссылки: token, expires_at, revoked_at, scope, audit-лог просмотров), chat_threads / chat_messages (чат по результатам, tenant-scoped) — все с RLS по tenant_id. MongoDB: chunk_analyses, persona_answers, wizard_drafts, grounding_dataset, audience_context_files. Миграции идемпотентны. ВАЖНО: report_shares — единственный легальный обход RLS в системе, доступ по токену реализуется отдельной политикой и покрывается тестом (задача #29).",
+    "verified": "rls_tenant pass на живом Postgres"
   },
   {
     "id": 3,
     "legacy_id": 11,
     "subject": "Auth и мультиарендность",
     "phase": "Ф0",
-    "status": "pending",
-    "blockedBy": [2],
-    "verifies": ["rls_tenant"],
+    "status": "done",
+    "blockedBy": [
+      2
+    ],
+    "verifies": [
+      "rls_tenant"
+    ],
     "cdd": "неаутентифицированный запрос к защищённому маршруту → 401; member не может выполнить owner-действие → 403; сессия проставляет tenant_id в RLS-контекст",
-    "acceptance": "Auth.js self-host, модель «команда = арендатор», роли owner/member, tenant_id из сессии пробрасывается в SET LOCAL для RLS (Decision Log #9)."
+    "acceptance": "Auth.js self-host, модель «команда = арендатор», роли owner/member, tenant_id из сессии пробрасывается в SET LOCAL для RLS (Decision Log #9).",
+    "verified": "CDD 32/32 GREEN, включая 401/403/tenant-контекст"
   },
   {
     "id": 4,
@@ -38,7 +53,9 @@
     "subject": "Схема Persona DNA (8 категорий)",
     "phase": "Ф0",
     "status": "pending",
-    "blockedBy": [2],
+    "blockedBy": [
+      2
+    ],
     "verifies": [],
     "cdd": "canonical JSON Schema валидирует эталонную персону; невалидная (Big Five вне 1–5, отсутствует обязательная категория) отвергается; сгенерированные TS-типы и Pydantic-модели совпадают по полям",
     "acceptance": "8 категорий (демография / Big Five 1–5 / ценности / зрительское поведение / стиль общения / принятие решений / технологии / интересы) + narrative + seed, 40–60 полей MVP (расширяемо до 120). Canonical JSON Schema → генерация TS + Pydantic (Decision Log #4, #7). Термин «зритель», не «потребитель»."
@@ -49,8 +66,14 @@
     "subject": "Persona Generator",
     "phase": "Ф1",
     "status": "pending",
-    "blockedBy": [4, 26],
-    "verifies": ["persona_grounding", "subjective_persona_realism"],
+    "blockedBy": [
+      4,
+      26
+    ],
+    "verifies": [
+      "persona_grounding",
+      "subjective_persona_realism"
+    ],
     "cdd": "на эталонном (reference) конфиге генерации распределения по age_group/geo/gender отклоняются от корпуса не более чем на 0.10; повторный прогон на том же seed → diff == 0",
     "acceptance": "Генерация по методологии PRD §10: сэмплирование по реальным долям (сериал×город×сегмент), калибровка баллов по реальным средним, стилевое заземление на verbatims, ценности ВЦИОМ→DNA, представитель сегмента (не копия). Кладёт evals/artifacts/generated_personas.json. Guardrail «ответ ограничен профилем»."
   },
@@ -60,7 +83,9 @@
     "subject": "Реестр персон, карточка и раздел «Персоны»",
     "phase": "Ф1",
     "status": "pending",
-    "blockedBy": [5],
+    "blockedBy": [
+      5
+    ],
     "verifies": [],
     "cdd": "persona_set сохраняется и переиспользуется в новом прогоне; клик по плашке открывает карточку, в которой присутствует КАЖДОЕ непустое поле DNA (проверяется сверкой с canonical JSON Schema — ни одно поле не потеряно при рендере); кросс-арендаторный доступ к persona_set → 404",
     "acceptance": "Раздел «Персоны» в левом меню: сетка плашек (имя, поколение, род занятий, дата) → клик → полная карточка. Карточка показывает ВСЕ атрибуты персоны, а не подмножество: шапка (имя, должность, местонахождение, поколение, род занятий, карьерный опыт, хобби) + все 8 категорий DNA с подписанными полями (демография / Big Five 1–5 визуализировано / ценности / зрительское поведение / стиль общения / принятие решений / технологии / интересы) + narrative + seed. В контексте конкретного исследования карточка дополнительно показывает ответы этой персоны и её цитаты с таймкодами. Реестр persona_set с преселектом «Создать / Выбрать существующую»."
@@ -71,7 +96,9 @@
     "subject": "Визард (XState) + черновики",
     "phase": "Ф1",
     "status": "pending",
-    "blockedBy": [3],
+    "blockedBy": [
+      3
+    ],
     "verifies": [],
     "cdd": "машина состояний не пускает вперёд без обязательных полей шага; черновик восстанавливается после перезагрузки страницы",
     "acceptance": "7 шагов, XState, черновики в MongoDB (wizard_drafts), прогрессивное раскрытие, тёмная тема."
@@ -82,7 +109,9 @@
     "subject": "Шаг Контент + загрузка видео",
     "phase": "Ф1",
     "status": "pending",
-    "blockedBy": [7],
+    "blockedBy": [
+      7
+    ],
     "verifies": [],
     "cdd": "файл >700 МБ отклоняется; неподдерживаемое расширение отклоняется; успешная загрузка даёт S3-ключ, привязанный к tenant_id",
     "acceptance": "mp4/mov/avi ≤700 МБ, presigned upload в S3 TimeWeb, выбор режима короткое/длинное."
@@ -93,7 +122,10 @@
     "subject": "Шаг Аудитория",
     "phase": "Ф1",
     "status": "pending",
-    "blockedBy": [7, 6],
+    "blockedBy": [
+      7,
+      6
+    ],
     "verifies": [],
     "cdd": "выбор критериев (пол / возраст 6 групп / гео 3 / образование) + размер даёт корректный запрос к Persona Generator; выбор существующего persona_set пропускает генерацию",
     "acceptance": "Генерация по критериям или выбор существующего набора. Дефолт размера — 20. UI помечает, что гео «иные НП» слабо заземлено в корпусе (0 из 165 записей)."
@@ -104,7 +136,9 @@
     "subject": "Шаг Опрос + конструктор анкеты",
     "phase": "Ф1",
     "status": "pending",
-    "blockedBy": [7],
+    "blockedBy": [
+      7
+    ],
     "verifies": [],
     "cdd": "базовая анкета из 5 критериев 1–10 валидна по схеме; кастомный вопрос неподдерживаемого типа отвергается",
     "acceptance": "P0 — 5 критериев 1–10 (overall_impression, plot, acting, music, cinematography). P1 — конструктор: шкала / эмоции / удержание / рекомендация / открытый."
@@ -115,8 +149,15 @@
     "subject": "Шаг Резюме + запуск (task_id) + «Перекрытие»",
     "phase": "Ф1",
     "status": "pending",
-    "blockedBy": [8, 9, 10, 27],
-    "verifies": ["prompts_editable"],
+    "blockedBy": [
+      8,
+      9,
+      10,
+      27
+    ],
+    "verifies": [
+      "prompts_editable"
+    ],
     "cdd": "запуск создаёт task с непустым prompts_snapshot и replication_count; повторный запуск с тем же seed идемпотентен",
     "acceptance": "Параметр «Перекрытие» (replication_count) на экране запуска, дефолт берётся из Настроек. Пиннинг версий промптов в tasks.prompts_snapshot для воспроизводимости (Decision Log #10)."
   },
@@ -126,7 +167,9 @@
     "subject": "Экран прогресса (SSE)",
     "phase": "Ф1",
     "status": "pending",
-    "blockedBy": [11],
+    "blockedBy": [
+      11
+    ],
     "verifies": [],
     "cdd": "SSE-поток отдаёт смену узлов пайплайна; обрыв соединения переподключается без потери состояния; FAILED отображается с причиной",
     "acceptance": "Прогресс пишется в Valkey узлами LangGraph, отдаётся через SSE (Decision Log #3)."
@@ -137,21 +180,28 @@
     "subject": "Оркестратор LangGraph",
     "phase": "Ф1",
     "status": "pending",
-    "blockedBy": [1, 11],
-    "verifies": ["compose_health"],
+    "blockedBy": [
+      1,
+      11
+    ],
+    "verifies": [
+      "compose_health"
+    ],
     "cdd": "падение на среднем узле → перезапуск продолжает с чекпоинта, а не с нуля; state соответствует схеме PRD §8",
     "acceptance": "LangGraph внутри Celery-задачи, чекпоинтер, маршрутизация route(short|long), прогресс в Valkey. State: task_id, tenant_id, mode, video_ref, audio_ref, segments[], transcript_diarized, chunk_analyses_ref, video_understanding, persona_ids[], survey, replication_count, persona_answers[], qa_flags[], report, status, progress."
   },
   {
     "id": 14,
     "legacy_id": 22,
-    "subject": "Препроцессинг видео (ffmpeg)",
+    "subject": "Препроцессинг видео (ffprobe/ffmpeg, proxy, таймкоды)",
     "phase": "Ф1",
     "status": "pending",
-    "blockedBy": [13],
+    "blockedBy": [
+      13
+    ],
     "verifies": [],
-    "cdd": "extract_audio на fixture short_60s.mp4 даёт аудио корректной длительности; битый кодек → транскод + retry, не падение; длинное видео режется на сегменты ~10 мин с глобальными таймкодами",
-    "acceptance": "ffmpeg extract_audio, сегментация для длинного режима (Ф2), артефакты в S3 по task_id."
+    "cdd": "ffprobe отвергает файл без видеодорожки с внятной ошибкой, а не падением; proxy-видео имеет постоянный фреймрейт и start_time == 0; таймкод сцены, полученный от PySceneDetect на proxy, совпадает с таймкодом того же кадра в извлечённом аудио с точностью до кадра; extract_audio на fixture short_60s.mp4 даёт аудио корректной длительности; битый кодек → транскод + retry, не падение; длинное видео режется на сегменты ~10 мин с глобальными таймкодами",
+    "acceptance": "ffprobe-валидация входа (пригодность контейнера, наличие дорожек, длительность); нормализация в proxy-видео с постоянным фреймрейтом и нулевым стартовым смещением — единственный источник таймкодов для транскрипта, сцен, кадров и цитат (Decision Log #14); extract_audio; сегментация для длинного режима (Ф2); артефакты в S3 по task_id."
   },
   {
     "id": 15,
@@ -159,10 +209,12 @@
     "subject": "Транскрипт + диаризация",
     "phase": "Ф1",
     "status": "pending",
-    "blockedBy": [14],
+    "blockedBy": [
+      14
+    ],
     "verifies": [],
-    "cdd": "на fixture транскрипт непустой, таймкоды монотонны; спикеры глобально консистентны между сегментами; timeout → чанковый режим, не падение",
-    "acceptance": "faster-whisper large-v3 int8 на CPU + параллельные сегменты; pyannote 3.1 по ПОЛНОМУ треку (глобально консистентные спикеры); слияние по overlap; large-v3-turbo как fallback из Настроек (Decision Log #6)."
+    "cdd": "на fixture транскрипт непустой, таймкоды монотонны и лежат в пределах длительности; VAD на дорожке с музыкой и тишиной отдаёт речевых участков меньше полной длительности; диаризация по речевым участкам даёт те же метки спикеров, что и по полному треку (сравнение на fixture); спикеры глобально консистентны между сегментами; замер длительности диаризации записан в артефакт прогона; timeout → чанковый режим, не падение",
+    "acceptance": "Silero VAD выделяет речевые участки; pyannote community-1 диаризует ТОЛЬКО их, одним вызовом по всем участкам сразу (глобально консистентные спикеры), границы возвращаются в глобальные таймкоды proxy; faster-whisper large-v3 int8 на CPU + параллельные сегменты; слияние по overlap; large-v3-turbo как fallback из Настроек (Decision Log #6). Замер скорости на fixture обязателен: заявленные 31 сек/час измерены на H100."
   },
   {
     "id": 16,
@@ -170,21 +222,26 @@
     "subject": "Нарезка кадров + VLM-разбор",
     "phase": "Ф1",
     "status": "pending",
-    "blockedBy": [14],
+    "blockedBy": [
+      14
+    ],
     "verifies": [],
-    "cdd": "PySceneDetect на fixture даёт сцены; при нуле сцен срабатывает fallback-интервал; повторный прогон берёт кэш (0 новых вызовов VLM); кап вызовов из Настроек соблюдается",
-    "acceptance": "PySceneDetect + fallback-интервал + панели по 4 кадра + кэш разбора; analyze_chunks через Qwen VLM (MAP через Send) → JSON сцены. Кап вызовов — переключатель в Настройках, дефолт «авто» (Decision Log #5)."
+    "cdd": "PySceneDetect на fixture даёт сцены; при нуле сцен срабатывает fallback-интервал; на статичной сцене дедупликация сокращает число кадров, а на динамичной не выбрасывает различающиеся; повторный прогон берёт кэш (0 новых вызовов VLM); кап вызовов из Настроек соблюдается",
+    "acceptance": "PySceneDetect + fallback-интервал + дедупликация кадров по перцептивному хешу + панели по 4 кадра + кэш разбора; analyze_chunks через Qwen VLM (MAP через Send) → JSON сцены. Кап вызовов — переключатель в Настройках, дефолт «авто» (Decision Log #5). Отдельный OCR-контур не вводится (Decision Log #17)."
   },
   {
     "id": 17,
     "legacy_id": 25,
-    "subject": "Склейка (reduce) video understanding",
+    "subject": "Склейка (reduce) + Content Pack",
     "phase": "Ф1",
     "status": "pending",
-    "blockedBy": [15, 16],
+    "blockedBy": [
+      15,
+      16
+    ],
     "verifies": [],
-    "cdd": "склейка выдаёт единый таймлайн; каждый факт имеет таймкод в пределах длительности видео; для длинного режима stitched == true",
-    "acceptance": "REDUCE: video_understanding по таймлайну, транскрипт — позвоночник. Для длинного видео — сшивка сегментов по глобальным таймкодам."
+    "cdd": "склейка выдаёт единый таймлайн; каждый факт имеет таймкод в пределах длительности видео; для длинного режима stitched == true; компактная форма строго меньше полной по объёму и при этом сохраняет все ключевые сцены и все таймкоды, на которые ссылается отчёт; обе формы валидны по canonical JSON Schema",
+    "acceptance": "REDUCE: video_understanding по таймлайну, транскрипт — позвоночник. Для длинного видео — сшивка сегментов по глобальным таймкодам. Content Pack в двух формах (Decision Log #15): компактная (сжатый таймлайн, ключевые сцены, эмоциональные пики) для массового прогона респондентов и полная (все сцены, полный транскрипт, раскадровки) для контрольного глубокого просмотра по подвыборке."
   },
   {
     "id": 18,
@@ -192,8 +249,16 @@
     "subject": "Respondent-агенты (изоляция)",
     "phase": "Ф1",
     "status": "pending",
-    "blockedBy": [17, 5, 26],
-    "verifies": ["isolation_persona", "response_diversity", "persona_grounding"],
+    "blockedBy": [
+      17,
+      5,
+      26
+    ],
+    "verifies": [
+      "isolation_persona",
+      "response_diversity",
+      "persona_grounding"
+    ],
     "cdd": "утечка контекста между персонами == 0 (маркер, подсаженный в контекст персоны A, не появляется у B); distinct-2 и дисперсия баллов выше порога — нет mode collapse",
     "acceptance": "Структурная изоляция: в срезе state только своя DNA + video_understanding + survey. Каждая персона × replication_count, пачки по 5. Кладёт evals/artifacts/persona_answers.json."
   },
@@ -203,10 +268,15 @@
     "subject": "QA-агент",
     "phase": "Ф1",
     "status": "pending",
-    "blockedBy": [18, 26],
-    "verifies": ["qa_catches_injected"],
-    "cdd": "подсаженный заведомо несогласованный ответ ловится; подсаженный выдуманный таймкод (вне длительности видео) ловится; ложноположительных на чистом наборе нет",
-    "acceptance": "LLM-as-judge ×2: consistency / grounding / diversity (промпты qa.consistency, qa.grounding, qa.diversity). QA-агент верифицируется отдельно подсадкой — он не оценивает сам себя."
+    "blockedBy": [
+      18,
+      26
+    ],
+    "verifies": [
+      "qa_catches_injected"
+    ],
+    "cdd": "подсаженный заведомо несогласованный ответ ловится; подсаженный выдуманный таймкод (вне длительности видео) ловится; ложноположительных на чистом наборе нет; каждый вердикт содержит confidence; при незаданном QA_ESCALATION_AGENT_ID прогон завершается успешно и эскалаций ноль; при заданном — эскалируются только ответы ниже порога",
+    "acceptance": "LLM-as-judge ×2: consistency / grounding / diversity (промпты qa.consistency, qa.grounding, qa.diversity), каждый вердикт с confidence. Эскалация на модель большего размера только при confidence ниже QA_ESCALATION_CONFIDENCE; QA_ESCALATION_AGENT_ID необязателен — без него эскалации нет, и это штатный режим (Decision Log #16). QA-агент верифицируется отдельно подсадкой — он не оценивает сам себя."
   },
   {
     "id": 20,
@@ -214,10 +284,15 @@
     "subject": "Analytics-агент (агрегат + групповой синтез)",
     "phase": "Ф1",
     "status": "pending",
-    "blockedBy": [19, 26],
-    "verifies": ["subjective_report_quality"],
-    "cdd": "агрегат считается корректно на синтетическом наборе ответов; при replication_count > 1 присутствуют доверительные границы (минимум mean + min/max/стд); каждое утверждение синтеза имеет ссылку на таймкод или цитату",
-    "acceptance": "Агрегат (5 критериев, NPS, ретеншн, эмоциональный индекс, топ-эмоции) + групповой синтез (темы / согласие-несогласие / настроения / цитаты) + доверительные границы + нарратив + дисклеймер «требует экспертной проверки» (Decision Log #8, #10)."
+    "blockedBy": [
+      19,
+      26
+    ],
+    "verifies": [
+      "subjective_report_quality"
+    ],
+    "cdd": "агрегат считается корректно на синтетическом наборе ответов; при replication_count > 1 присутствуют доверительные границы (минимум mean + min/max/стд) и показатель стабильности между повторами; точки риска прекращения просмотра привязаны к таймкодам; каждое утверждение синтеза имеет ссылку на таймкод или цитату",
+    "acceptance": "Агрегат (5 критериев, NPS, ретеншн, эмоциональный индекс, топ-эмоции) + групповой синтез (темы / согласие-несогласие / настроения / цитаты) + доверительные границы + точки риска прекращения просмотра + стабильность повторных запусков + нарратив + дисклеймер «требует экспертной проверки» (Decision Log #8, #10)."
   },
   {
     "id": 21,
@@ -225,7 +300,10 @@
     "subject": "Отчёт в UI",
     "phase": "Ф1",
     "status": "pending",
-    "blockedBy": [20, 12],
+    "blockedBy": [
+      20,
+      12
+    ],
     "verifies": [],
     "cdd": "отчёт рендерится из артефакта без ошибок; len(per_persona) == audience_size; каждое обоснование кликабельно ведёт на таймкод",
     "acceptance": "Агрегат + графики сверху, аккордеон по персонам снизу; разброс/CI при replication>1; честная маркировка «гипотезы»; экспорт PDF — P2."
@@ -236,8 +314,13 @@
     "subject": "E2E-верификация (e2e_short → e2e_long, golden-сеты ×3)",
     "phase": "Ф1–Ф2",
     "status": "pending",
-    "blockedBy": [21],
-    "verifies": ["e2e_short", "e2e_long"],
+    "blockedBy": [
+      21
+    ],
+    "verifies": [
+      "e2e_short",
+      "e2e_long"
+    ],
     "cdd": "e2e_short: fixture 60s → REPORT_READY ≤ 10 мин, report.aggregate непустой, len(per_persona) == audience_size. e2e_long: fixture ~12 мин, mode=long → map-reduce → stitched == true → REPORT_READY",
     "acceptance": "Playwright-прогоны, кладут evals/artifacts/e2e_short_report.json и e2e_long_report.json. Golden-сеты ×3 по failure mode на зелёном гейте (3/3 = trust), quick 1× при разработке. ⚠️ Требуется добавить evals/fixtures/long_12min.mp4 — сейчас его нет. e2e_short — первый green-гейт (Decision Log #2)."
   },
@@ -247,7 +330,9 @@
     "subject": "Датасет XLS+DOCX (grounding-пайплайн)",
     "phase": "Ф3",
     "status": "pending",
-    "blockedBy": [2],
+    "blockedBy": [
+      2
+    ],
     "verifies": [],
     "cdd": "пайплайн унификации воспроизводит существующие 165 записей из исходных XLS+DOCX побайтово-эквивалентно по ключевым полям; новая анкета добавляется без ручной правки",
     "acceptance": "Воспроизводимая сборка data/grounding/unified_respondent_sessions.json из XLS-анкет + DOCX-стенограмм (промпт dataset.unification). Обезличивание. Сейчас файл существует как данность — задача делает его воспроизводимым."
@@ -258,7 +343,10 @@
     "subject": "Портреты аудиторий (редактор + авто-дистилляция)",
     "phase": "Ф3",
     "status": "pending",
-    "blockedBy": [23, 26],
+    "blockedBy": [
+      23,
+      26
+    ],
     "verifies": [],
     "cdd": "авто-дистилляция из датасета даёт непустой .md-портрет; ручная правка сохраняется и версионируется",
     "acceptance": ".md-редактор портретов + авто-дистилляция из grounding-датасета (промпт portrait.distill)."
@@ -269,7 +357,9 @@
     "subject": "Векторная БД / RAG (Phase-2)",
     "phase": "Ф5",
     "status": "pending",
-    "blockedBy": [24],
+    "blockedBy": [
+      24
+    ],
     "verifies": [],
     "cdd": "поиск похожих респондентов возвращает осмысленных соседей на held-out выборке",
     "acceptance": "post-MVP. TypeDB не используется (Decision Log / PRD §7) — сходство через вектор."
@@ -280,8 +370,13 @@
     "subject": "Промпт-студия",
     "phase": "Ф0",
     "status": "pending",
-    "blockedBy": [2, 3],
-    "verifies": ["prompts_editable"],
+    "blockedBy": [
+      2,
+      3
+    ],
+    "verifies": [
+      "prompts_editable"
+    ],
     "cdd": "все 13 ключей реестра резолвятся из БД (активная версия арендатора → дефолт); промпт с необъявленной переменной отвергается валидатором; restore default возвращает seed-версию",
     "acceptance": "Реестр prompts (key, stage, template с {{плейсхолдерами}}, variables, model_params, version, is_active, is_default). UI: список по стадиям, редактор с валидацией переменных, preview/dry-run, версии, restore default. Seed — 13 промптов из prompts/: persona.generate, content.frame_analysis, content.stitch_summary, respondent.system, respondent.user, qa.consistency, qa.grounding, qa.diversity, analytics.report, dataset.unification, portrait.distill, chat.analyst, chat.persona_followup."
   },
@@ -291,7 +386,10 @@
     "subject": "Настройки (per-tenant)",
     "phase": "Ф0",
     "status": "pending",
-    "blockedBy": [2, 3],
+    "blockedBy": [
+      2,
+      3
+    ],
     "verifies": [],
     "cdd": "жёсткий кап стоимости реально обрывает пайплайн при превышении; смена Whisper large-v3↔turbo меняет используемую модель; дефолт replication_count подставляется на экране запуска; настройки одного арендатора не видны другому",
     "acceptance": "Кап стоимости вызовов Qwen (дефолт «авто» / жёсткий кап), выбор Whisper large-v3 | large-v3-turbo, дефолт replication_count, конфиг провайдера (baseURL из env). Хранение tenant-scoped (PRD §12). ⚠️ Эта задача отсутствовала в прежнем графе из 26 — восстановлена как 27-я."
@@ -302,8 +400,14 @@
     "subject": "Чат по результатам исследования (аналитик + допрос персоны)",
     "phase": "Ф4",
     "status": "pending",
-    "blockedBy": [22, 26],
-    "verifies": ["isolation_persona", "qa_catches_injected"],
+    "blockedBy": [
+      22,
+      26
+    ],
+    "verifies": [
+      "isolation_persona",
+      "qa_catches_injected"
+    ],
     "cdd": "режим «аналитик»: вопрос про метрику, которой нет в исследовании → ответ помечен insufficient_data == true, выдуманное число не появляется. Режим «персона»: вопрос про факт вне DNA → out_of_profile == true; в контекст персоны не попадают ответы других персон (утечка == 0, тот же тест изоляции, что и в #18); ответ, противоречащий прежним, помечается contradicts_previous. Тред восстанавливается после перезагрузки и не виден другому арендатору.",
     "acceptance": "На экране результатов завершённого task_id — чат в двух режимах. (1) «Аналитик»: read-only агент поверх артефактов задачи (report + persona_answers + video_understanding + survey + qa_flags), отвечает только со ссылками на таймкоды и цитаты, промпт chat.analyst. (2) «Спросить персону»: из карточки персоны — дополнительное интервью с ней; в контекст подаётся только её DNA + video_understanding + survey + её собственные прежние ответы (та же структурная изоляция, что в #18), промпт chat.persona_followup. АРХИТЕКТУРНОЕ РЕШЕНИЕ: это отдельный синхронный агент, НЕ оркестратор — LangGraph-поток живёт внутри Celery-задачи, умирает вместе с ней и не хранит диалог. Треды в Postgres (chat_threads/chat_messages, RLS). Каждое сообщение — платный вызов Qwen, учитывается в капе стоимости из Настроек (#27)."
   },
@@ -313,8 +417,13 @@
     "subject": "Кнопка «Поделиться» результатом (публичная ссылка)",
     "phase": "Ф4",
     "status": "pending",
-    "blockedBy": [22, 21],
-    "verifies": ["rls_tenant"],
+    "blockedBy": [
+      22,
+      21
+    ],
+    "verifies": [
+      "rls_tenant"
+    ],
     "cdd": "ссылка с валидным токеном открывается без логина и отдаёт ровно один отчёт; токен с истёкшим TTL → 410; отозванный токен → 410; подобранный/чужой токен → 404; через публичную страницу НЕ доступны другие отчёты, другие арендаторы, чат и любые мутации (только чтение); каждый просмотр пишется в аудит-лог",
     "acceptance": "Кнопка «Поделиться» на экране отчёта → неугадываемый токен (криптостойкий, ≥128 бит), read-only публичная страница отчёта без логина, настраиваемый TTL, кнопка «Отозвать», список активных ссылок. Это единственный санкционированный обход RLS в системе — реализуется отдельной политикой на report_shares (схема заведена в #2), покрыт негативными тестами и аудит-логом. Публикуется полный отчёт (агрегат + персоны); отключение поимённых персон — опция шеринга."
   },
@@ -324,7 +433,11 @@
     "subject": "Перезапуск исследования с теми же персонами + новые вопросы",
     "phase": "Ф4",
     "status": "pending",
-    "blockedBy": [22, 10, 6],
+    "blockedBy": [
+      22,
+      10,
+      6
+    ],
     "verifies": [],
     "cdd": "перезапуск НЕ пересчитывает video_understanding (0 новых вызовов VLM — берётся кэш родительской задачи); режим «допрос»: персона получает свои прежние ответы и отвечает только на новые вопросы, старые баллы в отчёте не меняются; режим «чистый прогон»: вся анкета задаётся заново в изоляции, прежние ответы в контекст не попадают; отчёт показывает сравнение с родительским прогоном; parent_task_id проставлен",
     "acceptance": "На экране результатов — «Перезапустить с этой аудиторией». Переиспользуются persona_set И разбор видео родительской задачи (главная экономия: VLM — самая дорогая стадия). Анкета дополняется новыми вопросами. Переключатель памяти персон (решение пользователя, оба режима обязательны): «Допрос» — персона помнит свой первый прогон, отвечает только на новое, дёшево и непротиворечиво; «Чистый прогон» — вся анкета заново в изоляции, статистически чище, но прежние баллы могут поехать. UI явно объясняет последствия каждого режима для сопоставимости. Связь через tasks.parent_task_id + carry_over_memory."
@@ -335,8 +448,14 @@
     "subject": "Файл доп. контекста для генерации аудитории",
     "phase": "Ф4",
     "status": "pending",
-    "blockedBy": [22, 24, 9],
-    "verifies": ["persona_grounding"],
+    "blockedBy": [
+      22,
+      24,
+      9
+    ],
+    "verifies": [
+      "persona_grounding"
+    ],
     "cdd": "загруженный файл дистиллируется в портрет и попадает в контекст persona.generate; КЛЮЧЕВОЕ: с приложенным файлом контекста эталонный (reference) прогон persona_grounding остаётся green — распределения и калибровка баллов от корпуса не уезжают; пустой/нерелевантный файл не ломает генерацию; файл одного арендатора не виден другому",
     "acceptance": "На шаге «Аудитория» — загрузка файла доп. контекста о персонах (pdf/docx/md/txt/xls). Файл НЕ создаёт новый механизм: он дистиллируется в «портрет аудитории» существующим промптом portrait.distill (#24) и подаётся в persona.generate дополнительной секцией. ПРИНЦИП (фиксируется в PRD): grounding-корпус остаётся приоритетным заземлением — файл УТОЧНЯЕТ персон (контекст, лексика, специфика ниши), но НЕ переопределяет распределения по соцдему и калибровку баллов. Иначе теряется главное отличие продукта («прогноз, а не догадка»). Конфликт файла с корпусом разрешается в пользу корпуса и показывается пользователю предупреждением."
   }
