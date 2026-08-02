@@ -162,6 +162,19 @@ if [ -f "$INIT/06_owner_read_auth_tables.sql" ]; then
   ok "06_owner_read_auth_tables.sql"
 fi
 
+# 07_prompts_seed.sql — засев дефолтных промптов (задача #26). Идемпотентен:
+# ON CONFLICT DO NOTHING, повторный прогон не плодит строки и не затирает
+# пользовательские версии. Без этой миграции Промпт-студия на существующей базе
+# пуста — таблица prompts есть (из 02_schema.sql), а строк в ней нет, и
+# резолверу некому вернуть дефолт. Выполняется от имени владельца вне RLS-контекста.
+if [ -f "$INIT/07_prompts_seed.sql" ]; then
+  echo "   применяю 07_prompts_seed.sql"
+  "${PSQL[@]}" -f "$INIT/07_prompts_seed.sql" >/dev/null
+  ok "07_prompts_seed.sql"
+else
+  warn "нет $INIT/07_prompts_seed.sql — Промпт-студия будет без дефолтных промптов (задача #26)"
+fi
+
 echo
 echo "── Итог ─────────────────────────────────────────────────────────────"
 TABLES=$(q "SELECT count(*) FROM pg_tables WHERE schemaname = 'public'")

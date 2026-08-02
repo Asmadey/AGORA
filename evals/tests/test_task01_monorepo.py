@@ -245,7 +245,22 @@ if (ROOT / "evals/check.py").is_file():
                 ),
                 "persona_grounding не нашёл датасет",
             )
-            check("отчёт содержит все 15 метрик", len(names) == 15, f"метрик: {len(names)}")
+            # Раньше здесь стояло len(names) == 15. Добавление метрики
+            # (schema_drift, prompts_editable) ломало CDD-тест задачи #1: проверка
+            # держалась за число, а не за содержание, и рост верификатора
+            # выглядел как регрессия монорепо. Правильный инвариант — каждая
+            # метрика, закреплённая за задачей графа полем verifies, есть в отчёте.
+            graph_path = ROOT / "evals" / "state" / "tasks.json"
+            owned: set[str] = set()
+            if graph_path.is_file():
+                graph = json.loads(graph_path.read_text(encoding="utf-8"))
+                tasks = graph.get("tasks", graph) if isinstance(graph, dict) else graph
+                owned = {m for t in tasks for m in (t.get("verifies") or [])}
+            missing = owned - names
+            check("в отчёте есть каждая метрика, закреплённая за задачей графа",
+                  not missing, f"нет: {sorted(missing)}")
+            check("метрик не меньше, чем закреплено за задачами",
+                  len(names) >= len(owned), f"метрик {len(names)}, закреплено {len(owned)}")
     except Exception as e:  # noqa: BLE001
         check("check.py отрабатывает из корня монорепо", False, str(e)[:150])
 

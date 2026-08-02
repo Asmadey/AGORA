@@ -257,14 +257,25 @@ def check_compose_health():
         return _res("compose_health", "skip", detail="infra/docker-compose.yml not found")
     if not shutil.which("docker"):
         return _res("compose_health", "skip", detail="docker CLI unavailable in this env")
+    # docker-compose.yml объявляет обязательные переменные через ${VAR:?...}, и без
+    # файла окружения `docker compose config` падает на первой же из них. Скрипт
+    # `npm run up` передаёт --env-file .env.local, а эта проверка — не передавала,
+    # поэтому метрика была недостижима на любой машине с установленным docker:
+    # «invalid config: required variable … is missing a value». Выглядело как дефект
+    # compose, хотя compose был в порядке.
+    env_file = REPO / ".env.local"
+    base = ["docker", "compose", "-f", str(COMPOSE)]
+    if env_file.is_file():
+        base += ["--env-file", str(env_file)]
+
     try:
-        cfg = subprocess.run(["docker", "compose", "-f", str(COMPOSE), "config", "--quiet"],
+        cfg = subprocess.run(base + ["config", "--quiet"],
                              cwd=REPO, capture_output=True, text=True, timeout=120)
         if cfg.returncode != 0:
+            hint = "" if env_file.is_file() else " (нет .env.local — переменные compose не заданы)"
             return _res("compose_health", "fail", threshold="config valid + all healthy",
-                        actual="invalid config", detail=(cfg.stderr or "")[-200:])
-        ps = subprocess.run(["docker", "compose", "-f", str(COMPOSE), "ps",
-                             "--format", "json"], cwd=REPO,
+                        actual="invalid config", detail=((cfg.stderr or "")[-200:] + hint))
+        ps = subprocess.run(base + ["ps", "--format", "json"], cwd=REPO,
                             capture_output=True, text=True, timeout=120)
         if ps.returncode != 0 or not (ps.stdout or "").strip():
             return _res("compose_health", "fail", threshold="all healthy",

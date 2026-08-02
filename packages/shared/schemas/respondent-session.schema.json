@@ -1,0 +1,179 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agora.local/schemas/respondent-session.schema.json",
+  "title": "RespondentSession",
+  "description": "Одна запись grounding-корпуса: ответы реального респондента фокус-группы. Схема написана ПО ФАКТИЧЕСКИМ ДАННЫМ 165 записей data/grounding/unified_respondent_sessions.json, а не по представлениям о них. Перечисления закрыты только там, где домен действительно закрыт: пол, возрастная группа, тип населённого пункта и четыре шкалы восприятия. Города, эмоции, ценности и тип контента оставлены открытыми строками — они пополняются с каждым новым исследованием, и закрытое перечисление там ломало бы корпус при добавлении данных, а не защищало его.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "respondent_id",
+    "source_file",
+    "content_under_test",
+    "experiment_metadata",
+    "socio_demographics",
+    "psychographics_and_values",
+    "agora_core_scores_1_to_10",
+    "perception_and_retention",
+    "qualitative_verbatims",
+    "focus_group_verbatims",
+    "all_survey_responses"
+  ],
+  "properties": {
+    "respondent_id": {
+      "type": "string",
+      "description": "Идентификатор вида «<Исследование>_<номер>». Производный от источника и порядкового номера, не от имени человека — обезличивание.",
+      "pattern": "^.+_[0-9]+$"
+    },
+    "source_file": {
+      "type": "string",
+      "description": "Имя исходного файла анкет ЦЕЛИКОМ, с расширением. Ключ связи записи с исследованием.",
+      "minLength": 1
+    },
+    "content_under_test": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["title", "type", "summary"],
+      "properties": {
+        "title": { "type": "string", "minLength": 1 },
+        "type": {
+          "type": "string",
+          "description": "Открытая строка: в корпусе пока только «сериал», но полнометражные и рекламные ролики предполагаются.",
+          "minLength": 1
+        },
+        "summary": { "type": "string" }
+      }
+    },
+    "experiment_metadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["focus_group_city", "target_audience_segment", "transcript_source_file"],
+      "properties": {
+        "focus_group_city": { "type": "string", "minLength": 1 },
+        "target_audience_segment": {
+          "type": "string",
+          "description": "Сегмент, под который набиралась группа. Открытая строка: сегменты задаёт заказчик исследования.",
+          "minLength": 1
+        },
+        "transcript_source_file": { "type": "string" }
+      }
+    },
+    "socio_demographics": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["gender", "age", "age_group", "geo", "city", "children"],
+      "properties": {
+        "gender": { "type": "string", "enum": ["жен", "муж"] },
+        "age": { "type": "integer", "minimum": 14, "maximum": 120 },
+        "age_group": {
+          "type": "string",
+          "description": "Словарь совпадает с persona-dna.schema.json. Расхождение делает метрику persona_grounding невычислимой.",
+          "enum": ["14-17", "18-24", "25-34", "35-44", "45-59", "60+"]
+        },
+        "geo": {
+          "type": "string",
+          "description": "Тип населённого пункта в терминах выборки исследования.",
+          "enum": ["столицы", "центры субъектов"]
+        },
+        "city": { "type": "string", "minLength": 1 },
+        "children": { "type": "string", "minLength": 1 }
+      }
+    },
+    "psychographics_and_values": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["important_values"],
+      "properties": {
+        "important_values": {
+          "type": "array",
+          "description": "Ценности, которые респондент считает важными. Открытый список: в корпусе 27 различных формулировок.",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "agora_core_scores_1_to_10": {
+      "type": "object",
+      "description": "Пять базовых критериев AGORA. Именно по ним считается калибровка |средние−реальные| ≤ 1.0.",
+      "additionalProperties": false,
+      "required": ["overall_impression", "plot", "acting", "music", "cinematography"],
+      "properties": {
+        "overall_impression": { "$ref": "#/$defs/score" },
+        "plot": { "$ref": "#/$defs/score" },
+        "acting": { "$ref": "#/$defs/score" },
+        "music": { "$ref": "#/$defs/score" },
+        "cinematography": { "$ref": "#/$defs/score" }
+      }
+    },
+    "perception_and_retention": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "interest_level",
+        "emotions_evoked",
+        "idea_comprehension",
+        "realism_perception",
+        "retention_intent",
+        "recommendation_nps_1_to_10"
+      ],
+      "properties": {
+        "interest_level": {
+          "type": "string",
+          "enum": ["Скорее интересен", "Скорее не интересен", "Затрудняюсь ответить"]
+        },
+        "emotions_evoked": {
+          "type": "array",
+          "description": "Открытый список. ВНИМАНИЕ: в текущем корпусе сюда затесались подписи шкалы («10 – вызвал очень сильные эмоции») и голые числа — известный дефект данных, см. data/grounding/corpus.meta.json.",
+          "items": { "type": "string" }
+        },
+        "idea_comprehension": {
+          "type": "string",
+          "enum": ["Скорее понятно", "Скорее не понятно", "Затрудняюсь ответить"]
+        },
+        "realism_perception": {
+          "type": "string",
+          "enum": ["Скорее реалистичные", "Скорее нереалистичные", "Затрудняюсь ответить"]
+        },
+        "retention_intent": {
+          "type": "string",
+          "enum": [
+            "Скорее хотелось досмотреть до конца",
+            "Скорее хотелось остановить просмотр",
+            "Затрудняюсь ответить"
+          ]
+        },
+        "recommendation_nps_1_to_10": { "$ref": "#/$defs/score" }
+      }
+    },
+    "qualitative_verbatims": {
+      "type": "object",
+      "description": "Открытые ответы из анкеты. why_impression заполнен не у всех: 156 записей из 165.",
+      "additionalProperties": false,
+      "required": ["idea_comprehension_comment", "general_impression_comment"],
+      "properties": {
+        "idea_comprehension_comment": { "type": "string" },
+        "general_impression_comment": { "type": "string" },
+        "why_impression": { "type": "string" }
+      }
+    },
+    "focus_group_verbatims": {
+      "type": "array",
+      "description": "Срез групповой дискуссии под конкретного респондента: реплики с указанием говорящего. Получен моделью по промпту dataset.unification при первичной сборке корпуса и НЕ воспроизводится механически — см. corpus.meta.json.",
+      "items": { "type": "string" }
+    },
+    "all_survey_responses": {
+      "type": "object",
+      "description": "Сырая анкета как есть: ключи — формулировки вопросов из XLSX, поэтому набор ключей различается между исследованиями. Намеренно ненормализованный слепок источника, нужен для прослеживаемости: по нему можно проверить любое нормализованное поле выше. Схема тут не ограничивает ключи — ограничение сделало бы добавление нового исследования невозможным.",
+      "type": "object",
+      "additionalProperties": {
+        "type": ["string", "number", "boolean", "null"]
+      }
+    }
+  },
+  "$defs": {
+    "score": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 10,
+      "description": "Балл по шкале 1–10."
+    }
+  }
+}

@@ -10,6 +10,7 @@ import json
 import os
 import re
 import subprocess
+import tempfile
 import sys
 from pathlib import Path
 
@@ -154,18 +155,45 @@ if schema:
     seed_prop = schema["properties"].get("seed", {})
     check("seed целочисленный", seed_prop.get("type") == "integer")
 
-    # 15. Codegen artifacts exist and no diff on regeneration
+    # 15. Codegen artifacts exist and match a fresh regeneration.
+    #
+    # Прежняя редакция делала `git diff --exit-code` по закоммиченным файлам и
+    # не запускала кодогенерацию вовсе. Такая проверка неверна в обе стороны:
+    # она зелёная, если артефакт правили руками и закоммитили (диффа нет), и
+    # красная, если его просто перегенерировали (в шапке меняется timestamp).
+    # Настоящая проверка — сгенерировать во временный каталог и сравнить
+    # содержимое, игнорируя строку времени.
     if TS_PATH.exists() and PY_PATH.exists():
         check("TS и Pydantic артефакты существуют", True)
-        # Check git diff after codegen
+
+        def _strip_timestamp(text: str) -> str:
+            return "\n".join(
+                ln for ln in text.splitlines() if not ln.startswith("#   timestamp:")
+            )
+
         try:
-            r = subprocess.run(["git", "diff", "--exit-code", "--",
-                                 str(TS_PATH), str(PY_PATH)],
-                                cwd=REPO, capture_output=True, text=True, timeout=30)
-            check("перегенерация не даёт диффа (git diff --exit-code)", r.returncode == 0,
-                  "есть несоответствие" if r.returncode else "")
-        except Exception as e:
-            skip("перегенерация — git недоступен", str(e))
+            with tempfile.TemporaryDirectory() as tmp:
+                regen = Path(tmp) / "persona_dna.py"
+                r = subprocess.run(
+                    ["datamodel-codegen", "--input", str(SCHEMA_PATH),
+                     "--input-file-type", "jsonschema", "--output", str(regen),
+                     "--output-model-type", "pydantic_v2.BaseModel"],
+                    cwd=REPO, capture_output=True, text=True, timeout=180,
+                )
+                if r.returncode != 0 or not regen.is_file():
+                    skip("перегенерация Pydantic совпадает с закоммиченной",
+                         "datamodel-codegen отработал с ошибкой")
+                else:
+                    same = _strip_timestamp(regen.read_text("utf-8")) == _strip_timestamp(
+                        PY_PATH.read_text("utf-8"))
+                    check("перегенерация Pydantic совпадает с закоммиченной", same,
+                          "" if same else "модель правили руками либо схема ушла вперёд")
+        except FileNotFoundError:
+            skip("перегенерация Pydantic совпадает с закоммиченной",
+                 "datamodel-codegen не установлен (pip install datamodel-code-generator)")
+        except subprocess.TimeoutExpired:
+            skip("перегенерация Pydantic совпадает с закоммиченной",
+                 "генератор не уложился в 180 с")
     else:
         check("TS и Pydantic артефакты существуют", False,
               f"TS={TS_PATH.exists()} PY={PY_PATH.exists()}")

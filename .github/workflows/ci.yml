@@ -21,8 +21,8 @@ jobs:
     name: Веб — типы и сборка
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: 24
           cache: npm
@@ -45,8 +45,8 @@ jobs:
     name: Воркер — тесты и линт
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
           cache: pip
@@ -62,14 +62,21 @@ jobs:
     name: CDD-тесты задач
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
       - name: Зависимости тестов
-        # pglast нужен тесту задачи #2: SQL разбирается настоящим парсером
-        # PostgreSQL, а не регулярками.
-        run: pip install pglast
+        # pglast — тесту задачи #2: SQL разбирается настоящим парсером PostgreSQL,
+        # а не регулярками. jsonschema>=4 — валидация корпуса и Persona DNA по
+        # Draft 2020-12. datamodel-code-generator — проверка «перегенерация модели
+        # совпадает с закоммиченной». Без них эти проверки уходят в SKIP, и CI
+        # молча перестаёт проверять то, ради чего задачи делались.
+        run: pip install pglast 'jsonschema>=4' datamodel-code-generator
+      - name: Версии окружения
+        run: |
+          python3 --version
+          pip list --format=freeze | grep -Ei 'pglast|jsonschema|datamodel' || true
       - name: Прогон
         # Каждый тест сам решает, что ему доступно: без DATABASE_URL и BASE_URL
         # поведенческий уровень честно пишет SKIP. Красным становится только
@@ -87,8 +94,8 @@ jobs:
     name: Секреты
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
       - name: secret_scan
