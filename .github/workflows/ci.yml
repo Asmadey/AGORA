@@ -1,0 +1,112 @@
+name: CI
+
+# Гейт на каждый PR и на push в main. Что здесь НЕ проверяется: полный
+# `evals/check.py`. Он требует 31/31 закрытых задач и потому красный до самого
+# конца проекта — как гейт отдельного PR он бесполезен. Из него берётся ровно
+# одна обязательная метрика: secret_scan.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# Новый push в ту же ветку отменяет предыдущий прогон: смысла добивать
+# устаревший коммит нет.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  web:
+    name: Веб — типы и сборка
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - name: tsc --noEmit
+        run: npx tsc --noEmit
+        working-directory: apps/web
+      - name: next build
+        run: npm run build
+        env:
+          # Заведомо фиктивные значения: сборка не должна ходить в базу и не
+          # должна зависеть от настоящих секретов. Если сборка сломается без
+          # живого Postgres — это дефект, а не особенность окружения.
+          AUTH_SECRET: ci-not-a-real-secret-ci-not-a-real
+          AUTH_URL: http://localhost:3000
+          DATABASE_URL: postgresql://ci:ci@127.0.0.1:5432/ci
+          NEXT_TELEMETRY_DISABLED: "1"
+
+  worker:
+    name: Воркер — тесты и линт
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Установка
+        run: pip install -e ".[dev]"
+        working-directory: services/agent-core
+      - run: python -m pytest -q
+        working-directory: services/agent-core
+      - run: python -m ruff check .
+        working-directory: services/agent-core
+
+  cdd:
+    name: CDD-тесты задач
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Зависимости тестов
+        # pglast нужен тесту задачи #2: SQL разбирается настоящим парсером
+        # PostgreSQL, а не регулярками.
+        run: pip install pglast
+      - name: Прогон
+        # Каждый тест сам решает, что ему доступно: без DATABASE_URL и BASE_URL
+        # поведенческий уровень честно пишет SKIP. Красным становится только
+        # невыполненный статический контракт.
+        run: |
+          status=0
+          for t in evals/tests/test_task*.py; do
+            echo "::group::$t"
+            python3 "$t" || status=1
+            echo "::endgroup::"
+          done
+          exit $status
+
+  secrets:
+    name: Секреты
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: secret_scan
+        # check.py целиком красный по tasks_done — берём из отчёта одну метрику.
+        # Ключ, попавший в историю, не отменяется удалением файла: нужен
+        # перевыпуск, поэтому проверка обязательная и до слияния.
+        run: |
+          python3 evals/check.py > /dev/null 2>&1 || true
+          python3 - <<'PY'
+          import json, sys, pathlib
+          report = pathlib.Path("evals/last_report.json")
+          if not report.is_file():
+              sys.exit("evals/check.py не создал отчёт")
+          data = json.loads(report.read_text())
+          hit = next((r for r in data["results"] if r["name"] == "secret_scan"), None)
+          if hit is None:
+              sys.exit("метрика secret_scan отсутствует в отчёте")
+          if hit["status"] != "pass":
+              sys.exit(f"secret_scan: {hit['status']} — {hit.get('detail', '')}")
+          print("secret_scan: pass")
+          PY
