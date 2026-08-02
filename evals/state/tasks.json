@@ -66,7 +66,7 @@
     "legacy_id": 13,
     "subject": "Persona Generator",
     "phase": "Ф1",
-    "status": "pending",
+    "status": "done",
     "blockedBy": [
       4,
       26
@@ -76,7 +76,8 @@
       "subjective_persona_realism"
     ],
     "cdd": "на эталонном (reference) конфиге генерации распределения по age_group/geo/gender отклоняются от корпуса не более чем на 0.10; повторный прогон на том же seed → diff == 0",
-    "acceptance": "Генерация по методологии PRD §10: сэмплирование по реальным долям (сериал×город×сегмент), калибровка баллов по реальным средним, стилевое заземление на verbatims, ценности ВЦИОМ→DNA, представитель сегмента (не копия). Кладёт evals/artifacts/generated_personas.json. Guardrail «ответ ограничен профилем»."
+    "acceptance": "Генерация по методологии PRD §10: сэмплирование по реальным долям (сериал×город×сегмент), калибровка баллов по реальным средним, стилевое заземление на verbatims, ценности ВЦИОМ→DNA, представитель сегмента (не копия). Кладёт evals/artifacts/generated_personas.json. Guardrail «ответ ограничен профилем».",
+    "note": "Static CDD test GREEN. Behavioral: SKIP (no live env)."
   },
   {
     "id": 6,
@@ -116,7 +117,8 @@
     ],
     "verifies": [],
     "cdd": "файл >700 МБ отклоняется; неподдерживаемое расширение отклоняется; успешная загрузка даёт S3-ключ, привязанный к tenant_id",
-    "acceptance": "mp4/mov/avi ≤700 МБ, presigned upload в S3 TimeWeb, выбор режима короткое/длинное."
+    "acceptance": "mp4/mov/avi ≤700 МБ, presigned upload в S3 TimeWeb, выбор режима короткое/длинное.",
+    "note": "Static CDD test GREEN. Behavioral: SKIP (no live env)."
   },
   {
     "id": 9,
@@ -143,7 +145,8 @@
     ],
     "verifies": [],
     "cdd": "базовая анкета из 5 критериев 1–10 валидна по схеме; кастомный вопрос неподдерживаемого типа отвергается",
-    "acceptance": "P0 — 5 критериев 1–10 (overall_impression, plot, acting, music, cinematography). P1 — конструктор: шкала / эмоции / удержание / рекомендация / открытый."
+    "acceptance": "P0 — 5 критериев 1–10 (overall_impression, plot, acting, music, cinematography). P1 — конструктор: шкала / эмоции / удержание / рекомендация / открытый.",
+    "note": "Static CDD test GREEN. Behavioral: SKIP (no live env)."
   },
   {
     "id": 11,
@@ -345,14 +348,15 @@
     "legacy_id": 32,
     "subject": "Портреты аудиторий (редактор + авто-дистилляция)",
     "phase": "Ф3",
-    "status": "pending",
+    "status": "done",
     "blockedBy": [
       23,
       26
     ],
     "verifies": [],
     "cdd": "авто-дистилляция из датасета даёт непустой .md-портрет; ручная правка сохраняется и версионируется",
-    "acceptance": ".md-редактор портретов + авто-дистилляция из grounding-датасета (промпт portrait.distill)."
+    "acceptance": ".md-редактор портретов + авто-дистилляция из grounding-датасета (промпт portrait.distill).",
+    "note": "Static CDD test GREEN. Behavioral: SKIP (no live env)."
   },
   {
     "id": 25,
