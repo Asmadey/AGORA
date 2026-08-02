@@ -112,7 +112,7 @@
     }
   ],
   "failed_hypotheses": [],
-  "next": "Pass 8: параллельно #4 (Persona DNA, canonical JSON Schema) и #26 (Промпт-студия, метрика prompts_editable). Затем #7 визард и #23 датасет. #27 требует разделения формулировки приёмки: хранение — сейчас, влияние на прогон — после #15. Подробности и обоснование порядка — docs/plan_2026-08-01.md §8",
+  "next": "Pass 9: #5 Persona Generator (заблокирован на LLM-вызовах, статика готова), #8 Upload + #10 Survey, #24 Portraits — все три в работе параллельно. После них: #9 (прогресс-трекер), #11 (запуск), #18 (QA gate), #25 (share).",
   "decisions_applied": {
     "execution": "Вариант B — петля в среде пользователя. Sandbox помощника не подходит: нет docker, node 22 вместо 24, python 3.10 вместо 3.14, api.timeweb.cloud недоступен.",
     "repo": "Корень монорепо = папка AGORA. Реструктуризация выполнена в Pass 1.",
@@ -127,7 +127,8 @@
     "У локального Postgres в контейнере нет резервного копирования",
     "Фикстура evals/fixtures/long_12min.mp4 отсутствует (e2e_long, задача #22)",
     "short_60s.mp4 синтетический (testsrc) — для субъективных оценок нужен реальный контент",
-    "Не влиты в репозиторий: Decision Log #13–#17, .github/ (CI и шаблон PR), tkp_agency_review.md, plan_2026-08-01.md, правки AGENTS.md и check.py"
+    "Не влиты в репозиторий: Decision Log #13–#17, .github/ (CI и шаблон PR), tkp_agency_review.md, plan_2026-08-01.md, правки AGENTS.md и check.py — ВЛИТО через PR #3",
+    "История репозитория очищена через git filter-repo (docs/Evaluative research/ удалена из всех коммитов), но пароли остаются скомпрометированными — пользователь решил не перевыпускать"
   ],
   "budget": {
     "max_passes": 40,

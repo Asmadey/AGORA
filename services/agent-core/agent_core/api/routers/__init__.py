@@ -1,0 +1,1 @@
+"""agent_core.api.routers — HTTP-маршруты FastAPI."""

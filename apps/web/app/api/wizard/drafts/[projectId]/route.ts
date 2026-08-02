@@ -14,8 +14,8 @@ export async function GET(
 
   const { projectId } = await params;
   const user: SessionUser = {
-    userId: session.user.id,
-    tenantId: session.user.tenantId,
+    userId: session.userId,
+    tenantId: session.tenantId,
   };
 
   const draft = await loadDraft(user, projectId);
@@ -32,8 +32,8 @@ export async function PUT(
   const { projectId } = await params;
   const body = await req.json();
   const user: SessionUser = {
-    userId: session.user.id,
-    tenantId: session.user.tenantId,
+    userId: session.userId,
+    tenantId: session.tenantId,
   };
 
   await saveDraft(user, projectId, body);

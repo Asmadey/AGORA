@@ -1,0 +1,1 @@
+# agent_core.portraits package — auto-distillation of audience portraits from corpus (task #24)

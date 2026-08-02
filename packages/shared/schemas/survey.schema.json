@@ -1,0 +1,181 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agora.dev/schemas/survey.schema.json",
+  "title": "Survey",
+  "description": "Анкета исследования. Контракт между конструктором анкеты (фронт) и воркером (бэк). Содержит пять обязательных базовых критериев (P0) и произвольное количество пользовательских вопросов (P1). Валидируется при INSERT в surveys.questions.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["name", "questions"],
+  "properties": {
+    "id": {
+      "type": "string",
+      "format": "uuid",
+      "description": "UUID анкеты. Генерируется базой при INSERT."
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200,
+      "description": "Название анкеты. Обязательно."
+    },
+    "questions": {
+      "type": "array",
+      "description": "Список вопросов. Первый блок — пять базовых критериев (P0), за ними — пользовательские (P1).",
+      "minItems": 5,
+      "items": { "$ref": "#/$defs/Question" }
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Время создания. Устанавливается базой."
+    }
+  },
+  "$defs": {
+    "BaseCriterionKey": {
+      "type": "string",
+      "enum": ["overall_impression", "plot", "acting", "music", "cinematography"],
+      "description": "Ключи пяти базовых критериев. Именно по ним посчитаны средние в корпусе 165 респондентов — ключ часть контракта с данными, не подпись."
+    },
+    "QuestionType": {
+      "type": "string",
+      "enum": ["scale", "emotions", "retention", "recommendation", "open"],
+      "description": "Типы вопросов P1-конструктора. Список закрытый: воркер умеет разбирать ответ только этих пяти форм. Добавление шестого — изменение схемы ответа персоны."
+    },
+    "Question": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "label", "type", "scaleMin", "scaleMax"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Идентификатор вопроса. У базовых — base-1..base-5, у пользовательских — uuid или custom-N."
+        },
+        "baseKey": {
+          "description": "Задан только у пяти базовых критериев; у пользовательских — отсутствует.",
+          "oneOf": [
+            { "$ref": "#/$defs/BaseCriterionKey" },
+            { "type": "null" }
+          ]
+        },
+        "label": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500,
+          "description": "Формулировка вопроса. Подпись менять можно, baseKey — нет."
+        },
+        "type": { "$ref": "#/$defs/QuestionType" },
+        "scaleMin": {
+          "type": "integer",
+          "minimum": -100,
+          "maximum": 100,
+          "description": "Нижняя граница шкалы. Осмысленна только при type=scale, но поле обязательное — упрощает валидацию."
+        },
+        "scaleMax": {
+          "type": "integer",
+          "minimum": -100,
+          "maximum": 100,
+          "description": "Верхняя граница шкалы. При type=scale должна быть больше scaleMin."
+        },
+        "hint": {
+          "type": "string",
+          "maxLength": 1000,
+          "description": "Подсказка для персоны — что именно оценивать. Необязательна."
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "type": { "const": "scale" } },
+            "required": ["type"]
+          },
+          "then": {
+            "properties": {
+              "scaleMin": { "minimum": -100, "maximum": 100 },
+              "scaleMax": { "minimum": -100, "maximum": 100 }
+            },
+            "description": "При type=scale scaleMax должен быть больше scaleMin (проверяется отдельным constraints блоком ниже)."
+          }
+        }
+      ]
+    }
+  },
+  "allOf": [
+    {
+      "description": "Базовая анкета из 5 критериев (P0): ровно пять вопросов с baseKey, каждый с уникальным ключом, все типа scale, шкала 1–10.",
+      "properties": {
+        "questions": {
+          "contains": {
+            "properties": {
+              "baseKey": { "const": "overall_impression" },
+              "type": { "const": "scale" },
+              "scaleMin": { "const": 1 },
+              "scaleMax": { "const": 10 }
+            },
+            "required": ["baseKey", "type", "scaleMin", "scaleMax"]
+          }
+        }
+      }
+    },
+    {
+      "properties": {
+        "questions": {
+          "contains": {
+            "properties": {
+              "baseKey": { "const": "plot" },
+              "type": { "const": "scale" },
+              "scaleMin": { "const": 1 },
+              "scaleMax": { "const": 10 }
+            },
+            "required": ["baseKey", "type", "scaleMin", "scaleMax"]
+          }
+        }
+      }
+    },
+    {
+      "properties": {
+        "questions": {
+          "contains": {
+            "properties": {
+              "baseKey": { "const": "acting" },
+              "type": { "const": "scale" },
+              "scaleMin": { "const": 1 },
+              "scaleMax": { "const": 10 }
+            },
+            "required": ["baseKey", "type", "scaleMin", "scaleMax"]
+          }
+        }
+      }
+    },
+    {
+      "properties": {
+        "questions": {
+          "contains": {
+            "properties": {
+              "baseKey": { "const": "music" },
+              "type": { "const": "scale" },
+              "scaleMin": { "const": 1 },
+              "scaleMax": { "const": 10 }
+            },
+            "required": ["baseKey", "type", "scaleMin", "scaleMax"]
+          }
+        }
+      }
+    },
+    {
+      "properties": {
+        "questions": {
+          "contains": {
+            "properties": {
+              "baseKey": { "const": "cinematography" },
+              "type": { "const": "scale" },
+              "scaleMin": { "const": 1 },
+              "scaleMax": { "const": 10 }
+            },
+            "required": ["baseKey", "type", "scaleMin", "scaleMax"]
+          }
+        }
+      }
+    }
+  ]
+}

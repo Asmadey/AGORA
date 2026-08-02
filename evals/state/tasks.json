@@ -110,7 +110,7 @@
     "legacy_id": 16,
     "subject": "Шаг Контент + загрузка видео",
     "phase": "Ф1",
-    "status": "pending",
+    "status": "done",
     "blockedBy": [
       7
     ],
@@ -137,7 +137,7 @@
     "legacy_id": 18,
     "subject": "Шаг Опрос + конструктор анкеты",
     "phase": "Ф1",
-    "status": "pending",
+    "status": "done",
     "blockedBy": [
       7
     ],
