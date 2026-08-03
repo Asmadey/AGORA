@@ -3,8 +3,11 @@
 # Запуск из корня монорепо:
 #   docker compose -f infra/docker-compose.yml --env-file .env.local up -d
 #
-# Managed-БД на TimeWeb в проде заменяют сервисы postgres/mongo/valkey: тогда
-# поднимаются только web и worker, а *_URL в env указывают на managed-хосты.
+# Состав на 02.08.2026: Postgres — локальный контейнер, MongoDB и Valkey —
+# managed на TimeWeb. Поэтому mongo и valkey объявлены с профилем local-db и
+# по умолчанию не поднимаются; их URL берутся из .env.local.
+#   обычный запуск:            docker compose ... up -d          (postgres, web, worker)
+#   полностью локальный стек:  docker compose ... --profile local-db up -d
 #
 # Секреты берутся только из env-файла. Значения по умолчанию через :- заданы
 # ТОЛЬКО для локальной разработки и не содержат ничего чувствительного.
@@ -35,8 +38,19 @@ services:
       retries: 12
       start_period: 15s
 
+  # ─── Локальные БД: только по профилю local-db ──────────────────────────
+  # Решение 02.08.2026: MongoDB и Valkey берутся managed на TimeWeb, локально
+  # поднимается только Postgres. Профиль означает, что `docker compose up -d`
+  # эти сервисы НЕ стартует и `docker compose ps` их не показывает — метрика
+  # compose_health перестаёт быть вечно красной из-за контейнера, который никому
+  # не нужен. Для полностью автономной разработки без сети:
+  #     docker compose --profile local-db up -d
+  #
+  # depends_on у web и worker на них намеренно снят: зависимость от сервиса с
+  # профилем включает этот профиль неявно, и вся конструкция теряет смысл.
   mongo:
     image: mongo:8.0
+    profiles: ["local-db"]
     restart: unless-stopped
     environment:
       MONGO_INITDB_ROOT_USERNAME: ${MONGO_USER:-agora}
@@ -56,6 +70,7 @@ services:
 
   valkey:
     image: valkey/valkey:9.1-alpine
+    profiles: ["local-db"]
     restart: unless-stopped
     command: ["valkey-server", "--appendonly", "yes"]
     ports:
@@ -82,17 +97,20 @@ services:
       AUTH_URL: ${AUTH_URL:-http://localhost:3000}
       AUTH_SECRET: ${AUTH_SECRET:?AUTH_SECRET обязателен}
       DATABASE_URL: ${DATABASE_URL:-postgresql://agora_login:${AGORA_APP_PASSWORD}@postgres:5432/${POSTGRES_DB:-agora}}
-      MONGODB_URL: ${MONGODB_URL:-mongodb://agora:${MONGO_PASSWORD}@mongo:27017/agora?authSource=admin}
-      VALKEY_URL: ${VALKEY_URL:-redis://valkey:6379/0}
+      # Managed на TimeWeb. Умолчание на контейнерные хосты убрано намеренно:
+      # сервисы mongo/valkey ушли в профиль local-db, и подстановка mongo:27017
+      # означала бы тихую попытку соединиться с несуществующим хостом.
+      # При работе с профилем local-db задайте эти URL в .env.local явно.
+      MONGODB_URL: ${MONGODB_URL:?MONGODB_URL обязателен (managed или local-db)}
+      VALKEY_URL: ${VALKEY_URL:?VALKEY_URL обязателен (managed или local-db)}
       OPENAI_API_KEY: ${OPENAI_API_KEY:?OPENAI_API_KEY обязателен}
       OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.timeweb.cloud/v1}
       AI_MODEL: ${AI_MODEL:-qwen3.6}
+    # Только postgres: mongo и valkey вынесены в профиль local-db и по умолчанию
+    # не поднимаются (managed на TimeWeb). Зависимость от сервиса с профилем
+    # включила бы профиль неявно и вернула бы ненужные контейнеры.
     depends_on:
       postgres:
-        condition: service_healthy
-      mongo:
-        condition: service_healthy
-      valkey:
         condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:3000/api/health || exit 1"]
@@ -109,8 +127,12 @@ services:
     command: ["celery", "-A", "agent_core.celery_app", "worker", "--loglevel=info", "--concurrency=${WORKER_CONCURRENCY:-4}"]
     environment:
       DATABASE_URL: ${DATABASE_URL:-postgresql://agora_login:${AGORA_APP_PASSWORD}@postgres:5432/${POSTGRES_DB:-agora}}
-      MONGODB_URL: ${MONGODB_URL:-mongodb://agora:${MONGO_PASSWORD}@mongo:27017/agora?authSource=admin}
-      VALKEY_URL: ${VALKEY_URL:-redis://valkey:6379/0}
+      # Managed на TimeWeb. Умолчание на контейнерные хосты убрано намеренно:
+      # сервисы mongo/valkey ушли в профиль local-db, и подстановка mongo:27017
+      # означала бы тихую попытку соединиться с несуществующим хостом.
+      # При работе с профилем local-db задайте эти URL в .env.local явно.
+      MONGODB_URL: ${MONGODB_URL:?MONGODB_URL обязателен (managed или local-db)}
+      VALKEY_URL: ${VALKEY_URL:?VALKEY_URL обязателен (managed или local-db)}
       OPENAI_API_KEY: ${OPENAI_API_KEY:?OPENAI_API_KEY обязателен}
       OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.timeweb.cloud/v1}
       # Обязательный заголовок агента TimeWeb: помечен required в OpenAPI,
@@ -139,12 +161,11 @@ services:
       # celeryuser, а не в /root: контейнер работает под uid 1001 и в /root
       # (режим 700) писать не может — отказ вылез бы на первой транскрипции.
       - model_cache:/home/celeryuser/.cache
+    # Только postgres: mongo и valkey вынесены в профиль local-db и по умолчанию
+    # не поднимаются (managed на TimeWeb). Зависимость от сервиса с профилем
+    # включила бы профиль неявно и вернула бы ненужные контейнеры.
     depends_on:
       postgres:
-        condition: service_healthy
-      mongo:
-        condition: service_healthy
-      valkey:
         condition: service_healthy
     healthcheck:
       test: ["CMD-SHELL", "celery -A agent_core.celery_app inspect ping -d celery@$$HOSTNAME || exit 1"]

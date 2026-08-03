@@ -221,9 +221,12 @@ print("\n== Поведенческий уровень ==")
 
 dsn = os.environ.get("DATABASE_URL")
 if not dsn:
+    # Пропускается только проверка, которой действительно нужна база. Прежде здесь
+    # заодно пропускались Pydantic-проверки с причиной «Pydantic не установлен» — при
+    # том что к базе они отношения не имеют, а причина была вымышленной. В выводе это
+    # давало по две строки на одну проверку: SKIP с ложным объяснением и настоящий
+    # результат ниже.
     skip("INSERT персоны в Postgres", "DATABASE_URL не задан")
-    skip("Pydantic принимает эталонную персону", "Pydantic не установлен")
-    skip("Pydantic отвергает невалидные варианты", "Pydantic не установлен")
 else:
     # Use admin URL if available for fetching team, then switch to app role for INSERT
     admin_dsn = os.environ.get("POSTGRES_ADMIN_URL", dsn)
@@ -261,9 +264,34 @@ else:
         check("INSERT персоны с валидной DNA", False, f"{type(e).__name__}: {str(e)[:120]}")
 
 # Pydantic validation
-try:
+#
+# Имя корневой модели задаёт datamodel-codegen по полю title схемы: "Persona DNA"
+# превращается в класс PersonaDna. Тест был написан под прежнюю генерацию, где title
+# отсутствовал и класс назывался Model, — отсюда ImportError, который уходил в SKIP и
+# маскировал то, что Pydantic-уровень задачи #4 не проверялся вообще.
+#
+# Имя не захардкожено: сначала пробуем вывести его из title, затем известные варианты.
+# Если корневой модели нет ни под одним именем — это FAIL, а не SKIP: отсутствие
+# сгенерированной модели есть дефект, а не особенность среды.
+def _root_model():
+    import importlib
+
     sys.path.insert(0, str(REPO / "services" / "agent-core"))
-    from agent_core.schemas.persona_dna import Model
+    module = importlib.import_module("agent_core.schemas.persona_dna")
+    title = (schema or {}).get("title", "")
+    candidates = ["".join(p[:1].upper() + p[1:] for p in title.split()), "PersonaDna", "Model"]
+    for name in candidates:
+        model = getattr(module, name, None)
+        if model is not None:
+            return name, model
+    raise AttributeError(
+        f"корневая модель не найдена среди {candidates}; "
+        f"проверьте title схемы и перегенерируйте: npm run codegen:persona"
+    )
+
+
+try:
+    model_name, Model = _root_model()
     # 18. Pydantic accepts reference persona
     try:
         m = Model(**fixture)
@@ -290,11 +318,16 @@ try:
             print(f"  OK   Pydantic отвергает: {label}")
     check("Pydantic отвергает все невалидные варианты", all_reject)
 
-except ImportError:
-    skip("Pydantic принимает эталонную персону", "модуль persona_dna не импортируется")
-    skip("Pydantic отвергает невалидные варианты", "модуль persona_dna не импортируется")
+except ModuleNotFoundError as e:
+    # Единственная причина для SKIP здесь — отсутствие среды: пакет agent_core не
+    # установлен, значит Pydantic-модель физически неоткуда взять.
+    skip("Pydantic принимает эталонную персону", f"agent_core не установлен: {e}")
+    skip("Pydantic отвергает невалидные варианты", f"agent_core не установлен: {e}")
+except AttributeError as e:
+    # Модуль есть, а корневой модели в нём нет — это дефект генерации, не среда.
+    check("Pydantic-модель существует", False, str(e)[:160])
 except Exception as e:
-    skip("Pydantic проверка", f"{type(e).__name__}: {str(e)[:120]}")
+    check("Pydantic проверка", False, f"{type(e).__name__}: {str(e)[:120]}")
 
 
 # --- Summary ---
