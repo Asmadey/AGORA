@@ -190,10 +190,26 @@ if compose.is_file():
 
     if shutil.which("docker"):
         try:
+            # compose.yml объявляет секреты через ${VAR:?...} (раздел 5 CLAUDE.md —
+            # секреты только из env, не захардкожены). `config` не поднимает
+            # контейнеры и не читает эти значения содержательно — ему достаточно,
+            # что переменная существует. Без .env.local (как на GitHub Actions)
+            # интерполяция падает на первой обязательной переменной, и валидный
+            # compose выглядит как невалидный. Плейсхолдеры здесь — не секреты.
+            dummy_required = {
+                "POSTGRES_PASSWORD": "ci-placeholder",
+                "AGORA_APP_PASSWORD": "ci-placeholder",
+                "AGORA_SHARE_PASSWORD": "ci-placeholder",
+                "MONGO_PASSWORD": "ci-placeholder",
+                "AUTH_SECRET": "ci-placeholder",
+                "MONGODB_URL": "mongodb://ci:ci@localhost:27017/ci",
+                "VALKEY_URL": "redis://localhost:6379",
+                "OPENAI_API_KEY": "ci-placeholder",
+            }
             r = subprocess.run(
                 ["docker", "compose", "-f", str(compose), "config", "--quiet"],
                 capture_output=True, text=True, timeout=120,
-                cwd=ROOT, env={**os.environ, "COMPOSE_PROJECT_NAME": "agora"},
+                cwd=ROOT, env={**os.environ, **dummy_required, "COMPOSE_PROJECT_NAME": "agora"},
             )
             check(
                 "docker compose config валиден",
