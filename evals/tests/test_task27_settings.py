@@ -99,15 +99,18 @@ else:
         resp = opener.open(req, timeout=10)
         status = resp.getcode()
         body = json.loads(resp.read())
-        check("GET без сохранённых настроек → умолчания", status == 200 and "whisperModel" in body,
+        # API возвращает обёртку { settings, persistence } — см. комментарий
+        # в route.ts. Настройки — в body["settings"].
+        s = body.get("settings", {})
+        check("GET без сохранённых настроек → умолчания", status == 200 and "whisperModel" in s,
               f"HTTP {status}")
 
         # 7. PUT valid → GET
         put_data = json.dumps({
-            costCap: "hard",
-            costCapValue: 300,
-            whisperModel: "large-v3-turbo",
-            defaultReplication: 3,
+            "costCap": "hard",
+            "costCapValue": 300,
+            "whisperModel": "large-v3-turbo",
+            "defaultReplication": 3,
         }).encode()
         put_req = urllib.request.Request(f"{base_url}/api/settings", data=put_data, method="PUT")
         put_req.add_header("Content-Type", "application/json")
@@ -121,9 +124,10 @@ else:
         req.add_header("Cookie", cookies)
         resp = opener.open(req, timeout=10)
         body = json.loads(resp.read())
+        s = body.get("settings", {})
         check("GET после PUT — значения совпадают",
-              body.get("whisperModel") == "large-v3-turbo" and body.get("defaultReplication") == 3,
-              f"got: {body}")
+              s.get("whisperModel") == "large-v3-turbo" and s.get("defaultReplication") == 3,
+              f"got: {s}")
 
         # 8. PUT garbage → 400
         put_garbage = b'{"whisperModel": "invalid-model", "costCap": "bad"}'
@@ -169,10 +173,10 @@ else:
 
         # 10. member PUT → 403
         put_member = json.dumps({
-            costCap: "auto",
-            costCapValue: 500,
-            whisperModel: "large-v3",
-            defaultReplication: 1,
+            "costCap": "auto",
+            "costCapValue": 500,
+            "whisperModel": "large-v3",
+            "defaultReplication": 1,
         }).encode()
         put_req_m = urllib.request.Request(f"{base_url}/api/settings", data=put_member, method="PUT")
         put_req_m.add_header("Content-Type", "application/json")
