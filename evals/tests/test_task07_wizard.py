@@ -5,9 +5,13 @@ CDD-тест задачи #7 — Визард (XState) + черновики (Mon
 Двухуровневый: статический работает где угодно, поведенческий требует живой базы.
 """
 from __future__ import annotations
+import json
 import os
 import re
+import shutil
+import subprocess
 import sys
+import uuid
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
@@ -142,15 +146,99 @@ else:
         # Cleanup
         coll.delete_many({"tenant_id": {"$in": ["test-tenant-a", "test-tenant-b"]}})
 
-        # 7-11 require running server with XState — skip for now
-        for i in [7, 8, 9, 10, 11, 14]:
-            skip(f"поведенческий кейс {i}", "требует запущенного сервера с XState")
-
     except ImportError:
-        for i in range(7, 15):
+        for i in range(12, 14):
             skip(f"поведенческий кейс {i}", "pymongo не установлен")
     except Exception as e:
         check("поведенческий тест Mongo", False, f"{type(e).__name__}: {str(e)[:120]}")
+
+
+# ── CDD-1: машина не пускает вперёд без обязательных полей ───────────────────
+# Guard canProceed живёт в TypeScript и в браузере, из Python его не вызвать.
+# Раньше здесь стояла строка `# 7-11 require running server with XState — skip
+# for now`, пропускавшая эти кейсы безусловно — при живом сервере тоже. Оба
+# пункта cdd задачи лежат именно тут, поэтому задача годами стояла done, ни разу
+# не будучи проверенной. Машина исполняется Node напрямую (стирание типов),
+# отдельная сборка не нужна.
+
+probe = REPO / "evals" / "tests" / "fixtures" / "wizard_machine_probe.mjs"
+node = shutil.which("node")
+
+if node is None:
+    skip("машина состояний: гарантии переходов", "node не установлен")
+elif not (REPO / "node_modules" / "xstate").exists():
+    skip("машина состояний: гарантии переходов", "xstate не установлен (npm ci)")
+else:
+    proc = subprocess.run(
+        [node, str(probe)], capture_output=True, text=True, cwd=REPO, timeout=90
+    )
+    try:
+        cases = json.loads(proc.stdout)
+    except json.JSONDecodeError:
+        cases = None
+
+    if cases is None:
+        check(
+            "машина состояний: гарантии переходов",
+            False,
+            f"прогон машины не дал результата (код {proc.returncode}): "
+            f"{(proc.stderr or proc.stdout)[-160:]}",
+        )
+    else:
+        for case in cases:
+            check(case["name"], case["ok"], case.get("detail", ""))
+
+
+# ── CDD-2: черновик восстанавливается после перезагрузки страницы ────────────
+# Перезагрузка на стороне продукта означает: состояние не в памяти вкладки, а
+# на сервере, и следующий GET возвращает то же самое. Именно это здесь и
+# проверяется — записать черновик и прочитать его новым клиентом.
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _harness import login  # noqa: E402
+
+client, why = login(base_url)
+
+if client is None:
+    skip("черновик восстанавливается после перезагрузки", why)
+else:
+    project_id = f"cdd-{uuid.uuid4()}"
+    draft = {
+        "contentTitle": "Ролик из CDD-прогона",
+        "contentUrl": "s3://bucket/cdd.mp4",
+        "mode": "short",
+        "currentStep": 2,
+    }
+    # PUT сохраняет тело целиком как черновик — оборачивать его в {"draft": …}
+    # нельзя, иначе на чтении вернётся черновик с полем draft внутри.
+    code, body = client.call(
+        f"/api/wizard/drafts/{project_id}", "PUT", json.dumps(draft).encode()
+    )
+    saved = code == 200
+
+    # Новый клиент с собственной сессией — это и есть «перезагрузка»: ничего от
+    # предыдущего соединения не переиспользуется, кроме учётных данных.
+    fresh, why2 = login(base_url)
+    restored = {}
+    if fresh is not None:
+        code2, body2 = fresh.call(f"/api/wizard/drafts/{project_id}")
+        if code2 == 200:
+            try:
+                # Ответ — обёртка хранения: { draft: { project_id, user_id,
+                # updated_at, data } }. Поля визарда лежат в data, а не в самом
+                # draft; чтение draft.contentTitle даёт None и выглядит как
+                # потерянный черновик при целом хранилище.
+                restored = ((json.loads(body2) or {}).get("draft") or {}).get("data") or {}
+            except json.JSONDecodeError:
+                restored = {}
+
+    check(
+        "черновик восстанавливается после перезагрузки",
+        saved
+        and restored.get("contentTitle") == draft["contentTitle"]
+        and restored.get("currentStep") == draft["currentStep"],
+        f"сохранение={code}, восстановлено={ {k: restored.get(k) for k in ('contentTitle', 'currentStep')} }",
+    )
 
 
 # --- Summary ---

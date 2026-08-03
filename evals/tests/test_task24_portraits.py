@@ -30,7 +30,14 @@ api_detail = API_DETAIL.read_text("utf-8") if API_DETAIL.exists() else ""
 check("PUT для ручной правки", "PUT" in api_detail)
 
 print("\n== Поведенческий уровень ==")
-if not os.environ.get("DATABASE_URL"):
+# Строка подключения берётся через db_dsn: в .env.local хост — имя сервиса
+# compose, которое резолвится только внутри сети контейнеров. При запуске с
+# хоста это давало FAIL «failed to resolve host postgres», читавшийся как
+# поломка базы. См. evals/tests/_harness.py.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _harness import db_dsn  # noqa: E402
+
+if not db_dsn():
     skip("авто-дистилляция → непустой .md", "нет DATABASE_URL")
     skip("ручная правка сохраняется", "нет DATABASE_URL")
     skip("версионирование работает", "нет DATABASE_URL")

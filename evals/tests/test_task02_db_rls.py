@@ -283,7 +283,14 @@ check(
 # ── ПОВЕДЕНЧЕСКИЙ УРОВЕНЬ ─────────────────────────────────────────────────
 print("== кросс-арендаторная изоляция (живой Postgres) ==")
 
-dsn = os.environ.get("DATABASE_URL")
+# Строка подключения берётся через db_dsn: в .env.local хост — имя сервиса
+# compose, которое резолвится только внутри сети контейнеров. При запуске с
+# хоста это давало FAIL «failed to resolve host postgres», читавшийся как
+# поломка базы. См. evals/tests/_harness.py.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _harness import db_dsn  # noqa: E402
+
+dsn = db_dsn()
 if not dsn:
     skip("изоляция арендаторов", "DATABASE_URL не задан — запустите при поднятом compose")
 else:

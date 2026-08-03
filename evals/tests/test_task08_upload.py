@@ -177,51 +177,75 @@ elif not has_server:
     skip("поведенческий кейс: ffprobe валидирует реальный файл", "требует AGORA_TEST_SERVER/BASE_URL")
 else:
     import json
-    import urllib.request
-    import urllib.error
+
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from _harness import login
 
     server_url = os.environ.get("AGORA_TEST_SERVER") or os.environ["BASE_URL"]
 
-    try:
-        # B1: Файл >700 МБ отклоняется на этапе presign
-        payload = json.dumps({
-            "fileName": "big.mp4",
-            "contentType": "video/mp4",
-            "fileSize": 701 * 1024 * 1024,
-        }).encode()
-        req = urllib.request.Request(
-            f"{server_url}/api/upload/presign",
-            data=payload,
-            headers={"Content-Type": "application/json"},
-        )
+    # /api/upload/presign закрыт middleware, и tenant_id для ключа берётся из
+    # сессии. Аноним получает 401 на любой запрос, поэтому раньше здесь были два
+    # FAIL со status=401: проверялась ситуация, которой у продукта не бывает.
+    client, why = login(server_url)
+
+    if client is None:
+        skip("файл >700 МБ отклоняется (presign)", why)
+        skip("неподдерживаемое расширение отклоняется", why)
+        skip("успешная загрузка даёт ключ с tenant_id", why)
+        skip("ffprobe валидирует реальный файл", why)
+    else:
+        tenant_id = (client.session().get("user") or {}).get("tenantId")
+
+        def presign(name: str, ctype: str, size: int) -> tuple[int, str]:
+            body = json.dumps(
+                {"fileName": name, "contentType": ctype, "fileSize": size}
+            ).encode()
+            return client.call("/api/upload/presign", "POST", body)
+
         try:
-            urllib.request.urlopen(req)
-            check("файл >700 МБ отклоняется (presign)", False, "сервер не отклонил")
-        except urllib.error.HTTPError as e:
-            check("файл >700 МБ отклоняется (presign)", e.code == 400, f"status={e.code}")
+            # B1: файл >700 МБ отклоняется на этапе presign
+            code, body = presign("big.mp4", "video/mp4", 701 * 1024 * 1024)
+            check(
+                "файл >700 МБ отклоняется (presign)",
+                code == 400,
+                f"status={code}; 200 значит, что кап размера не действует",
+            )
 
-        # B2: Неподдерживаемое расширение отклоняется
-        payload = json.dumps({
-            "fileName": "video.mkv",
-            "contentType": "video/x-matroska",
-            "fileSize": 1024,
-        }).encode()
-        req = urllib.request.Request(
-            f"{server_url}/api/upload/presign",
-            data=payload,
-            headers={"Content-Type": "application/json"},
-        )
-        try:
-            urllib.request.urlopen(req)
-            check("неподдерживаемое расширение отклоняется", False, "сервер не отклонил .mkv")
-        except urllib.error.HTTPError as e:
-            check("неподдерживаемое расширение отклоняется", e.code == 400, f"status={e.code}")
+            # B2: неподдерживаемое расширение отклоняется
+            code, body = presign("video.mkv", "video/x-matroska", 1024)
+            check(
+                "неподдерживаемое расширение отклоняется",
+                code == 400,
+                f"status={code}; 200 значит, что .mkv прошёл фильтр",
+            )
 
-        skip("успешная загрузка даёт ключ с tenant_id", "требует mock-сессию и тестовый видеофайл")
-        skip("ffprobe валидирует реальный файл", "требует mock-сессию и тестовый видеофайл")
+            # B3: валидный файл получает ключ, привязанный к арендатору.
+            # Это третий пункт cdd, и проверять его надо именно так: ключ
+            # генерируется из session.tenantId, поэтому совпадение ключа с
+            # арендатором сессии и есть доказательство привязки. Реальная
+            # заливка байтов ничего к этому не добавляет — она проверяла бы S3,
+            # а не наш код.
+            code, body = presign("clip.mp4", "video/mp4", 5 * 1024 * 1024)
+            key = ""
+            if code == 200:
+                try:
+                    key = json.loads(body).get("key", "")
+                except Exception:  # noqa: BLE001
+                    key = ""
+            check(
+                "успешная загрузка даёт ключ с tenant_id",
+                code == 200 and bool(tenant_id) and tenant_id in key,
+                f"status={code} key={key[:80] or body[:80]} tenant={tenant_id}",
+            )
 
-    except Exception as e:
-        check("поведенческий тест upload", False, f"{type(e).__name__}: {str(e)[:120]}")
+            skip(
+                "ffprobe валидирует реальный файл",
+                "вне cdd задачи: проверяет воркер, а не маршрут загрузки; "
+                "нужен настоящий видеофайл в репозитории",
+            )
+
+        except Exception as e:
+            check("поведенческий тест upload", False, f"{type(e).__name__}: {str(e)[:120]}")
 
 
 # ═══════════════════════════════════════════════════════════════════════════

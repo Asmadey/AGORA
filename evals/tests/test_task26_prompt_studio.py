@@ -117,8 +117,15 @@ check("в каждом из 13 файлов {{}} непусто", all_have_place
 print("\n== Поведенческий уровень ==")
 
 base_url = os.environ.get("BASE_URL", "https://agora.185-154-194-125.sslip.io")
-dsn = os.environ.get("DATABASE_URL")
-admin_dsn = os.environ.get("POSTGRES_ADMIN_URL")
+# Строка подключения берётся через db_dsn: в .env.local хост — имя сервиса
+# compose, которое резолвится только внутри сети контейнеров. При запуске с
+# хоста это давало FAIL «failed to resolve host postgres», читавшийся как
+# поломка базы. См. evals/tests/_harness.py.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _harness import db_dsn  # noqa: E402
+
+dsn = db_dsn()
+admin_dsn = db_dsn("POSTGRES_ADMIN_URL")
 
 if not dsn:
     for i in range(8, 22):

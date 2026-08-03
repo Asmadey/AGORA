@@ -61,7 +61,14 @@ check("ключи провайдера не пишутся в БД", not has_key
 print("\n== Поведенческий уровень ==")
 
 base_url = os.environ.get("BASE_URL", "https://agora.185-154-194-125.sslip.io")
-dsn = os.environ.get("DATABASE_URL")
+# Строка подключения берётся через db_dsn: в .env.local хост — имя сервиса
+# compose, которое резолвится только внутри сети контейнеров. При запуске с
+# хоста это давало FAIL «failed to resolve host postgres», читавшийся как
+# поломка базы. См. evals/tests/_harness.py.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _harness import db_dsn  # noqa: E402
+
+dsn = db_dsn()
 
 if not dsn and not os.environ.get("BASE_URL"):
     for i in range(6, 15):

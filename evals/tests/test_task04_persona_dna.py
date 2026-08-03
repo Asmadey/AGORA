@@ -219,7 +219,14 @@ if schema:
 
 print("\n== Поведенческий уровень ==")
 
-dsn = os.environ.get("DATABASE_URL")
+# Строка подключения берётся через db_dsn: в .env.local хост — имя сервиса
+# compose, которое резолвится только внутри сети контейнеров. При запуске с
+# хоста это давало FAIL «failed to resolve host postgres», читавшийся как
+# поломка базы. См. evals/tests/_harness.py.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _harness import db_dsn  # noqa: E402
+
+dsn = db_dsn()
 if not dsn:
     # Пропускается только проверка, которой действительно нужна база. Прежде здесь
     # заодно пропускались Pydantic-проверки с причиной «Pydantic не установлен» — при
@@ -229,7 +236,7 @@ if not dsn:
     skip("INSERT персоны в Postgres", "DATABASE_URL не задан")
 else:
     # Use admin URL if available for fetching team, then switch to app role for INSERT
-    admin_dsn = os.environ.get("POSTGRES_ADMIN_URL", dsn)
+    admin_dsn = db_dsn("POSTGRES_ADMIN_URL") or dsn
     try:
         import psycopg
         with psycopg.connect(admin_dsn) as conn:

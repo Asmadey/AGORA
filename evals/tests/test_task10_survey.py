@@ -398,60 +398,61 @@ if not has_server:
     skip("API PUT с невалидной анкетой возвращает 400", "требует AGORA_TEST_SERVER/BASE_URL")
     skip("API PUT с неподдерживаемым типом возвращает 400", "требует AGORA_TEST_SERVER/BASE_URL")
 else:
-    import urllib.request
-    import urllib.error
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from _harness import login
 
     server_url = os.environ.get("AGORA_TEST_SERVER") or os.environ["BASE_URL"]
 
-    try:
-        # B-API-1: PUT создаёт валидную анкету
-        payload = json.dumps({
-            "name": "Тестовая анкета",
-            "questions": BASE_QUESTIONS_VALID,
-        }).encode()
-        req = urllib.request.Request(
-            f"{server_url}/api/surveys",
-            data=payload,
-            headers={"Content-Type": "application/json"},
-            method="PUT",
-        )
-        try:
-            resp = urllib.request.urlopen(req)
-            body = json.loads(resp.read().decode())
-            check("API PUT создаёт валидную анкету", body.get("ok") is True, f"response={body}")
-        except urllib.error.HTTPError as e:
-            check("API PUT создаёт валидную анкету", False, f"status={e.code}")
+    # /api/surveys закрыт middleware: без сессии он отвечает 401 на любой метод.
+    # Раньше тест ходил анонимно и получал три FAIL со status=401 — выглядело
+    # это как отказ API, хотя проверялась несуществующая ситуация: продукт таких
+    # запросов не делает, у него всегда есть сессия.
+    client, why = login(server_url)
 
-        # B-API-2: PUT с неподдерживаемым типом возвращает 400
-        payload = json.dumps({
-            "name": "Невалидная",
-            "questions": BASE_QUESTIONS_VALID + [
-                {"id": "x", "label": "Цвет", "type": "color", "scaleMin": 0, "scaleMax": 1},
-            ],
-        }).encode()
-        req = urllib.request.Request(
-            f"{server_url}/api/surveys",
-            data=payload,
-            headers={"Content-Type": "application/json"},
-            method="PUT",
-        )
+    if client is None:
+        skip("API PUT создаёт валидную анкету", why)
+        skip("API PUT с неподдерживаемым типом возвращает 400", why)
+        skip("API GET возвращает список анкет", why)
+    else:
         try:
-            urllib.request.urlopen(req)
-            check("API PUT с неподдерживаемым типом возвращает 400", False, "сервер не отклонил")
-        except urllib.error.HTTPError as e:
-            check("API PUT с неподдерживаемым типом возвращает 400", e.code == 400, f"status={e.code}")
+            # B-API-1: PUT создаёт валидную анкету
+            payload = json.dumps({
+                "name": "Тестовая анкета",
+                "questions": BASE_QUESTIONS_VALID,
+            }).encode()
+            code, body_raw = client.call("/api/surveys", "PUT", payload)
+            body = json.loads(body_raw) if code == 200 else {}
+            check(
+                "API PUT создаёт валидную анкету",
+                code == 200 and body.get("ok") is True,
+                f"status={code} response={body_raw[:120]}",
+            )
 
-        # B-API-3: GET возвращает список
-        req = urllib.request.Request(f"{server_url}/api/surveys")
-        try:
-            resp = urllib.request.urlopen(req)
-            body = json.loads(resp.read().decode())
-            check("API GET возвращает список анкет", "surveys" in body, f"keys={list(body.keys())}")
-        except urllib.error.HTTPError as e:
-            check("API GET возвращает список анкет", False, f"status={e.code}")
+            # B-API-2: PUT с неподдерживаемым типом возвращает 400
+            payload = json.dumps({
+                "name": "Невалидная",
+                "questions": BASE_QUESTIONS_VALID + [
+                    {"id": "x", "label": "Цвет", "type": "color", "scaleMin": 0, "scaleMax": 1},
+                ],
+            }).encode()
+            code, body_raw = client.call("/api/surveys", "PUT", payload)
+            check(
+                "API PUT с неподдерживаемым типом возвращает 400",
+                code == 400,
+                f"status={code}; 200 значит, что валидатор пропустил неизвестный тип",
+            )
 
-    except Exception as e:
-        check("поведенческий тест API surveys", False, f"{type(e).__name__}: {str(e)[:120]}")
+            # B-API-3: GET возвращает список
+            code, body_raw = client.call("/api/surveys")
+            body = json.loads(body_raw) if code == 200 else {}
+            check(
+                "API GET возвращает список анкет",
+                code == 200 and "surveys" in body,
+                f"status={code} body={body_raw[:120]}",
+            )
+
+        except Exception as e:
+            check("поведенческий тест API surveys", False, f"{type(e).__name__}: {str(e)[:120]}")
 
 
 # ═══════════════════════════════════════════════════════════════════════════
