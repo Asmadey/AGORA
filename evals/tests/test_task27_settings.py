@@ -104,10 +104,10 @@ else:
 
         # 7. PUT valid → GET
         put_data = json.dumps({
-            costCap: "hard",
-            costCapValue: 300,
-            whisperModel: "large-v3-turbo",
-            defaultReplication: 3,
+            "costCap": "hard",
+            "costCapValue": 300,
+            "whisperModel": "large-v3-turbo",
+            "defaultReplication": 3,
         }).encode()
         put_req = urllib.request.Request(f"{base_url}/api/settings", data=put_data, method="PUT")
         put_req.add_header("Content-Type", "application/json")
@@ -169,10 +169,10 @@ else:
 
         # 10. member PUT → 403
         put_member = json.dumps({
-            costCap: "auto",
-            costCapValue: 500,
-            whisperModel: "large-v3",
-            defaultReplication: 1,
+            "costCap": "auto",
+            "costCapValue": 500,
+            "whisperModel": "large-v3",
+            "defaultReplication": 1,
         }).encode()
         put_req_m = urllib.request.Request(f"{base_url}/api/settings", data=put_member, method="PUT")
         put_req_m.add_header("Content-Type", "application/json")
