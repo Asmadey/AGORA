@@ -145,7 +145,7 @@ def check_secret_scan():
         r"CHANGE_ME|ПАРОЛЬ|сгенерируйте|your-|example|placeholder|xxx+|\*{3,}|…|<[^>]+>",
         re.IGNORECASE,
     )
-    skip_dirs = {"node_modules", ".git", ".next", "dist", "build", "__pycache__",
+    skip_dirs = {"node_modules", ".venv", ".git", ".next", "dist", "build", "__pycache__",
                  "fixtures", "grounding", "artifacts", "evals"}
     code_exts = (".ts", ".tsx", ".js", ".jsx", ".mjs", ".py", ".env", ".yml", ".yaml")
     # .md/.sql/.sh/.txt/.json добавлены: выгрузки переписки, дампы и отчёты живут
