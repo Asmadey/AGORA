@@ -21,15 +21,25 @@ import { MongoClient, type Db, type Collection } from "mongodb";
 const MONGODB_URL = process.env.MONGODB_URL;
 const DB_NAME = process.env.MONGO_DB || "agora";
 
+// Managed MongoDB (TimeWeb) не отдаёт наружу внутренние hostnames реплики
+// (192.168.x.x) — без directConnection драйвер пытается достучаться до них и
+// вешает запрос. Прямое соединение убирает discovery и ходит только на тот
+// хост, что задан в URI. Для single-node managed это правильный режим; для
+// настоящей реплики его следует убрать.
 let client: MongoClient | null = null;
 let db: Db | null = null;
 
+function mongoUri(): string {
+  if (!MONGODB_URL) {
+    throw new Error("MONGODB_URL не задан: черновики визарда не могут работать без MongoDB");
+  }
+  const sep = MONGODB_URL.includes("?") ? "&" : "?";
+  return `${MONGODB_URL}${sep}directConnection=true`;
+}
+
 async function getDb(): Promise<Db> {
   if (!client) {
-    if (!MONGODB_URL) {
-      throw new Error("MONGODB_URL не задан: черновики визарда не могут работать без MongoDB");
-    }
-    client = new MongoClient(MONGODB_URL);
+    client = new MongoClient(mongoUri());
     await client.connect();
   }
   if (!db) {
