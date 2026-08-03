@@ -37,7 +37,14 @@ RUN addgroup -g 1001 -S nodejs && adduser -S nextjs -u 1001
 # Пакеты pip не нужны: в режиме --no-llm distill.py и загрузчик корпуса
 # обходятся стандартной библиотекой, а openai импортируется лениво внутри ветки
 # с моделью. Поэтому здесь только интерпретатор и данные.
-RUN apk add --no-cache python3
+# ffmpeg — ради ffprobe: /api/upload/complete валидирует загруженное видео через
+# execFile("ffprobe", …) по presigned GET URL (apps/web/lib/server/s3.ts). В
+# node:alpine его нет, поэтому подтверждение загрузки на стенде падало с
+# «ffprobe не смог прочитать файл». Тот же класс, что python3 и S3_* ниже: код
+# написан, окружение ему не соответствует, а тест не доходил до этой ветки.
+#
+# ffprobe читает только заголовки (moov atom), весь файл не скачивает.
+RUN apk add --no-cache python3 ffmpeg
 
 COPY --from=builder --chown=nextjs:nodejs /repo/apps/web/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /repo/apps/web/.next/static ./apps/web/.next/static

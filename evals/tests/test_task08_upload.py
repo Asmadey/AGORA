@@ -238,11 +238,61 @@ else:
                 f"status={code} key={key[:80] or body[:80]} tenant={tenant_id}",
             )
 
-            skip(
-                "ffprobe валидирует реальный файл",
-                "вне cdd задачи: проверяет воркер, а не маршрут загрузки; "
-                "нужен настоящий видеофайл в репозитории",
-            )
+            # ffprobe: полный цикл — presign, заливка байтов в S3, подтверждение.
+            # /api/upload/complete запускает ffprobe по presigned GET URL, поэтому
+            # проверка доказывает и то, что файл действительно долетел до S3, и
+            # то, что валидация умеет его прочитать. Ролик — секунда чёрного
+            # кадра, 2 КБ, лежит в fixtures и генерируется одной командой ffmpeg
+            # (см. комментарий в fixtures/README).
+            sample = Path(__file__).resolve().parent / "fixtures" / "sample.mp4"
+            if not sample.exists():
+                skip("ffprobe валидирует реальный файл", f"нет файла {sample.name}")
+            else:
+                data = sample.read_bytes()
+                code, body = presign("sample.mp4", "video/mp4", len(data))
+                upload_url, key = "", ""
+                if code == 200:
+                    try:
+                        parsed = json.loads(body)
+                        upload_url, key = parsed.get("uploadUrl", ""), parsed.get("key", "")
+                    except json.JSONDecodeError:
+                        pass
+
+                put_status = 0
+                if upload_url:
+                    import urllib.error
+                    import urllib.request
+
+                    req = urllib.request.Request(
+                        upload_url, data=data, method="PUT",
+                        headers={"Content-Type": "video/mp4"},
+                    )
+                    try:
+                        with urllib.request.urlopen(req, timeout=60) as r:
+                            put_status = r.status
+                    except urllib.error.HTTPError as e:
+                        put_status = e.code
+                    except urllib.error.URLError:
+                        put_status = 0
+
+                probe = {}
+                complete_code = 0
+                if put_status in (200, 204) and key:
+                    complete_code, complete_body = client.call(
+                        "/api/upload/complete", "POST",
+                        json.dumps({"key": key, "mode": "short"}).encode(),
+                    )
+                    if complete_code == 200:
+                        try:
+                            probe = (json.loads(complete_body) or {}).get("probe") or {}
+                        except json.JSONDecodeError:
+                            probe = {}
+
+                check(
+                    "ffprobe валидирует реальный файл",
+                    complete_code == 200 and probe.get("durationSec", 0) > 0,
+                    f"presign={code} put={put_status} complete={complete_code} probe={probe}",
+                )
 
         except Exception as e:
             check("поведенческий тест upload", False, f"{type(e).__name__}: {str(e)[:120]}")
