@@ -79,33 +79,23 @@ else:
         import urllib.parse
         import http.cookiejar
 
-        jar = http.cookiejar.CookieJar()
-        opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(jar))
+        from _harness import login  # noqa: E402
 
-        # Login as owner
-        csrf_resp = opener.open(f"{base_url}/api/auth/csrf", timeout=10)
-        csrf = json.loads(csrf_resp.read())["csrfToken"]
+        # Прежде вход собирался здесь вручную, с адресом и паролем владельца в
+        # исходнике. Пароль в репозитории — §7 CLAUDE.md; secret_scan его не
+        # ловил, потому что ищет только sk-… и AIza…. Учётные данные теперь
+        # приходят из окружения, а сам вход — общий для всех тестов.
+        client, why_login = login(base_url)
+        if client is None:
+            raise RuntimeError(why_login)
 
-        login_data = urllib.parse.urlencode({
-            "email": "owner@agora.local",
-            "password": "AgoraOwner2026!",
-            "csrfToken": csrf,
-            "callbackUrl": base_url,
-        }).encode()
-        login_req = urllib.request.Request(
-            f"{base_url}/api/auth/callback/credentials",
-            data=login_data, method="POST",
-        )
-        login_req.add_header("Content-Type", "application/x-www-form-urlencoded")
-        opener.open(login_req, timeout=10)
+        jar = client.jar
+        opener = client.opener
         cookies = "; ".join(f"{c.name}={c.value}" for c in jar)
 
         # 6. GET without saved settings → defaults
-        req = urllib.request.Request(f"{base_url}/api/settings")
-        req.add_header("Cookie", cookies)
-        resp = opener.open(req, timeout=10)
-        status = resp.getcode()
-        body = json.loads(resp.read())
+        status, raw = client.call("/api/settings")
+        body = json.loads(raw) if status == 200 else {}
         # API возвращает обёртку { settings, persistence } — см. комментарий
         # в route.ts. Настройки — в body["settings"].
         s = body.get("settings", {})
@@ -158,52 +148,41 @@ else:
         except urllib.error.HTTPError as e:
             check("битый JSON → 400", e.code == 400, f"HTTP {e.code}")
 
-        # 10/11. Member permissions
-        # Login as member
-        jar2 = http.cookiejar.CookieJar()
-        opener2 = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(jar2))
-        csrf_resp2 = opener2.open(f"{base_url}/api/auth/csrf", timeout=10)
-        csrf2 = json.loads(csrf_resp2.read())["csrfToken"]
-        login_data2 = urllib.parse.urlencode({
-            "email": "member@agora.local",
-            "password": "AgoraMember2026!",
-            "csrfToken": csrf2,
-            "callbackUrl": base_url,
-        }).encode()
-        login_req2 = urllib.request.Request(
-            f"{base_url}/api/auth/callback/credentials",
-            data=login_data2, method="POST",
+        # 10/11. Member permissions — второй пароль, лежавший в исходнике.
+        member, why_member = login(base_url, "member")
+        cookies2 = (
+            "; ".join(f"{c.name}={c.value}" for c in member.jar) if member else ""
         )
-        login_req2.add_header("Content-Type", "application/x-www-form-urlencoded")
-        opener2.open(login_req2, timeout=10)
-        cookies2 = "; ".join(f"{c.name}={c.value}" for c in jar2)
 
-        # 10. member PUT → 403
         put_member = json.dumps({
             "costCap": "auto",
             "costCapValue": 500,
             "whisperModel": "large-v3",
             "defaultReplication": 1,
         }).encode()
-        put_req_m = urllib.request.Request(f"{base_url}/api/settings", data=put_member, method="PUT")
-        put_req_m.add_header("Content-Type", "application/json")
-        put_req_m.add_header("Cookie", cookies2)
-        try:
-            opener2.open(put_req_m, timeout=10)
-            check("member PUT → 403", False, "не вернул 403")
-        except urllib.error.HTTPError as e:
-            check("member PUT → 403", e.code == 403, f"HTTP {e.code}")
+
+        if member is None:
+            skip("member PUT → 403", why_member)
+        else:
+            code_m, _ = member.call("/api/settings", "PUT", put_member)
+            check(
+                "member PUT → 403",
+                code_m == 403,
+                f"HTTP {code_m}; 200 значит, что участник меняет настройки арендатора",
+            )
 
         # 11. member GET → 200
-        req_m = urllib.request.Request(f"{base_url}/api/settings")
-        req_m.add_header("Cookie", cookies2)
-        resp_m = opener2.open(req_m, timeout=10)
-        check("member GET → 200", resp_m.getcode() == 200)
+        if member is None:
+            skip("member GET → 200", why_member)
+            skip("настройки арендатора A из-под B не видны", why_member)
+        else:
+            code_g, raw_g = member.call("/api/settings")
+            check("member GET → 200", code_g == 200, f"HTTP {code_g}")
 
-        # 12. Cross-tenant isolation — member sees only own tenant settings
-        member_body = json.loads(resp_m.read())
-        check("настройки арендатора A из-под B не видны", True,
-              f"member sees: {list(member_body.keys())[:5]}")
+            # 12. Cross-tenant isolation — member sees only own tenant settings
+            member_body = json.loads(raw_g) if code_g == 200 else {}
+            check("настройки арендатора A из-под B не видны", code_g == 200,
+                  f"member sees: {list(member_body.keys())[:5]}")
 
         # 13/14. settings_snapshot in task — requires task creation API
         skip("снимок настроек в задаче при постановке", "требует API задач")

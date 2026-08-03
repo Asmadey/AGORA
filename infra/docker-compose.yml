@@ -116,6 +116,12 @@ services:
       S3_BUCKET: ${S3_BUCKET:-}
       S3_ACCESS_KEY: ${S3_ACCESS_KEY:-}
       S3_SECRET_KEY: ${S3_SECRET_KEY:-}
+      # Корень, от которого /api/portraits/distill строит путь к distill.py.
+      # Без него берётся process.cwd(), а у standalone-сервера Next это
+      # /app/apps/web — путь получался /app/apps/web/services/... и дистилляция
+      # падала с «can't open file». Умолчание в коде рассчитано на запуск из
+      # каталога репозитория, в образе структура другая.
+      AGORA_REPO_ROOT: /app
     # Только postgres: mongo и valkey вынесены в профиль local-db и по умолчанию
     # не поднимаются (managed на TimeWeb). Зависимость от сервиса с профилем
     # включила бы профиль неявно и вернула бы ненужные контейнеры.
