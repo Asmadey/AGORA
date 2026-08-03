@@ -29,10 +29,18 @@ const DB_NAME = process.env.MONGO_DB || "agora";
 let client: MongoClient | null = null;
 let db: Db | null = null;
 
-function mongoUri(): string {
+export function mongoUri(): string {
   if (!MONGODB_URL) {
     throw new Error("MONGODB_URL не задан: черновики визарда не могут работать без MongoDB");
   }
+  // Параметр дописывается только если его нет в строке и он не отключён явно.
+  // Безусловная подстановка давала два дефекта: на URI, где directConnection уже
+  // задан, получался дубль параметра, а на настоящей реплике режим прямого
+  // соединения молча выключал бы обнаружение узлов и failover. Оба случая
+  // проявились бы не сразу и выглядели бы как сетевая нестабильность.
+  if (/[?&]directConnection=/i.test(MONGODB_URL)) return MONGODB_URL;
+  if (process.env.MONGO_DIRECT_CONNECTION === "0") return MONGODB_URL;
+
   const sep = MONGODB_URL.includes("?") ? "&" : "?";
   return `${MONGODB_URL}${sep}directConnection=true`;
 }

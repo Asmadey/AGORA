@@ -86,16 +86,29 @@ check("каждый запрос к wizard_drafts включает фильтр 
 print("\n== Поведенческий уровень ==")
 
 base_url = os.environ.get("BASE_URL", "https://agora.185-154-194-125.sslip.io")
-mongo_uri = os.environ.get("MONGODB_URI")
+
+# Переменная называется MONGODB_URL: так она задана в .env.local, в .env.example,
+# в обоих сервисах compose и в agent_core/config.py. Тест читал MONGODB_URI,
+# которого нет нигде, и поэтому поведенческий уровень молча уходил в SKIP на любой
+# нормально настроенной машине — тот же дефект, что был в mongo.ts. MONGODB_URI
+# оставлен запасным вариантом, чтобы не ломать уже настроенные окружения.
+mongo_uri = os.environ.get("MONGODB_URL") or os.environ.get("MONGODB_URI")
+
+# Managed-инстанс TimeWeb при discovery отдаёт внутренние адреса реплики, и без
+# directConnection драйвер виснет. Приложение добавляет этот параметр само
+# (apps/web/lib/server/mongo.ts) — тест обязан подключаться так же, иначе он
+# проверяет не тот режим соединения, в котором работает продукт.
+if mongo_uri and "directconnection=" not in mongo_uri.lower():
+    mongo_uri += ("&" if "?" in mongo_uri else "?") + "directConnection=true"
 
 if not mongo_uri:
     for i in range(7, 15):
-        skip(f"поведенческий кейс {i}", "MONGODB_URI не задан")
+        skip(f"поведенческий кейс {i}", "MONGODB_URL не задан")
 else:
     try:
         from pymongo import MongoClient
-        client = MongoClient(mongo_uri)
-        db = client[os.environ.get("MONGODB_DB", "agora")]
+        client = MongoClient(mongo_uri, serverSelectionTimeoutMS=8000)
+        db = client[os.environ.get("MONGO_DB", os.environ.get("MONGODB_DB", "agora"))]
 
         # 12. Draft isolation between tenants
         coll = db["wizard_drafts"]
