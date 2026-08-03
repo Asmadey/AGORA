@@ -35,8 +35,19 @@ services:
       retries: 12
       start_period: 15s
 
+  # ─── Локальные БД: только по профилю local-db ──────────────────────────
+  # Решение 02.08.2026: MongoDB и Valkey берутся managed на TimeWeb, локально
+  # поднимается только Postgres. Профиль означает, что `docker compose up -d`
+  # эти сервисы НЕ стартует и `docker compose ps` их не показывает — метрика
+  # compose_health перестаёт быть вечно красной из-за контейнера, который никому
+  # не нужен. Для полностью автономной разработки без сети:
+  #     docker compose --profile local-db up -d
+  #
+  # depends_on у web и worker на них намеренно снят: зависимость от сервиса с
+  # профилем включает этот профиль неявно, и вся конструкция теряет смысл.
   mongo:
     image: mongo:8.0
+    profiles: ["local-db"]
     restart: unless-stopped
     environment:
       MONGO_INITDB_ROOT_USERNAME: ${MONGO_USER:-agora}
