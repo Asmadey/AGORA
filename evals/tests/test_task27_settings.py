@@ -99,7 +99,10 @@ else:
         resp = opener.open(req, timeout=10)
         status = resp.getcode()
         body = json.loads(resp.read())
-        check("GET без сохранённых настроек → умолчания", status == 200 and "whisperModel" in body,
+        # API возвращает обёртку { settings, persistence } — см. комментарий
+        # в route.ts. Настройки — в body["settings"].
+        s = body.get("settings", {})
+        check("GET без сохранённых настроек → умолчания", status == 200 and "whisperModel" in s,
               f"HTTP {status}")
 
         # 7. PUT valid → GET
@@ -121,9 +124,10 @@ else:
         req.add_header("Cookie", cookies)
         resp = opener.open(req, timeout=10)
         body = json.loads(resp.read())
+        s = body.get("settings", {})
         check("GET после PUT — значения совпадают",
-              body.get("whisperModel") == "large-v3-turbo" and body.get("defaultReplication") == 3,
-              f"got: {body}")
+              s.get("whisperModel") == "large-v3-turbo" and s.get("defaultReplication") == 3,
+              f"got: {s}")
 
         # 8. PUT garbage → 400
         put_garbage = b'{"whisperModel": "invalid-model", "costCap": "bad"}'
