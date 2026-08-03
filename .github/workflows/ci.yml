@@ -81,9 +81,13 @@ jobs:
         # Каждый тест сам решает, что ему доступно: без DATABASE_URL и BASE_URL
         # поведенческий уровень честно пишет SKIP. Красным становится только
         # невыполненный статический контракт.
+        # Маска `test_*.py`, а не `test_task*.py`: в evals/tests живут не только
+        # CDD-тесты задач, но и тесты самого верификатора (напр.
+        # test_check_build_worker.py). При узкой маске такой тест лежит в
+        # репозитории и никогда не запускается — то есть не удерживает ничего.
         run: |
           status=0
-          for t in evals/tests/test_task*.py; do
+          for t in evals/tests/test_*.py; do
             echo "::group::$t"
             python3 "$t" || status=1
             echo "::endgroup::"
