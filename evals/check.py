@@ -250,6 +250,26 @@ def _npm_build():
         return _res("build_frontend", "fail", detail=str(e)[:200])
 
 
+def _ruff_missing(proc) -> bool:
+    """Отличить «ruff не установлен» от «ruff нашёл замечания».
+
+    По коду возврата их не различить: `python -m ruff` при отсутствии модуля
+    выходит с кодом 1 — ровно тем же, каким ruff сообщает о найденных
+    замечаниях. Прежний guard `returncode not in (0, 1)` из-за этого был
+    недостижим, и на машине без ruff метрика писала `fail / "ruff findings"` —
+    отправляла читателя искать несуществующие замечания вместо `pip install
+    ruff`. По §9 CLAUDE.md вводящая в заблуждение метрика хуже отсутствующей.
+
+    Отличительный признак берём у самого запуска: модуль не найден — значит,
+    сообщение об этом пришло от интерпретатора в stderr, а stdout пуст (ruff при
+    находках всегда пишет их в stdout). Проверять `importlib.util.find_spec` тут
+    нельзя: ruff запускается через `sys.executable -m`, и вердикт должен
+    относиться к результату этого запуска, а не к состоянию импорта в процессе
+    check.py.
+    """
+    return "No module named ruff" in (getattr(proc, "stderr", "") or "")
+
+
 def _worker_build():
     if not CORE.exists():
         return _res("build_worker", "skip", detail="services/agent-core not present")
@@ -264,10 +284,16 @@ def _worker_build():
                         detail=(r.stdout or "")[-300:])
         lint = subprocess.run([sys.executable, "-m", "ruff", "check", "."], cwd=CORE,
                               capture_output=True, text=True, timeout=300, env=env)
-        if lint.returncode not in (0, 1):
+        if _ruff_missing(lint):
             # ruff не установлен — тесты прошли, но контракт неполон.
             return _res("build_worker", "skip", threshold="pytest+ruff exit 0",
                         actual="pytest ok, ruff missing", detail="pip install ruff")
+        if lint.returncode not in (0, 1):
+            # ruff запустился, но упал сам (кривой конфиг, внутренняя ошибка).
+            # Это не «замечания линтера»: сообщаем код и stderr, а не findings.
+            return _res("build_worker", "fail", threshold="pytest+ruff exit 0",
+                        actual=f"ruff exit {lint.returncode}",
+                        detail=(lint.stderr or lint.stdout or "")[-300:])
         return _res("build_worker", "pass" if lint.returncode == 0 else "fail",
                     threshold="pytest+ruff exit 0",
                     actual="ok" if lint.returncode == 0 else "ruff findings",
