@@ -66,17 +66,37 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
+      - name: Системные зависимости тестов
+        # ffmpeg нужен поведенческому уровню задач #14 и #16: обе работают с
+        # видео, обе генерируют фикстуры на лету, и без ffmpeg на раннере их
+        # проверки уходят в SKIP — 4 у #14 и 7 у #16. Тесты при этом остаются
+        # зелёными, потому что пропуск без среды законен, и по выводу CI не
+        # видно, что проверено меньше половины.
+        #
+        # Это та же болезнь, что и безусловные skip в #7 и #24: проверка лежит
+        # в репозитории и не исполняется. Разница лишь в том, что здесь причина
+        # не в коде теста, а в раннере, — и лечится одной строкой.
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
       - name: Зависимости тестов
         # pglast — тесту задачи #2: SQL разбирается настоящим парсером PostgreSQL,
         # а не регулярками. jsonschema>=4 — валидация корпуса и Persona DNA по
         # Draft 2020-12. datamodel-code-generator — проверка «перегенерация модели
         # совпадает с закоммиченной». Без них эти проверки уходят в SKIP, и CI
         # молча перестаёт проверять то, ради чего задачи делались.
-        run: pip install pglast 'jsonschema>=4' datamodel-code-generator
+        #
+        # scenedetect — детекция сцен в #16. Потолок <0.7 обязателен и повторяет
+        # pyproject: в 0.7.x экстру opencv-headless убрали, а opencv-python
+        # сделали базовой зависимостью, и спек ставит полную GUI-сборку. Здесь
+        # это ещё и проверяется: тест #16 смотрит, какой дистрибутив opencv
+        # установлен фактически, и краснеет на GUI-сборке.
+        run: |
+          pip install pglast 'jsonschema>=4' datamodel-code-generator
+          pip install 'scenedetect[opencv-headless]>=0.6.4,<0.7'
       - name: Версии окружения
         run: |
           python3 --version
-          pip list --format=freeze | grep -Ei 'pglast|jsonschema|datamodel' || true
+          ffmpeg -version | head -1
+          pip list --format=freeze | grep -Ei 'pglast|jsonschema|datamodel|scenedetect|opencv' || true
       - name: Прогон
         # Каждый тест сам решает, что ему доступно: без DATABASE_URL и BASE_URL
         # поведенческий уровень честно пишет SKIP. Красным становится только
