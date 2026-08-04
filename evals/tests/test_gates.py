@@ -202,6 +202,66 @@ check(
 )
 
 
+# ── 4. Вердикт различает «проверено» и «пропущено» ───────────────────────────
+# Прежде тест печатал GREEN при любом числе SKIP. Так #7 с шестью безусловными
+# пропусками давал зелёный вердикт и стоял `done`, не будучи проверенным.
+
+print("\n== Вердикт ==")
+
+sys.path.insert(0, str(TESTS_DIR))
+from _harness import verdict  # noqa: E402
+
+OK_ONLY = [("а", "OK", ""), ("б", "OK", "")]
+WITH_SKIP = [("а", "OK", ""), ("б", "SKIP", "нужен API задач")]
+WITH_FAIL = [("а", "OK", ""), ("б", "FAIL", "не сошлось")]
+
+saved = {k: os.environ.get(k) for k in ("BASE_URL", "AGORA_TEST_SERVER", "DATABASE_URL")}
+try:
+    for k in saved:
+        os.environ.pop(k, None)
+
+    check("без пропусков и падений — код 0", verdict(OK_ONLY) == 0)
+    check("падение — код 1 независимо от среды", verdict(WITH_FAIL) == 1)
+    check(
+        "пропуск без среды — код 0 (пропуск законен)",
+        verdict(WITH_SKIP) == 0,
+    )
+
+    os.environ["BASE_URL"] = "https://example.invalid"
+    check(
+        "пропуск ПРИ живой среде — код 2 (AMBER)",
+        verdict(WITH_SKIP) == 2,
+    )
+    check(
+        "живая среда без пропусков — по-прежнему код 0",
+        verdict(OK_ONLY) == 0,
+    )
+finally:
+    for k, v in saved.items():
+        if v is None:
+            os.environ.pop(k, None)
+        else:
+            os.environ[k] = v
+
+
+# ── 5. Тесты задач пользуются общим вердиктом ────────────────────────────────
+# Иначе правило живёт в одном файле из четырнадцати и ничего не удерживает.
+
+own_verdict: list[str] = []
+for test_file in sorted(TESTS_DIR.glob("test_task*.py")):
+    src = test_file.read_text(encoding="utf-8")
+    if "from _harness import" in src and "verdict" in src:
+        continue
+    if "GREEN" in src:
+        own_verdict.append(test_file.name)
+
+check(
+    "тесты задач используют общий вердикт из _harness",
+    not own_verdict,
+    f"со своей логикой: {', '.join(own_verdict)}" if own_verdict else "",
+)
+
+
 # ── Итог ─────────────────────────────────────────────────────────────────────
 
 n_pass = sum(1 for _, s, _ in results if s == "OK")

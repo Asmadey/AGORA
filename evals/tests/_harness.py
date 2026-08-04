@@ -28,7 +28,94 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-__all__ = ["ApiClient", "login", "db_dsn", "creds"]
+__all__ = [
+    "ApiClient", "login", "db_dsn", "creds", "verdict", "verdict_lists", "live_env",
+]
+
+
+# ─── Вердикт ─────────────────────────────────────────────────────────────────
+
+
+def live_env() -> bool:
+    """
+    Есть ли вокруг живая среда: сервер и/или база.
+
+    Отличать это состояние обязательно. Пропуск при отсутствии среды — законный
+    и должен оставаться зелёным: тест на ноутбуке без Postgres не обязан краснеть.
+    Пропуск при живой среде — другое дело: там проверку не выполнили, хотя могли.
+    """
+    return bool(os.environ.get("BASE_URL") or os.environ.get("AGORA_TEST_SERVER")
+                or db_dsn())
+
+
+def verdict(results: list[tuple[str, str, str]], task: str = "") -> int:
+    """
+    Печатает вердикт и возвращает код возврата.
+
+    Три состояния вместо двух — потому что двух не хватило. Прежде тесты
+    печатали GREEN при любом числе SKIP, и по выводу нельзя было отличить
+    «проверено» от «пропущено». Именно так задачи #7, #8, #10 и #24 стояли
+    `done`, ни разу не будучи проверенными поведенчески: у #7 шесть кейсов
+    пропускались строкой `skip for now`, и вердикт всё равно был зелёным.
+
+      RED   — есть падения. Код 1.
+      AMBER — падений нет, но что-то не проверено ПРИ ЖИВОЙ СРЕДЕ. Код 2.
+      GREEN — проверено всё, что можно было проверить здесь. Код 0.
+
+    AMBER при отсутствии среды не поднимается: там пропуск честен и ожидаем,
+    иначе прогон на машине без базы краснел бы всегда и его перестали бы читать.
+    """
+    n_pass = sum(1 for _, s, _ in results if s == "OK")
+    n_fail = sum(1 for _, s, _ in results if s == "FAIL")
+    skipped = [(n, d) for n, s, d in results if s == "SKIP"]
+    label = f"задача {task} " if task else ""
+
+    if n_fail:
+        print(f"\nRED — не выполнено условий: {n_fail}")
+        for name, status, detail in results:
+            if status == "FAIL":
+                print(f"  · {name}" + (f" ({detail})" if detail else ""))
+        return 1
+
+    if skipped and live_env():
+        print(
+            f"\nAMBER — {label}не проверена полностью: "
+            f"pass={n_pass}, пропущено {len(skipped)} при живой среде"
+        )
+        for name, why in skipped:
+            print(f"  · {name} — {why}")
+        print("  Пропуск при доступной среде — не подтверждение. См. §4 CLAUDE.md.")
+        return 2
+
+    if skipped:
+        print(f"\nGREEN — {label}проверена в доступном объёме "
+              f"(pass={n_pass}, пропущено {len(skipped)} — среды нет)")
+        return 0
+
+    print(f"\nGREEN — {label}проверена полностью (pass={n_pass}, пропусков нет)")
+    return 0
+
+
+def verdict_lists(
+    failures: list[str],
+    skipped: list[str],
+    n_pass: int = 0,
+    task: str = "",
+    warnings: list[str] | None = None,
+) -> int:
+    """
+    То же самое для тестов, которые копят результаты списками строк, а не
+    кортежами. Разные формы накопления — исторические; вердикт обязан быть один,
+    иначе правило снова будет жить в половине файлов.
+    """
+    rows: list[tuple[str, str, str]] = []
+    rows += [(f, "FAIL", "") for f in failures]
+    rows += [(s, "SKIP", "") for s in skipped]
+    rows += [("", "OK", "")] * max(n_pass, 0)
+    code = verdict(rows, task)
+    for w in warnings or []:
+        print(f"   ⚠ {w}")
+    return code
 
 
 # ─── База ────────────────────────────────────────────────────────────────────

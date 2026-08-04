@@ -302,18 +302,10 @@ else:
 # ИТОГ
 # ═══════════════════════════════════════════════════════════════════════════
 
-n_pass = sum(1 for _, s, _ in results if s == PASS)
-n_fail = sum(1 for _, s, _ in results if s == FAIL)
-n_skip = sum(1 for _, s, _ in results if s == SKIP)
+# Вердикт общий для всех тестов: GREEN только когда проверено всё, что можно
+# было проверить здесь. Прежде GREEN печатался при любом числе SKIP, и по
+# выводу нельзя было отличить «проверено» от «пропущено» — см. _harness.verdict.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _harness import verdict  # noqa: E402
 
-if n_fail:
-    print(f"\nRED — не выполнено условий: {n_fail}")
-    for name, status, detail in results:
-        if status == FAIL:
-            print(f"  · {name}" + (f" ({detail})" if detail else ""))
-elif n_skip > 0 and n_pass == 0:
-    print(f"\nSKIP — все тесты пропущены")
-else:
-    print(f"\nGREEN — задача #8 удовлетворяет критериям (pass={n_pass} skip={n_skip})")
-
-sys.exit(1 if n_fail else 0)
+sys.exit(verdict(results, "#8"))
