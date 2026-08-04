@@ -187,6 +187,18 @@ else
   warn "нет $INIT/08_portrait_versions.sql — история версий портретов недоступна (задача #24)"
 fi
 
+# 09_task_idempotency.sql — ключ идемпотентности запуска (задача #11).
+# ADD COLUMN IF NOT EXISTS + частичный уникальный индекс по (tenant_id, ключ).
+# Без него двойной клик по «Запустить» порождает второй платный прогон, а
+# отличить его от намеренного повтора нечем.
+if [ -f "$INIT/09_task_idempotency.sql" ]; then
+  echo "   применяю 09_task_idempotency.sql"
+  "${PSQL[@]}" -f "$INIT/09_task_idempotency.sql" >/dev/null
+  ok "09_task_idempotency.sql"
+else
+  warn "нет $INIT/09_task_idempotency.sql — запуск исследования не идемпотентен (задача #11)"
+fi
+
 echo
 echo "── Итог ─────────────────────────────────────────────────────────────"
 TABLES=$(q "SELECT count(*) FROM pg_tables WHERE schemaname = 'public'")
