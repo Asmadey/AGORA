@@ -71,6 +71,37 @@ def _pipeline(name: str, token: str):
     return pipeline
 
 
+SAMPLE_RATE = 16_000
+
+
+def _as_waveform(audio: str | Path) -> dict:
+    """
+    Готовит вход для конвейера в виде уже декодированной волны.
+
+    Путь к файлу pyannote 4.x тоже принимает, но декодирует его сам — через
+    torchcodec, отдельную зависимость поверх torch. Без неё вызов падает с
+    «torchcodec is not available», хотя ffmpeg в системе есть и звук читается.
+    Тащить ещё один декодер ради того, что мы уже умеем, незачем.
+
+    Причина важнее удобства: тот же декодер (faster_whisper.audio) используется
+    для VAD и транскрипции. Подавая сюда ту же волну, мы гарантируем, что
+    транскрипт и диаризация считают время по одной шкале. Два разных декодера с
+    разной трактовкой заголовков дали бы таймкоды, которые почти совпадают, — а
+    это хуже, чем явно разные, потому что расхождение никто не заметит.
+    """
+    from faster_whisper.audio import decode_audio
+
+    try:
+        import torch
+    except ImportError as e:  # noqa: BLE001
+        raise DiarizationUnavailable("torch не установлен") from e
+
+    samples = decode_audio(str(audio), sampling_rate=SAMPLE_RATE)
+    # pyannote ждёт тензор (каналы, отсчёты); декодер отдаёт моно одномерным.
+    waveform = torch.from_numpy(samples).unsqueeze(0)
+    return {"waveform": waveform, "sample_rate": SAMPLE_RATE}
+
+
 def diarize(
     audio: str | Path,
     spans: list[tuple[float, float]] | None = None,
@@ -96,7 +127,7 @@ def diarize(
     if num_speakers:
         kwargs["num_speakers"] = num_speakers
 
-    raw = pipeline(str(audio), **kwargs)
+    raw = pipeline(_as_waveform(audio), **kwargs)
 
     # pyannote 3.x возвращает Annotation напрямую; 4.x — датакласс DiarizeOutput,
     # где разметка лежит в поле speaker_diarization (рядом с ней — вариант без
