@@ -29,7 +29,8 @@
     ],
     "cdd": "запрос из-под tenant A к строкам tenant B возвращает rows == 0 по каждой таблице с tenant_id",
     "acceptance": "Postgres: teams, users, projects, personas, persona_sets, audience_portraits, prompts, surveys, tasks (+prompts_snapshot, +replication_count, +parent_task_id, +carry_over_memory), reports, settings, report_shares (публичные ссылки: token, expires_at, revoked_at, scope, audit-лог просмотров), chat_threads / chat_messages (чат по результатам, tenant-scoped) — все с RLS по tenant_id. MongoDB: chunk_analyses, persona_answers, wizard_drafts, grounding_dataset, audience_context_files. Миграции идемпотентны. ВАЖНО: report_shares — единственный легальный обход RLS в системе, доступ по токену реализуется отдельной политикой и покрывается тестом (задача #29).",
-    "verified": "rls_tenant pass на живом Postgres"
+    "verified": "rls_tenant pass на живом Postgres",
+    "note": "Подтверждено на VPS 03.08.2026 против живого Postgres (DATABASE_URL на 127.0.0.1, не на имя сервиса compose): «из-под tenant A строки tenant B не видны», «без тенант-контекста выборка пуста (default deny)». skip=0 после установки pglast в venv воркера — до этого разбор SQL молча не выполнялся."
   },
   {
     "id": 3,
@@ -59,7 +60,7 @@
     "verifies": [],
     "cdd": "canonical JSON Schema валидирует эталонную персону; невалидная (Big Five вне 1–5, отсутствует обязательная категория) отвергается; сгенерированные TS-типы и Pydantic-модели совпадают по полям",
     "acceptance": "8 категорий (демография / Big Five 1–5 / ценности / зрительское поведение / стиль общения / принятие решений / технологии / интересы) + narrative + seed, 40–60 полей MVP (расширяемо до 120). Canonical JSON Schema → генерация TS + Pydantic (Decision Log #4, #7). Термин «зритель», не «потребитель».",
-    "note": "Static CDD test GREEN. Behavioral: SKIP (no live env) or verified on VPS."
+    "note": "Подтверждено на VPS 03.08.2026: INSERT персоны с валидной DNA под ролью agora_app с тенант-контекстом прошёл против живой базы, skip=0. Ранее падало с «failed to resolve host postgres» — тест берёт админскую строку из POSTGRES_ADMIN_URL, а она указывала на имя сервиса compose, недоступное с хоста."
   },
   {
     "id": 5,
@@ -77,7 +78,7 @@
     ],
     "cdd": "на эталонном (reference) конфиге генерации распределения по age_group/geo/gender отклоняются от корпуса не более чем на 0.10; повторный прогон на том же seed → diff == 0",
     "acceptance": "Генерация по методологии PRD §10: сэмплирование по реальным долям (сериал×город×сегмент), калибровка баллов по реальным средним, стилевое заземление на verbatims, ценности ВЦИОМ→DNA, представитель сегмента (не копия). Кладёт evals/artifacts/generated_personas.json. Guardrail «ответ ограничен профилем».",
-    "note": "Static CDD test GREEN. Behavioral: SKIP (no live env)."
+    "note": "Подтверждено на VPS 03.08.2026: 21 OK, 0 FAIL, 0 SKIP."
   },
   {
     "id": 6,
@@ -97,28 +98,28 @@
     "legacy_id": 15,
     "subject": "Визард (XState) + черновики",
     "phase": "Ф1",
-    "status": "done",
+    "status": "pending",
     "blockedBy": [
       3
     ],
     "verifies": [],
     "cdd": "машина состояний не пускает вперёд без обязательных полей шага; черновик восстанавливается после перезагрузки страницы",
     "acceptance": "7 шагов, XState, черновики в MongoDB (wizard_drafts), прогрессивное раскрытие, тёмная тема.",
-    "note": "Static CDD test GREEN. Behavioral: SKIP (no live env) or verified on VPS."
+    "note": "Прогон на VPS 03.08.2026 при поднятом стеке (web healthy, HTTP 200): GREEN pass=8 skip=6, но НИ ОДИН пункт cdd не проверен. Оба — «машина не пускает вперёд без обязательных полей» и «черновик восстанавливается после перезагрузки» — лежат в кейсах 7–11 и 14, а те пропускаются безусловно: test_task07_wizard.py:145 `# 7-11 require running server with XState — skip for now`, без всякой проверки среды. Сервер при этом работал. По правилу CLAUDE.md «отсутствие среды даёт SKIP; всё остальное — FAIL» это дефект теста, а не отсутствие среды. Зелёными были статические проверки и два Mongo-кейса изоляции черновиков (в cdd они не входят). Возвращено в pending до реализации кейсов 7–11 и 14."
   },
   {
     "id": 8,
     "legacy_id": 16,
     "subject": "Шаг Контент + загрузка видео",
     "phase": "Ф1",
-    "status": "done",
+    "status": "pending",
     "blockedBy": [
       7
     ],
     "verifies": [],
     "cdd": "файл >700 МБ отклоняется; неподдерживаемое расширение отклоняется; успешная загрузка даёт S3-ключ, привязанный к tenant_id",
     "acceptance": "mp4/mov/avi ≤700 МБ, presigned upload в S3 TimeWeb, выбор режима короткое/длинное.",
-    "note": "Static CDD test GREEN. Behavioral: SKIP (no live env)."
+    "note": "Прогон на VPS 03.08.2026 при поднятом сервере: RED, fail=2. «файл >700 МБ отклоняется (presign)» и «неподдерживаемое расширение отклоняется» падают с status=401 — тест ходит в API без сессии. Ещё 2 кейса SKIP «требует mock-сессию и тестовый видеофайл». То есть ни один пункт cdd не подтверждён: раньше это выглядело как «нет S3 creds», а на деле упирается в аутентификацию тестового клиента."
   },
   {
     "id": 9,
@@ -139,14 +140,14 @@
     "legacy_id": 18,
     "subject": "Шаг Опрос + конструктор анкеты",
     "phase": "Ф1",
-    "status": "done",
+    "status": "pending",
     "blockedBy": [
       7
     ],
     "verifies": [],
     "cdd": "базовая анкета из 5 критериев 1–10 валидна по схеме; кастомный вопрос неподдерживаемого типа отвергается",
     "acceptance": "P0 — 5 критериев 1–10 (overall_impression, plot, acting, music, cinematography). P1 — конструктор: шкала / эмоции / удержание / рекомендация / открытый.",
-    "note": "Static CDD test GREEN. Behavioral: SKIP (no live env)."
+    "note": "Прогон на VPS 03.08.2026 при поднятом сервере: RED, fail=3 — все три API-проверки (PUT валидной анкеты, PUT неподдерживаемого типа, GET списка) падают с status=401: тест ходит без сессии. При этом оба пункта cdd закрыты юнит-тестами схемы без среды (валидность базовой анкеты 1–10 и отклонение неподдерживаемого типа). Расхождение существенное: схема доказана, сохранение через API — нет, и причина не в отсутствии среды, а в отсутствии аутентификации у тестового клиента."
   },
   {
     "id": 11,
@@ -334,7 +335,7 @@
     "legacy_id": 31,
     "subject": "Grounding-корпус: схема, паспорт, единая точка доступа",
     "phase": "Ф3",
-    "status": "pending",
+    "status": "done",
     "blockedBy": [
       2
     ],
@@ -347,7 +348,7 @@
     "legacy_id": 32,
     "subject": "Портреты аудиторий (редактор + авто-дистилляция)",
     "phase": "Ф3",
-    "status": "done",
+    "status": "pending",
     "blockedBy": [
       23,
       26
@@ -355,7 +356,7 @@
     "verifies": [],
     "cdd": "авто-дистилляция из датасета даёт непустой .md-портрет; ручная правка сохраняется и версионируется",
     "acceptance": ".md-редактор портретов + авто-дистилляция из grounding-датасета (промпт portrait.distill).",
-    "note": "Static CDD test GREEN. Behavioral: SKIP (no live env)."
+    "note": "Прогон на VPS 03.08.2026 с живой базой: GREEN pass=8, но оба пункта cdd в SKIP — «авто-дистилляция → непустой .md» требует вызова модели, «ручная правка сохраняется» и «версионирование работает» требуют живого API. Статический уровень 8/8. Ни один критерий приёмки поведенчески не проверялся."
   },
   {
     "id": 25,
@@ -364,12 +365,13 @@
     "phase": "Ф5",
     "status": "done",
     "blockedBy": [
-      24
+      23
     ],
     "verifies": [],
     "cdd": "поиск похожих респондентов возвращает осмысленных соседей на held-out выборке",
     "acceptance": "post-MVP. TypeDB не используется (Decision Log / PRD §7) — сходство через вектор.",
-    "verified": "static CDD GREEN — 34/34 checks pass (behavioral on real corpus)"
+    "verified": "GREEN 34/34, skip=0 — поведенческий уровень отработал целиком (held-out на 165 записях, self-match sim=1.000, top1 sim=0.838). Среда не нужна: корпус лежит в git.",
+    "note": "blockedBy изменён с [24] на [23] 03.08.2026. Ребро на #24 не подтверждалось кодом: в agent_core/matching нет ни одной ссылки на портреты или дистилляцию, зависимость только от корпуса задачи #23. Из-за него #25 (проверяемая полностью и без среды) оказывалась заблокирована задачей, чей поведенческий уровень требует живой БД."
   },
   {
     "id": 26,
