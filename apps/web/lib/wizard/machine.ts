@@ -15,6 +15,15 @@ export interface WizardContext {
   audienceSize: number;
   ageGroups: string[];
   geos: string[];
+  /** Пол — обязательный критерий наравне с возрастом и гео (задача #9). */
+  genders: string[];
+  /** Незаземлённый критерий: поля education в корпусе нет. Не обязателен. */
+  education: string[];
+  /**
+   * Выбранный существующий набор персон. Не null — генерации не будет,
+   * и критерии на этом шаге не требуются (задача #9, второй пункт cdd).
+   */
+  personaSetId: string | null;
   surveyQuestions: unknown[];
   overlap: number;
   whisperModel: string;
@@ -41,7 +50,27 @@ const STEPS = [
 /** Обязательные поля для каждого шага. */
 const REQUIRED: Record<string, (ctx: WizardContext) => boolean> = {
   content: (c) => !!c.contentTitle && !!c.contentUrl && !!c.mode,
-  audience: (c) => c.audienceSize > 0 && c.ageGroups.length > 0 && c.geos.length > 0,
+  // Задача #9. Две ветки, а не одна с флагом:
+  //
+  // · выбран существующий набор — критерии не нужны, потому что генерации не
+  //   будет. Требовать их значило бы заставлять заполнять то, что не будет
+  //   использовано;
+  //
+  // · генерация — обязательны размер, возраст, гео И ПОЛ. Пол добавлен здесь:
+  //   в корпусе он распределён 110/55 и участвует в калибровке, а в контексте
+  //   машины его до этой задачи не было вовсе. Критерий, который есть в
+  //   интерфейсе и ни на что не влияет, хуже отсутствующего.
+  //
+  // Образование не обязательно: оно незаземлено (поля нет в корпусе), и
+  // блокировать им запуск было бы требованием заполнить то, что ни на что не
+  // опирается.
+  audience: (c) =>
+    c.personaSetId !== null
+      ? true
+      : c.audienceSize > 0 &&
+        c.ageGroups.length > 0 &&
+        c.geos.length > 0 &&
+        c.genders.length > 0,
   survey: (c) => true, // Опрос необязателен — можно пропустить
   overlap_params: (c) => c.overlap >= 0 && !!c.whisperModel && c.replicationCount > 0,
   summary: () => true,
@@ -66,6 +95,9 @@ export const wizardMachine = createMachine({
     audienceSize: 20,
     ageGroups: [],
     geos: [],
+    genders: [],
+    education: [],
+    personaSetId: null,
     surveyQuestions: [],
     overlap: 1,
     whisperModel: "large-v3",
