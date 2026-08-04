@@ -49,7 +49,16 @@ def _pipeline(name: str, token: str):
             "pyannote.audio не установлен — проверьте сборку образа воркера"
         ) from e
 
-    pipeline = Pipeline.from_pretrained(name, use_auth_token=token or None)
+    # Имя параметра для токена менялось: в pyannote.audio 3.x это
+    # use_auth_token, в 4.x — token, и старое имя убрано, а не помечено
+    # устаревшим. Пробуем новое, откатываемся на старое: закреплять одно значит
+    # ломаться при обновлении библиотеки в сторону, которую сами же и разрешили
+    # диапазоном >=3.3 в pyproject.
+    try:
+        pipeline = Pipeline.from_pretrained(name, token=token or None)
+    except TypeError:
+        pipeline = Pipeline.from_pretrained(name, use_auth_token=token or None)
+
     if pipeline is None:
         # from_pretrained возвращает None вместо исключения, когда доступ к
         # закрытым весам не подтверждён. Молчаливый None дальше по коду даёт
@@ -87,15 +96,24 @@ def diarize(
     if num_speakers:
         kwargs["num_speakers"] = num_speakers
 
+    raw = pipeline(str(audio), **kwargs)
+
+    # pyannote 3.x возвращает Annotation напрямую; 4.x — датакласс DiarizeOutput,
+    # где разметка лежит в поле speaker_diarization (рядом с ней — вариант без
+    # перекрывающейся речи и эмбеддинги). Обращаться к itertracks у датакласса
+    # значит падать с AttributeError при обновлении библиотеки в пределах
+    # разрешённого диапазона >=3.3.
+    annotation = getattr(raw, "speaker_diarization", raw)
+
     if spans:
         from pyannote.core import Segment as PSegment
         from pyannote.core import Timeline
 
+        # Область ограничивается после разметки, а не обрезкой файла до неё:
+        # обрезка сдвинула бы таймкоды, и их пришлось бы пересчитывать обратно —
+        # место, где ошибка на полсекунды никем не замечается.
         timeline = Timeline([PSegment(start, end) for start, end in spans])
-        annotation = pipeline({"uri": "audio", "audio": str(audio)}, **kwargs)
         annotation = annotation.crop(timeline.support())
-    else:
-        annotation = pipeline(str(audio), **kwargs)
 
     turns = [
         SpeakerTurn(start=float(segment.start), end=float(segment.end), speaker=str(label))
