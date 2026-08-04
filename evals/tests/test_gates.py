@@ -15,9 +15,11 @@ from __future__ import annotations
 
 import ast
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
+import textwrap
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
@@ -126,16 +128,55 @@ else:
 print("\n== Обусловленность пропусков ==")
 
 
+def _skip_wrappers(tree: ast.AST) -> set[str]:
+    """
+    Имена функций, вызов которых равносилен вызову skip().
+
+    Тесты заводят обёртки вида `def skip_all(names, why): for n in names: skip(...)`.
+    Сам по себе skip внутри такой обёртки ни о чём не говорит: тело функции
+    исполняется не там, где написано, а там, откуда её позвали, — и обусловленность
+    решается на месте вызова.
+
+    Обёртка может звать обёртку, поэтому список достраивается до неподвижной
+    точки: иначе `skip_all` → `skip_group` → `skip` спрятал бы пропуск за два шага.
+    """
+    functions = {
+        n.name: n for n in ast.walk(tree)
+        if isinstance(n, ast.FunctionDef | ast.AsyncFunctionDef)
+    }
+    wrappers: set[str] = set()
+    changed = True
+    while changed:
+        changed = False
+        for name, node in functions.items():
+            if name in wrappers:
+                continue
+            called = {
+                c.func.id for c in ast.walk(node)
+                if isinstance(c, ast.Call) and isinstance(c.func, ast.Name)
+            }
+            if "skip" in called or called & wrappers:
+                wrappers.add(name)
+                changed = True
+    return wrappers
+
+
 def unconditional_skips(path: Path) -> list[int]:
     """
-    Номера строк с вызовами skip(), не находящимися ни в одной ветке if/else,
-    ни в except. Такой вызов исполняется всегда — среда на него не влияет.
+    Номера строк, где пропуск объявляется без единого обращения к окружению:
+    вызов skip() (или обёртки над ним) вне какой-либо ветки if/else и вне except.
+
+    Тело `def` не разбирается: пропуск внутри функции исполняется только при её
+    вызове, а сам вызов проверяется здесь же — по имени обёртки. Без этого
+    правила проверка краснела на любом тесте, вынесшем повторяющиеся пропуски в
+    отдельную функцию, то есть наказывала за уборку.
     """
     try:
         tree = ast.parse(path.read_text(encoding="utf-8"))
     except SyntaxError:
         return []
 
+    triggers = {"skip", *_skip_wrappers(tree)}
     bad: list[int] = []
 
     class Walker(ast.NodeVisitor):
@@ -151,11 +192,15 @@ def unconditional_skips(path: Path) -> list[int]:
         visit_Try = _guarded
         visit_ExceptHandler = _guarded
 
+        # Тело функции — не место исполнения. См. docstring.
+        def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+            return
+
+        visit_AsyncFunctionDef = visit_FunctionDef  # type: ignore[assignment]
+
         def visit_Call(self, node: ast.Call) -> None:
-            is_skip = (
-                isinstance(node.func, ast.Name) and node.func.id == "skip"
-            )
-            if is_skip and self.depth == 0:
+            named = isinstance(node.func, ast.Name) and node.func.id in triggers
+            if named and self.depth == 0:
                 bad.append(node.lineno)
             self.generic_visit(node)
 
@@ -173,6 +218,56 @@ check(
     "в тестах задач нет безусловных skip",
     not offenders,
     "; ".join(offenders) if offenders else "",
+)
+
+
+# Канарейки детектора. Проверка, о которой не доказано, что она вообще
+# срабатывает, — это зелёная строка в отчёте и ничего больше; именно так гейты
+# пропускали безусловные пропуски в #7 и #24.
+def _detects(source: str) -> bool:
+    tmp = Path(tempfile.mkdtemp()) / "probe.py"
+    tmp.write_text(textwrap.dedent(source), encoding="utf-8")
+    try:
+        return bool(unconditional_skips(tmp))
+    finally:
+        shutil.rmtree(tmp.parent, ignore_errors=True)
+
+
+check(
+    "детектор ловит голый безусловный skip",
+    _detects("""
+        def skip(name, why): ...
+        skip("кейс", "требует живого сервера")
+    """),
+)
+
+# Дыра, закрытая 04.08.2026: пропуск, спрятанный за обёртку, до этого проходил
+# мимо — детектор искал только вызовы по имени `skip`.
+check(
+    "детектор ловит безусловный вызов обёртки над skip",
+    _detects("""
+        def skip(name, why): ...
+        def skip_all(names, why):
+            for n in names:
+                skip(n, why)
+        skip_all(["кейс"], "требует живого сервера")
+    """),
+)
+
+# Обратная сторона: обёртка, вызываемая только из ветки, проверяющей среду, —
+# это обусловленный пропуск. Детектор краснел на ней и тем наказывал за вынос
+# повторяющихся пропусков в функцию.
+check(
+    "детектор не краснеет на обёртке, вызываемой из проверки среды",
+    not _detects("""
+        import shutil
+        def skip(name, why): ...
+        def skip_all(names, why):
+            for n in names:
+                skip(n, why)
+        if not shutil.which("ffmpeg"):
+            skip_all(["кейс"], "ffmpeg не установлен")
+    """),
 )
 
 

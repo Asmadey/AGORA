@@ -26,6 +26,24 @@ dependencies = [
     # на проде, а не при сборке.
     "faster-whisper>=1.1",
     "pyannote.audio>=3.3",
+    # #16 — детекция сцен.
+    #
+    # Экстра opencv-headless обязательна: обычная сборка opencv тянет GUI-
+    # библиотеки (GTK, X11), которых в python:3.13-slim нет. Проявилось бы это не
+    # при сборке образа, а при первом импорте на проде — «libGL.so.1: cannot open
+    # shared object file», то есть как падение воркера посреди задачи.
+    #
+    # Потолок <0.7 — не осторожность, а замер. В 0.7.x экстру opencv-headless
+    # убрали (остались pyav и moviepy), а opencv-python сделали БАЗОВОЙ
+    # зависимостью. Спек `scenedetect[opencv-headless]>=0.6.4` на 0.7.1 pip
+    # принимает, печатает предупреждение «does not provide the extra» и ставит
+    # полную GUI-сборку — то есть тихо делает ровно то, от чего экстра защищала.
+    # Проверено 04.08.2026: 0.7.1 → opencv-python 5.0.0.93, 0.6.7.1 →
+    # opencv-python-headless 5.0.0.93.
+    #
+    # Потолок снимается не поднятием версии, а проверкой в тесте #16: она
+    # смотрит, какая сборка opencv стоит фактически.
+    "scenedetect[opencv-headless]>=0.6.4,<0.7",
 ]
 
 [project.optional-dependencies]
