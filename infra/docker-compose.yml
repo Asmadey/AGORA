@@ -140,7 +140,16 @@ services:
       context: ..
       dockerfile: infra/worker.Dockerfile
     restart: unless-stopped
-    command: ["celery", "-A", "agent_core.celery_app", "worker", "--loglevel=info", "--concurrency=${WORKER_CONCURRENCY:-4}"]
+    # Умолчание 1, а не 4. Celery prefork держит по копии процесса на воркер, и
+    # каждый, выполнив задачу транскрипции, оставляет модель в памяти (кеш в
+    # agent_core/asr обязателен — без него large-v3 грузится заново на каждую
+    # задачу). Измерено 04.08.2026: один процесс с large-v3 int8 и pyannote даёт
+    # 5,4 ГБ anon-rss. Четыре такие копии не помещаются никуда, а проявилось бы
+    # это как случайный OOM посреди прогона, а не как нехватка настройки.
+    #
+    # Поднимать значение имеет смысл только вместе с памятью: ориентир — 5,5 ГБ
+    # на процесс сверх того, что занимают web и postgres.
+    command: ["celery", "-A", "agent_core.celery_app", "worker", "--loglevel=info", "--concurrency=${WORKER_CONCURRENCY:-1}"]
     environment:
       DATABASE_URL: ${DATABASE_URL:-postgresql://agora_login:${AGORA_APP_PASSWORD}@postgres:5432/${POSTGRES_DB:-agora}}
       # Managed на TimeWeb. Умолчание на контейнерные хосты убрано намеренно:

@@ -9,11 +9,17 @@ FROM python:3.13-slim AS base
 #          и для torchcodec, которым pyannote.audio 4.x декодирует аудио.
 # libgomp1 — нужен faster-whisper (CTranslate2) для многопоточности на CPU.
 # libsndfile1 — чтение wav в soundfile/pyannote.
+# espeak-ng — синтез речи для фикстур CDD-теста #15. Транскрипт и диаризацию
+#   нельзя проверить на синтетическом тоне: нужна настоящая речь. Хранить в git
+#   записанный голос — это и вес, и вопрос о правах на запись; сгенерированная
+#   речь воспроизводима одной командой и не тянет ни того, ни другого.
+#   Пакет весит меньше мегабайта.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ffmpeg \
         libgomp1 \
         libsndfile1 \
         curl \
+        espeak-ng \
     && rm -rf /var/lib/apt/lists/*
 
 # HF_HOME — кэш весов Whisper и pyannote на смонтированном томе. Модели тяжёлые,
@@ -34,7 +40,15 @@ WORKDIR /app
 
 # Слой зависимостей отдельно от кода — пересборка при правке кода не тянет pip заново.
 COPY services/agent-core/pyproject.toml ./
-RUN pip install --upgrade pip && pip install -e ".[dev]" || pip install --upgrade pip
+
+# torch ставится ПЕРВЫМ и из CPU-индекса. Иначе pyannote.audio притянет его с
+# обычного PyPI, а там сборка с CUDA: +2,5 ГБ образа и десяток библиотек NVIDIA,
+# которые на машине без видеокарты не нужны и не используются (GPU нет —
+# Decision Log #1). Проверено на первой сборке: приехал torch 2.13.0+cu130.
+RUN pip install --upgrade pip \
+    && pip install --index-url https://download.pytorch.org/whl/cpu torch torchaudio
+
+RUN pip install -e ".[dev]" || pip install --upgrade pip
 
 COPY services/agent-core/ ./
 COPY packages/shared/ /app/shared/
