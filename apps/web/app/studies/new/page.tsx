@@ -6,6 +6,8 @@ import { Check, ChevronLeft, ChevronRight, Upload, FileText, Info } from "lucide
 import { cn } from "@/lib/utils";
 import { Chip } from "@/components/agora/Primitives";
 import { SurveyBuilder, BASE_QUESTIONS } from "@/components/agora/SurveyBuilder";
+import { AudienceStep } from "@/components/agora/AudienceStep";
+import { DEFAULT_CRITERIA, type AudienceCriteria } from "@/lib/audience";
 import type { SurveyQuestion } from "@/lib/agora-types";
 import { MOCK_PERSONAS } from "@/lib/mock-data";
 
@@ -25,11 +27,9 @@ const GEOS = ["столицы", "центры субъектов", "иные Н�
 export default function NewStudyPage() {
   const [step, setStep] = useState(0);
   const [mode, setMode] = useState<"short" | "long">("short");
-  const [ages, setAges] = useState<string[]>(["25-34", "35-44", "45-59"]);
-  const [geos, setGeos] = useState<string[]>(["столицы", "центры субъектов"]);
-  const [size, setSize] = useState(20);
+  const [criteria, setCriteria] = useState<AudienceCriteria>(DEFAULT_CRITERIA);
   const [replication, setReplication] = useState(1);
-  const [reuseSet, setReuseSet] = useState(false);
+  const [personaSetId, setPersonaSetId] = useState<string | null>(null);
   const [contextFile, setContextFile] = useState<string | null>(null);
   const [questions, setQuestions] = useState<SurveyQuestion[]>(BASE_QUESTIONS);
 
@@ -112,131 +112,14 @@ export default function NewStudyPage() {
 
         {/* Шаг 2 — аудитория */}
         {step === 1 && (
-          <div className="space-y-6">
-            <div className="flex gap-2">
-              <button
-                onClick={() => setReuseSet(false)}
-                className={cn(
-                  "flex-1 rounded-md border p-3 text-sm transition-colors",
-                  !reuseSet ? "border-foreground bg-secondary" : "border-border hover:bg-secondary/50",
-                )}
-              >
-                Создать аудиторию
-              </button>
-              <button
-                onClick={() => setReuseSet(true)}
-                className={cn(
-                  "flex-1 rounded-md border p-3 text-sm transition-colors",
-                  reuseSet ? "border-foreground bg-secondary" : "border-border hover:bg-secondary/50",
-                )}
-              >
-                Выбрать существующую
-              </button>
-            </div>
-
-            {reuseSet ? (
-              <div className="rounded-md border border-border p-4">
-                <p className="text-sm font-medium">Ландыши, базовая аудитория</p>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  {MOCK_PERSONAS.length} персон · seed 481502 · создана 24.07.2026
-                </p>
-                <p className="mt-3 text-xs leading-relaxed text-muted-foreground">
-                  Переиспользование того же набора делает результаты сопоставимыми между
-                  версиями монтажа — разница в баллах будет отражать изменения материала,
-                  а не разницу аудиторий.
-                </p>
-              </div>
-            ) : (
-              <>
-                <div>
-                  <h2 className="text-sm font-semibold">Возрастные группы</h2>
-                  <div className="mt-3 flex flex-wrap gap-2">
-                    {AGE_GROUPS.map((g) => (
-                      <button
-                        key={g}
-                        onClick={() => toggle(ages, setAges, g)}
-                        className={cn(
-                          "rounded-full border px-3 py-1.5 text-sm transition-colors",
-                          ages.includes(g)
-                            ? "border-foreground bg-secondary"
-                            : "border-border text-muted-foreground hover:bg-secondary/50",
-                        )}
-                      >
-                        {g}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                <div>
-                  <h2 className="text-sm font-semibold">География</h2>
-                  <div className="mt-3 flex flex-wrap gap-2">
-                    {GEOS.map((g) => (
-                      <button
-                        key={g}
-                        onClick={() => toggle(geos, setGeos, g)}
-                        className={cn(
-                          "rounded-full border px-3 py-1.5 text-sm transition-colors",
-                          geos.includes(g)
-                            ? "border-foreground bg-secondary"
-                            : "border-border text-muted-foreground hover:bg-secondary/50",
-                        )}
-                      >
-                        {g}
-                      </button>
-                    ))}
-                  </div>
-                  {geos.includes("иные НП") && (
-                    <p className="mt-3 flex gap-2 rounded-md border border-amber-500/25 bg-amber-500/5 p-3 text-xs leading-relaxed text-amber-200/80">
-                      <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-                      Группа «иные НП» не представлена в корпусе фокус-групп (0 из 165
-                      респондентов). Персоны этой группы будут сгенерированы без заземления
-                      на реальные данные, и выводы по ним менее надёжны.
-                    </p>
-                  )}
-                </div>
-
-                <div>
-                  <h2 className="text-sm font-semibold">Размер аудитории</h2>
-                  <div className="mt-3 flex items-center gap-4">
-                    <input
-                      type="range"
-                      min={5}
-                      max={60}
-                      step={5}
-                      value={size}
-                      onChange={(e) => setSize(Number(e.target.value))}
-                      className="flex-1"
-                    />
-                    <span className="w-16 text-right text-lg font-semibold tabular-nums">{size}</span>
-                  </div>
-                  <p className="mt-2 text-xs text-muted-foreground">
-                    Рекомендуем 20 — этого хватает на сегментные срезы без лишней стоимости.
-                  </p>
-                </div>
-
-                <div>
-                  <h2 className="text-sm font-semibold">Дополнительный контекст</h2>
-                  <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-                    Файл с описанием вашей аудитории уточнит персон — лексику, специфику ниши.
-                    Он не переопределяет распределения и калибровку баллов: заземление на
-                    корпус остаётся главным.
-                  </p>
-                  <label className="mt-3 flex cursor-pointer items-center gap-3 rounded-md border border-dashed border-border px-4 py-3 transition-colors hover:border-muted-foreground/50">
-                    <FileText className="h-4 w-4 text-muted-foreground" />
-                    <span className="text-sm">
-                      {contextFile ?? "Приложить файл (pdf, docx, md, xlsx)"}
-                    </span>
-                    <input
-                      type="file"
-                      className="hidden"
-                      onChange={(e) => setContextFile(e.target.files?.[0]?.name ?? null)}
-                    />
-                  </label>
-                </div>
-              </>
-            )}
-          </div>
+          <AudienceStep
+            criteria={criteria}
+            onCriteriaChange={setCriteria}
+            personaSetId={personaSetId}
+            onPersonaSetChange={setPersonaSetId}
+            contextFile={contextFile}
+            onContextFileChange={setContextFile}
+          />
         )}
 
         {/* Шаг 3 — опрос */}
@@ -278,9 +161,9 @@ export default function NewStudyPage() {
             <dl className="space-y-2 rounded-md border border-border p-4 text-sm">
               {[
                 ["Режим", mode === "short" ? "Короткое видео" : "Длинное видео"],
-                ["Аудитория", reuseSet ? "Ландыши, базовая аудитория" : `${size} персон`],
-                ["Возраст", reuseSet ? "—" : ages.join(", ") || "не выбран"],
-                ["География", reuseSet ? "—" : geos.join(", ") || "не выбрана"],
+                ["Аудитория", personaSetId ? "выбранный набор персон" : `${criteria.size} персон`],
+                ["Возраст", personaSetId ? "—" : criteria.ageGroups.join(", ") || "не выбран"],
+                ["География", personaSetId ? "—" : criteria.geos.join(", ") || "не выбрана"],
                 ["Доп. контекст", contextFile ?? "не приложен"],
                 [
                   "Анкета",
@@ -290,7 +173,7 @@ export default function NewStudyPage() {
                       : ""),
                 ],
                 ["Перекрытие", `×${replication}`],
-                ["Вызовов модели", `≈ ${(reuseSet ? MOCK_PERSONAS.length : size) * replication + 40}`],
+                ["Вызовов модели", `≈ ${(personaSetId ? MOCK_PERSONAS.length : criteria.size) * replication + 40}`],
               ].map(([k, v]) => (
                 <div key={k} className="flex justify-between gap-4">
                   <dt className="text-muted-foreground">{k}</dt>

@@ -37,7 +37,7 @@ import json
 import random
 import statistics
 from collections import Counter
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
@@ -210,6 +210,53 @@ class CorpusDistribution:
         records = json.loads(p.read_text("utf-8"))
         return cls.from_corpus(records)
 
+    def restrict(
+        self,
+        age_groups: list[str] | None = None,
+        geos: list[str] | None = None,
+        genders: list[str] | None = None,
+    ) -> CorpusDistribution:
+        """Распределения, суженные до выбранных критериев (задача #9).
+
+        Именно ПЕРЕСЧЁТ долей, а не фильтрация записей. Разница принципиальная:
+        генератор сэмплирует демографию из распределений, поэтому отбор записей
+        сам по себе на состав выдачи не влияет — персоны продолжали бы рождаться
+        со всеми возрастными группами подряд, и выбранный в интерфейсе критерий
+        молча терялся бы по дороге.
+
+        Оставшиеся доли нормируются заново, чтобы сумма снова была единицей:
+        иначе rng.choices раздаёт веса пропорционально исходным долям, и внутри
+        оставшегося набора соотношение групп искажается.
+
+        Пустая выборка по любому измерению — ValueError, а не пустое
+        распределение. Ноль персон дальше по конвейеру выглядит как исследование
+        без респондентов, и причину этого уже не восстановить; отказ здесь
+        называет виновный критерий.
+        """
+
+        def _narrow(
+            dist: dict[str, float], allowed: list[str] | None, what: str
+        ) -> dict[str, float]:
+            if not allowed:
+                return dist
+            kept = {k: v for k, v in dist.items() if k in allowed}
+            if not kept:
+                present = ", ".join(sorted(dist)) or "ничего"
+                raise ValueError(
+                    f"{what}: выбранные значения ({', '.join(allowed)}) отсутствуют в "
+                    f"корпусе. Есть только: {present}. Персоны такого сегмента не были "
+                    f"бы заземлены, поэтому генерация остановлена"
+                )
+            total = sum(kept.values())
+            return {k: v / total for k, v in kept.items()}
+
+        return replace(
+            self,
+            age_group=_narrow(self.age_group, age_groups, "возрастные группы"),
+            geo=_narrow(self.geo, geos, "гео"),
+            gender=_narrow(self.gender, genders, "пол"),
+        )
+
 
 # ---------------------------------------------------------------------------
 # Generation config
@@ -236,6 +283,23 @@ class GenerationConfig:
     city: str | None = None
     segment: str | None = None
     use_llm: bool = False
+
+    # ─── Критерии отбора аудитории (задача #9) ──────────────────────────────
+    # Пустой список означает «критерий не задан» и оставляет распределение
+    # корпуса нетронутым. Это важно для #5: эталонный конфиг persona_grounding
+    # не задаёт критериев, поэтому его поведение не меняется вовсе.
+    #
+    # Имена совпадают с полями apps/web/lib/audience.ts — там же живёт
+    # переименование camelCase → snake_case на границе языков.
+    age_groups: list[str] = field(default_factory=list)
+    geos: list[str] = field(default_factory=list)
+    genders: list[str] = field(default_factory=list)
+    #: Уровни образования. В корпусе такого поля НЕТ ни у одной из 165 записей
+    #: (замерено 04.08.2026), поэтому критерий не сужает распределения и не
+    #: участвует в заземлении — он доезжает до промпта persona.generate и влияет
+    #: на текст персоны, но не на её соцдем. Хранится здесь, а не отбрасывается,
+    #: чтобы снимок конфигурации набора отражал то, что выбрал пользователь.
+    education: list[str] = field(default_factory=list)
 
     def validate(self) -> None:
         if not (1 <= self.size <= 500):
@@ -414,13 +478,30 @@ class PersonaGenerator:
         return narrative
 
     def _generate_one(
-        self, rng: random.Random, idx: int, config: GenerationConfig
+        self,
+        rng: random.Random,
+        idx: int,
+        config: GenerationConfig,
+        dist: CorpusDistribution | None = None,
     ) -> dict[str, Any]:
-        """Генерирует одну персону — deterministic режим (без LLM)."""
+        """Генерирует одну персону — deterministic режим (без LLM).
+
+        `dist` — распределения, суженные критериями шага «Аудитория» (#9).
+        None означает «без критериев» и берёт полный корпус: так остаются
+        исполнимыми вызовы, сделанные до появления критериев.
+
+        Сужается только демография. Калибровка баллов, ценности и пул цитат
+        по-прежнему считаются по всему корпусу — сузить их до подвыборки было бы
+        точнее, но это меняет статистику, на которой стоит метрика
+        persona_grounding с числовым порогом, и такую правку надо делать вместе
+        с её перезамером, а не заодно.
+        """
+        dist = dist or self.dist
+
         # 1. Сэмплирование демографии по реальным долям
-        age_group = self._sample_weighted(rng, self.dist.age_group)
-        geo = self._sample_weighted(rng, self.dist.geo)
-        gender = self._sample_weighted(rng, self.dist.gender)
+        age_group = self._sample_weighted(rng, dist.age_group)
+        geo = self._sample_weighted(rng, dist.geo)
+        gender = self._sample_weighted(rng, dist.gender)
         age = self._sample_age_from_group(rng, age_group)
 
         # Город — из гео-группы (или из распределения корпуса)
@@ -586,9 +667,18 @@ class PersonaGenerator:
         config.validate()
         rng = random.Random(config.seed)
 
+        # Критерии применяются ОДИН раз до цикла, а не внутри него: сужение
+        # распределения — свойство прогона, а не персоны, и пересчёт на каждой
+        # итерации давал бы те же доли за size-кратную работу.
+        dist = self.dist.restrict(
+            age_groups=config.age_groups,
+            geos=config.geos,
+            genders=config.genders,
+        )
+
         personas: list[dict[str, Any]] = []
         for i in range(config.size):
-            persona = self._generate_one(rng, i, config)
+            persona = self._generate_one(rng, i, config, dist)
             personas.append(persona)
         return personas
 
