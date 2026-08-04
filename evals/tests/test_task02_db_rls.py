@@ -283,7 +283,14 @@ check(
 # ── ПОВЕДЕНЧЕСКИЙ УРОВЕНЬ ─────────────────────────────────────────────────
 print("== кросс-арендаторная изоляция (живой Postgres) ==")
 
-dsn = os.environ.get("DATABASE_URL")
+# Строка подключения берётся через db_dsn: в .env.local хост — имя сервиса
+# compose, которое резолвится только внутри сети контейнеров. При запуске с
+# хоста это давало FAIL «failed to resolve host postgres», читавшийся как
+# поломка базы. См. evals/tests/_harness.py.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _harness import db_dsn  # noqa: E402
+
+dsn = db_dsn()
 if not dsn:
     skip("изоляция арендаторов", "DATABASE_URL не задан — запустите при поднятом compose")
 else:
@@ -347,17 +354,9 @@ else:
 
 # ── итог ──────────────────────────────────────────────────────────────────
 print()
-if failures:
-    print(f"RED — не выполнено условий: {len(failures)}")
-    for f in failures:
-        print(f"   · {f}")
-    sys.exit(1)
+# Вердикт общий для всех тестов — см. _harness.verdict. Прежде GREEN печатался
+# при любом числе SKIP, и «проверено» не отличалось от «пропущено».
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _harness import verdict_lists  # noqa: E402
 
-print("GREEN — задача #2 удовлетворяет статическим критериям приёмки")
-if skipped:
-    print("пропущено (среда):")
-    for s in skipped:
-        print(f"   · {s}")
-    print("\n⚠️  Поведенческая проверка изоляции НЕ выполнена — метрика rls_tenant")
-    print("    остаётся неподтверждённой до прогона при поднятом Postgres.")
-sys.exit(0)
+sys.exit(verdict_lists(failures, skipped, 0, "#2"))

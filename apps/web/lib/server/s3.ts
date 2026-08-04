@@ -103,9 +103,15 @@ export function createPresignedPutUrl(
   // Для presigned URL payload не подписывается
   const payloadHash = "UNSIGNED-PAYLOAD";
 
+  // Путь обязан совпадать с тем, что уйдёт в запросе, — а уходит
+  // /{bucket}/{key} (path-style адресация, см. сборку url ниже). Подписывался
+  // же /{key}, без бакета, и S3 отвечал SignatureDoesNotMatch на каждую
+  // загрузку. Незаметно это было потому, что поведенческий кейс, доходящий до
+  // настоящей заливки, ни разу не исполнялся: тест #8 пропускал его со словами
+  // «требует mock-сессию и тестовый видеофайл».
   const canonicalRequest = [
     "PUT",
-    `/${key}`,
+    `/${cfg.bucket}/${key}`,
     canonicalQueryString,
     canonicalHeaders,
     signedHeaders,
@@ -178,9 +184,13 @@ export function createPresignedGetUrl(key: string): string {
   const signedHeaders = "host";
   const payloadHash = "UNSIGNED-PAYLOAD";
 
+  // Тот же дефект, что в createPresignedPutUrl: подписывался путь без бакета,
+  // а запрос уходит на /{bucket}/{key}. Для GET это ломало ffprobe-валидацию —
+  // она ходит по presigned GET URL и получала SignatureDoesNotMatch вместо
+  // заголовков файла.
   const canonicalRequest = [
     "GET",
-    `/${key}`,
+    `/${cfg.bucket}/${key}`,
     canonicalQueryString,
     canonicalHeaders,
     signedHeaders,

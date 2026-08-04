@@ -249,7 +249,14 @@ check(
 print("== CDD: 401 / 403 / tenant в RLS-контексте (живая среда) ==")
 
 base_url = os.environ.get("BASE_URL")
-dsn = os.environ.get("DATABASE_URL")
+# Строка подключения берётся через db_dsn: в .env.local хост — имя сервиса
+# compose, которое резолвится только внутри сети контейнеров. При запуске с
+# хоста это давало FAIL «failed to resolve host postgres», читавшийся как
+# поломка базы. См. evals/tests/_harness.py.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _harness import db_dsn  # noqa: E402
+
+dsn = db_dsn()
 
 if not base_url:
     skip("401 на защищённом маршруте", "BASE_URL не задан — запустите при поднятом сервере")
@@ -395,17 +402,9 @@ else:
             check("сессия проставляет tenant_id в RLS-контекст", False, f"{type(e).__name__}: {str(e)[:180]}")
 
 
-# ── итог ──────────────────────────────────────────────────────────────────
-print()
-if failures:
-    print(f"RED — не выполнено условий: {len(failures)}")
-    for f in failures:
-        print(f"   · {f}")
-    sys.exit(1)
+# Вердикт общий для всех тестов — см. _harness.verdict. Прежде GREEN печатался
+# при любом числе SKIP, и «проверено» не отличалось от «пропущено».
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _harness import verdict_lists  # noqa: E402
 
-print("GREEN — задача #3 удовлетворяет статическим критериям приёмки")
-if skipped:
-    print("пропущено (среда):")
-    for s in skipped:
-        print(f"   · {s}")
-sys.exit(0)
+sys.exit(verdict_lists(failures, skipped, 0, "#3"))

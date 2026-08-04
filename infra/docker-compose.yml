@@ -106,6 +106,22 @@ services:
       OPENAI_API_KEY: ${OPENAI_API_KEY:?OPENAI_API_KEY обязателен}
       OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.timeweb.cloud/v1}
       AI_MODEL: ${AI_MODEL:-qwen3.6}
+      # Presigned upload выдаёт web, а не worker: маршрут /api/upload/presign
+      # подписывает ссылку ключами S3 и кладёт tenant_id из сессии в имя объекта.
+      # Раньше эти переменные были только у worker, поэтому на развёрнутом стенде
+      # загрузка отвечала 500 «S3_ACCESS_KEY или S3_SECRET_KEY не заданы».
+      # Незаметно это было потому, что тест #8 упирался в 401 раньше, чем
+      # доходил до подписи, и дефект выглядел как отсутствие среды.
+      S3_ENDPOINT: ${S3_ENDPOINT:-}
+      S3_BUCKET: ${S3_BUCKET:-}
+      S3_ACCESS_KEY: ${S3_ACCESS_KEY:-}
+      S3_SECRET_KEY: ${S3_SECRET_KEY:-}
+      # Корень, от которого /api/portraits/distill строит путь к distill.py.
+      # Без него берётся process.cwd(), а у standalone-сервера Next это
+      # /app/apps/web — путь получался /app/apps/web/services/... и дистилляция
+      # падала с «can't open file». Умолчание в коде рассчитано на запуск из
+      # каталога репозитория, в образе структура другая.
+      AGORA_REPO_ROOT: /app
     # Только postgres: mongo и valkey вынесены в профиль local-db и по умолчанию
     # не поднимаются (managed на TimeWeb). Зависимость от сервиса с профилем
     # включила бы профиль неявно и вернула бы ненужные контейнеры.

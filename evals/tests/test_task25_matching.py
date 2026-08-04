@@ -251,8 +251,10 @@ else:
     skip("min_similarity отсекает", reason)
     skip("разная демография → ниже score", reason)
 
-n_pass = sum(1 for _, s, _ in results if s == "OK")
-n_fail = sum(1 for _, s, _ in results if s == "FAIL")
-n_skip = sum(1 for _, s, _ in results if s == "SKIP")
-print(f"\n{'GREEN' if not n_fail else 'RED'} — pass={n_pass} fail={n_fail} skip={n_skip}")
-sys.exit(1 if n_fail else 0)
+# Вердикт общий для всех тестов: GREEN только когда проверено всё, что можно
+# было проверить здесь. Прежде GREEN печатался при любом числе SKIP, и по
+# выводу нельзя было отличить «проверено» от «пропущено» — см. _harness.verdict.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _harness import verdict  # noqa: E402
+
+sys.exit(verdict(results, "#25"))

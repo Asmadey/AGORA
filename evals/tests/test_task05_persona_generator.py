@@ -302,17 +302,8 @@ print("\n" + "=" * 60)
 passed = sum(1 for _, s, _ in results if s == PASS)
 failed = sum(1 for _, s, _ in results if s == FAIL)
 skipped = sum(1 for _, s, _ in results if s == SKIP)
-print(f"Итого: {passed} OK, {failed} FAIL, {skipped} SKIP")
+# Вердикт общий для всех тестов — см. _harness.verdict.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _harness import verdict  # noqa: E402
 
-if failed > 0:
-    print("\nFAILED:")
-    for name, status, detail in results:
-        if status == FAIL:
-            print(f"  ✗ {name}: {detail}")
-    sys.exit(1)
-elif skipped > 0 and passed == 0:
-    print("\nВсе тесты SKIP — нет среды для проверки")
-    sys.exit(0)
-else:
-    print("\nВсе тесты GREEN (или SKIP)")
-    sys.exit(0)
+sys.exit(verdict(results, "#5"))

@@ -261,16 +261,9 @@ if "content_under_test.title" in issues:
     else:
         check("паспорт актуален: заголовок исправлен — уберите запись", False, "")
 
-print()
-if failures:
-    print(f"RED — не выполнено условий: {len(failures)}")
-    for f in failures:
-        print(f"   · {f}")
-    sys.exit(1)
+# Вердикт общий для всех тестов — см. _harness.verdict. Прежде GREEN печатался
+# при любом числе SKIP, и «проверено» не отличалось от «пропущено».
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _harness import verdict_lists  # noqa: E402
 
-print(f"GREEN — задача #23 удовлетворяет критериям приёмки (skip={len(skipped)} warn={len(warnings)})")
-for w in warnings:
-    print(f"   ⚠ {w}")
-for s in skipped:
-    print(f"   · пропущено: {s}")
-sys.exit(0)
+sys.exit(verdict_lists(failures, skipped, 0, "#23", warnings))

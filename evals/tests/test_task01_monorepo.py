@@ -280,17 +280,9 @@ if (ROOT / "evals/check.py").is_file():
     except Exception as e:  # noqa: BLE001
         check("check.py отрабатывает из корня монорепо", False, str(e)[:150])
 
-# ── итог ─────────────────────────────────────────────────────────────────
-print()
-if failures:
-    print(f"RED — не выполнено условий: {len(failures)}")
-    for f in failures:
-        print(f"   · {f}")
-    sys.exit(1)
+# Вердикт общий для всех тестов — см. _harness.verdict. Прежде GREEN печатался
+# при любом числе SKIP, и «проверено» не отличалось от «пропущено».
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _harness import verdict_lists  # noqa: E402
 
-print("GREEN — задача #1 удовлетворяет критериям приёмки")
-if notes:
-    print("пропущено (среда):")
-    for n in notes:
-        print(f"   · {n}")
-sys.exit(0)
+sys.exit(verdict_lists(failures, notes, len(oks) if "oks" in dir() else 0, "#1"))

@@ -117,62 +117,52 @@ check("в каждом из 13 файлов {{}} непусто", all_have_place
 print("\n== Поведенческий уровень ==")
 
 base_url = os.environ.get("BASE_URL", "https://agora.185-154-194-125.sslip.io")
-dsn = os.environ.get("DATABASE_URL")
-admin_dsn = os.environ.get("POSTGRES_ADMIN_URL")
+# Строка подключения берётся через db_dsn: в .env.local хост — имя сервиса
+# compose, которое резолвится только внутри сети контейнеров. При запуске с
+# хоста это давало FAIL «failed to resolve host postgres», читавшийся как
+# поломка базы. См. evals/tests/_harness.py.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _harness import db_dsn  # noqa: E402
+
+dsn = db_dsn()
+admin_dsn = db_dsn("POSTGRES_ADMIN_URL")
 
 if not dsn:
     for i in range(8, 22):
         skip(f"поведенческий кейс {i}", "DATABASE_URL не задан")
 else:
     try:
-        import psycopg
-        import urllib.request
+        import psycopg  # noqa: F401
+
+        from _harness import login  # noqa: E402
+
+        # Прежде здесь был собственный клиент с логином и паролем владельца,
+        # записанными в исходник (owner@agora.local / пароль строкой). Это
+        # учётные данные в репозитории — §7 CLAUDE.md, — и метрика secret_scan
+        # их не ловила: она ищет только sk-… и AIza…. Теперь вход идёт через
+        # общую обвязку, а данные берутся из окружения.
+        client, why_login = login(base_url)
 
         def curl_get(url, cookies=""):
-            req = urllib.request.Request(url)
-            if cookies:
-                req.add_header("Cookie", cookies)
-            try:
-                resp = urllib.request.urlopen(req, timeout=10)
-                return resp.status, resp.read().decode("utf-8")
-            except urllib.error.HTTPError as e:
-                return e.code, e.read().decode("utf-8") if e.fp else ""
+            return client.call(url.replace(base_url, ""))
 
         def curl_post(url, data, cookies=""):
-            req = urllib.request.Request(url, data=data.encode("utf-8"),
-                                         method="POST")
-            req.add_header("Content-Type", "application/json")
-            if cookies:
-                req.add_header("Cookie", cookies)
-            try:
-                resp = urllib.request.urlopen(req, timeout=10)
-                return resp.status, resp.read().decode("utf-8")
-            except urllib.error.HTTPError as e:
-                return e.code, e.read().decode("utf-8") if e.fp else ""
+            # Создание новой версии — PUT /api/prompts, не POST: POST на этом
+            # маршруте не объявлен и отвечает 405. Прежняя редакция слала POST и
+            # получала 405, но проверка при этом печаталась как «сохранение
+            # новой версии», а не как «маршрут не тот».
+            return client.call(url.replace(base_url, ""), "PUT", data.encode("utf-8"))
 
-        # Get session cookies for owner
-        import http.cookiejar
-        jar = http.cookiejar.CookieJar()
-        opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(jar))
+        cookies = ""
 
-        # Get CSRF
-        csrf_resp = opener.open(f"{base_url}/api/auth/csrf", timeout=10)
-        csrf = json.loads(csrf_resp.read())["csrfToken"]
+    except ImportError:
+        client, why_login = None, "psycopg не установлен"
 
-        # Login
-        login_data = urllib.parse.urlencode({
-            "email": "owner@agora.local",
-            "password": "AgoraOwner2026!",
-            "csrfToken": csrf,
-            "callbackUrl": base_url,
-        }).encode()
-        login_req = urllib.request.Request(f"{base_url}/api/auth/callback/credentials",
-                                           data=login_data, method="POST")
-        login_req.add_header("Content-Type", "application/x-www-form-urlencoded")
-        opener.open(login_req, timeout=10)
-
-        cookies = "; ".join(f"{c.name}={c.value}" for c in jar)
-
+    if client is None:
+        skip("все 13 ключей резолвятся у арендатора (дефолт)", why_login)
+        skip("сохранение новой версии", why_login)
+        skip("member PUT → 403", why_login)
+    else:
         # 8. All 13 keys resolve for tenant without own versions → default
         status, body = curl_get(f"{base_url}/api/prompts", cookies)
         if status == 200:
@@ -181,43 +171,48 @@ else:
         else:
             check("все 13 ключей резолвятся у арендатора (дефолт)", False, f"HTTP {status}")
 
-        # 9-21 would require PUT/POST/DELETE on live API
-        # Test PUT (new version)
-        if status == 200 and prompts_data:
-            first_key = prompts_data[0].get("key") if isinstance(prompts_data, list) else None
-            if first_key:
-                put_data = json.dumps({"key": first_key, "template": "test {{content}}", "variables": ["content"]})
-                status_put, body_put = curl_post(f"{base_url}/api/prompts", put_data, cookies)
-                check("сохранение новой версии", status_put in (200, 201), f"HTTP {status_put}")
+        # Ответ — { stages: { <этап>: [ {key, …}, … ] } }, а не массив промптов.
+        # Прежний разбор ждал массив, получал словарь и печатал «нет ключей в
+        # API» — то есть сообщал об отсутствии данных там, где их просто читали
+        # не оттуда.
+        first_key = None
+        if status == 200 and isinstance(prompts_data, dict):
+            for items in (prompts_data.get("stages") or {}).values():
+                if isinstance(items, list) and items:
+                    first_key = items[0].get("key")
+                    break
 
-                # 18. Member PUT → 403
-                # Would need member session - skip if not available
-                skip("member PUT → 403", "требует member сессии")
-            else:
-                skip("сохранение новой версии", "нет ключей в API")
+        if not first_key:
+            skip("сохранение новой версии", f"список промптов пуст (HTTP {status})")
+            skip("member PUT → 403", "нет ключа для правки")
         else:
-            skip("сохранение новой версии", "API недоступен")
+            put_data = json.dumps(
+                {"key": first_key, "template": "test {{content}}", "variables": ["content"]}
+            )
+            status_put, _ = curl_post(f"{base_url}/api/prompts", put_data, cookies)
+            check("сохранение новой версии", status_put in (200, 201), f"HTTP {status_put}")
 
-    except ImportError:
-        for i in range(8, 22):
-            skip(f"поведенческий кейс {i}", "psycopg/urllib не установлен")
-    except Exception as e:
-        check("поведенческий тест", False, f"{type(e).__name__}: {str(e)[:120]}")
+            # Правка промптов — действие владельца. Участник обязан получить 403,
+            # иначе роль ничего не ограничивает. Раньше пропускалось «требует
+            # member сессии»; учётная запись участника задаётся через
+            # MEMBER_EMAIL/MEMBER_PASSWORD и заводится seed-auth.mjs.
+            member, why_member = login(base_url, "member")
+            if member is None:
+                skip("member PUT → 403", why_member)
+            else:
+                code_m, _ = member.call("/api/prompts", "PUT", put_data.encode("utf-8"))
+                check(
+                    "member PUT → 403",
+                    code_m == 403,
+                    f"HTTP {code_m}; 200 значит, что участник правит промпты арендатора",
+                )
 
 
 # --- Summary ---
-n_pass = sum(1 for _, s, _ in results if s == PASS)
-n_fail = sum(1 for _, s, _ in results if s == FAIL)
-n_skip = sum(1 for _, s, _ in results if s == SKIP)
+# Вердикт общий для всех тестов: GREEN только когда проверено всё, что можно
+# было проверить здесь. Прежде GREEN печатался при любом числе SKIP, и по
+# выводу нельзя было отличить «проверено» от «пропущено» — см. _harness.verdict.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _harness import verdict  # noqa: E402
 
-if n_fail:
-    print(f"\nRED — не выполнено условий: {n_fail}")
-    for name, status, detail in results:
-        if status == FAIL:
-            print(f"  · {name}" + (f" ({detail})" if detail else ""))
-elif n_skip > 0 and n_pass == 0:
-    print(f"\nSKIP — все тесты пропущены")
-else:
-    print(f"\nGREEN — задача #26 удовлетворяет критериям (pass={n_pass} skip={n_skip})")
-
-sys.exit(1 if n_fail else 0)
+sys.exit(verdict(results, "#26"))

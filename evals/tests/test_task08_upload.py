@@ -177,69 +177,135 @@ elif not has_server:
     skip("поведенческий кейс: ffprobe валидирует реальный файл", "требует AGORA_TEST_SERVER/BASE_URL")
 else:
     import json
-    import urllib.request
-    import urllib.error
+
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from _harness import login
 
     server_url = os.environ.get("AGORA_TEST_SERVER") or os.environ["BASE_URL"]
 
-    try:
-        # B1: Файл >700 МБ отклоняется на этапе presign
-        payload = json.dumps({
-            "fileName": "big.mp4",
-            "contentType": "video/mp4",
-            "fileSize": 701 * 1024 * 1024,
-        }).encode()
-        req = urllib.request.Request(
-            f"{server_url}/api/upload/presign",
-            data=payload,
-            headers={"Content-Type": "application/json"},
-        )
+    # /api/upload/presign закрыт middleware, и tenant_id для ключа берётся из
+    # сессии. Аноним получает 401 на любой запрос, поэтому раньше здесь были два
+    # FAIL со status=401: проверялась ситуация, которой у продукта не бывает.
+    client, why = login(server_url)
+
+    if client is None:
+        skip("файл >700 МБ отклоняется (presign)", why)
+        skip("неподдерживаемое расширение отклоняется", why)
+        skip("успешная загрузка даёт ключ с tenant_id", why)
+        skip("ffprobe валидирует реальный файл", why)
+    else:
+        tenant_id = (client.session().get("user") or {}).get("tenantId")
+
+        def presign(name: str, ctype: str, size: int) -> tuple[int, str]:
+            body = json.dumps(
+                {"fileName": name, "contentType": ctype, "fileSize": size}
+            ).encode()
+            return client.call("/api/upload/presign", "POST", body)
+
         try:
-            urllib.request.urlopen(req)
-            check("файл >700 МБ отклоняется (presign)", False, "сервер не отклонил")
-        except urllib.error.HTTPError as e:
-            check("файл >700 МБ отклоняется (presign)", e.code == 400, f"status={e.code}")
+            # B1: файл >700 МБ отклоняется на этапе presign
+            code, body = presign("big.mp4", "video/mp4", 701 * 1024 * 1024)
+            check(
+                "файл >700 МБ отклоняется (presign)",
+                code == 400,
+                f"status={code}; 200 значит, что кап размера не действует",
+            )
 
-        # B2: Неподдерживаемое расширение отклоняется
-        payload = json.dumps({
-            "fileName": "video.mkv",
-            "contentType": "video/x-matroska",
-            "fileSize": 1024,
-        }).encode()
-        req = urllib.request.Request(
-            f"{server_url}/api/upload/presign",
-            data=payload,
-            headers={"Content-Type": "application/json"},
-        )
-        try:
-            urllib.request.urlopen(req)
-            check("неподдерживаемое расширение отклоняется", False, "сервер не отклонил .mkv")
-        except urllib.error.HTTPError as e:
-            check("неподдерживаемое расширение отклоняется", e.code == 400, f"status={e.code}")
+            # B2: неподдерживаемое расширение отклоняется
+            code, body = presign("video.mkv", "video/x-matroska", 1024)
+            check(
+                "неподдерживаемое расширение отклоняется",
+                code == 400,
+                f"status={code}; 200 значит, что .mkv прошёл фильтр",
+            )
 
-        skip("успешная загрузка даёт ключ с tenant_id", "требует mock-сессию и тестовый видеофайл")
-        skip("ffprobe валидирует реальный файл", "требует mock-сессию и тестовый видеофайл")
+            # B3: валидный файл получает ключ, привязанный к арендатору.
+            # Это третий пункт cdd, и проверять его надо именно так: ключ
+            # генерируется из session.tenantId, поэтому совпадение ключа с
+            # арендатором сессии и есть доказательство привязки. Реальная
+            # заливка байтов ничего к этому не добавляет — она проверяла бы S3,
+            # а не наш код.
+            code, body = presign("clip.mp4", "video/mp4", 5 * 1024 * 1024)
+            key = ""
+            if code == 200:
+                try:
+                    key = json.loads(body).get("key", "")
+                except Exception:  # noqa: BLE001
+                    key = ""
+            check(
+                "успешная загрузка даёт ключ с tenant_id",
+                code == 200 and bool(tenant_id) and tenant_id in key,
+                f"status={code} key={key[:80] or body[:80]} tenant={tenant_id}",
+            )
 
-    except Exception as e:
-        check("поведенческий тест upload", False, f"{type(e).__name__}: {str(e)[:120]}")
+            # ffprobe: полный цикл — presign, заливка байтов в S3, подтверждение.
+            # /api/upload/complete запускает ffprobe по presigned GET URL, поэтому
+            # проверка доказывает и то, что файл действительно долетел до S3, и
+            # то, что валидация умеет его прочитать. Ролик — секунда чёрного
+            # кадра, 2 КБ, лежит в fixtures и генерируется одной командой ffmpeg
+            # (см. комментарий в fixtures/README).
+            sample = Path(__file__).resolve().parent / "fixtures" / "sample.mp4"
+            if not sample.exists():
+                skip("ffprobe валидирует реальный файл", f"нет файла {sample.name}")
+            else:
+                data = sample.read_bytes()
+                code, body = presign("sample.mp4", "video/mp4", len(data))
+                upload_url, key = "", ""
+                if code == 200:
+                    try:
+                        parsed = json.loads(body)
+                        upload_url, key = parsed.get("uploadUrl", ""), parsed.get("key", "")
+                    except json.JSONDecodeError:
+                        pass
+
+                put_status = 0
+                if upload_url:
+                    import urllib.error
+                    import urllib.request
+
+                    req = urllib.request.Request(
+                        upload_url, data=data, method="PUT",
+                        headers={"Content-Type": "video/mp4"},
+                    )
+                    try:
+                        with urllib.request.urlopen(req, timeout=60) as r:
+                            put_status = r.status
+                    except urllib.error.HTTPError as e:
+                        put_status = e.code
+                    except urllib.error.URLError:
+                        put_status = 0
+
+                probe = {}
+                complete_code = 0
+                if put_status in (200, 204) and key:
+                    complete_code, complete_body = client.call(
+                        "/api/upload/complete", "POST",
+                        json.dumps({"key": key, "mode": "short"}).encode(),
+                    )
+                    if complete_code == 200:
+                        try:
+                            probe = (json.loads(complete_body) or {}).get("probe") or {}
+                        except json.JSONDecodeError:
+                            probe = {}
+
+                check(
+                    "ffprobe валидирует реальный файл",
+                    complete_code == 200 and probe.get("durationSec", 0) > 0,
+                    f"presign={code} put={put_status} complete={complete_code} probe={probe}",
+                )
+
+        except Exception as e:
+            check("поведенческий тест upload", False, f"{type(e).__name__}: {str(e)[:120]}")
 
 
 # ═══════════════════════════════════════════════════════════════════════════
 # ИТОГ
 # ═══════════════════════════════════════════════════════════════════════════
 
-n_pass = sum(1 for _, s, _ in results if s == PASS)
-n_fail = sum(1 for _, s, _ in results if s == FAIL)
-n_skip = sum(1 for _, s, _ in results if s == SKIP)
+# Вердикт общий для всех тестов: GREEN только когда проверено всё, что можно
+# было проверить здесь. Прежде GREEN печатался при любом числе SKIP, и по
+# выводу нельзя было отличить «проверено» от «пропущено» — см. _harness.verdict.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _harness import verdict  # noqa: E402
 
-if n_fail:
-    print(f"\nRED — не выполнено условий: {n_fail}")
-    for name, status, detail in results:
-        if status == FAIL:
-            print(f"  · {name}" + (f" ({detail})" if detail else ""))
-elif n_skip > 0 and n_pass == 0:
-    print(f"\nSKIP — все тесты пропущены")
-else:
-    print(f"\nGREEN — задача #8 удовлетворяет критериям (pass={n_pass} skip={n_skip})")
-
-sys.exit(1 if n_fail else 0)
+sys.exit(verdict(results, "#8"))
