@@ -40,7 +40,15 @@ WORKDIR /app
 
 # Слой зависимостей отдельно от кода — пересборка при правке кода не тянет pip заново.
 COPY services/agent-core/pyproject.toml ./
-RUN pip install --upgrade pip && pip install -e ".[dev]" || pip install --upgrade pip
+
+# torch ставится ПЕРВЫМ и из CPU-индекса. Иначе pyannote.audio притянет его с
+# обычного PyPI, а там сборка с CUDA: +2,5 ГБ образа и десяток библиотек NVIDIA,
+# которые на машине без видеокарты не нужны и не используются (GPU нет —
+# Decision Log #1). Проверено на первой сборке: приехал torch 2.13.0+cu130.
+RUN pip install --upgrade pip \
+    && pip install --index-url https://download.pytorch.org/whl/cpu torch torchaudio
+
+RUN pip install -e ".[dev]" || pip install --upgrade pip
 
 COPY services/agent-core/ ./
 COPY packages/shared/ /app/shared/
