@@ -9,11 +9,17 @@ FROM python:3.13-slim AS base
 #          и для torchcodec, которым pyannote.audio 4.x декодирует аудио.
 # libgomp1 — нужен faster-whisper (CTranslate2) для многопоточности на CPU.
 # libsndfile1 — чтение wav в soundfile/pyannote.
+# espeak-ng — синтез речи для фикстур CDD-теста #15. Транскрипт и диаризацию
+#   нельзя проверить на синтетическом тоне: нужна настоящая речь. Хранить в git
+#   записанный голос — это и вес, и вопрос о правах на запись; сгенерированная
+#   речь воспроизводима одной командой и не тянет ни того, ни другого.
+#   Пакет весит меньше мегабайта.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ffmpeg \
         libgomp1 \
         libsndfile1 \
         curl \
+        espeak-ng \
     && rm -rf /var/lib/apt/lists/*
 
 # HF_HOME — кэш весов Whisper и pyannote на смонтированном томе. Модели тяжёлые,
