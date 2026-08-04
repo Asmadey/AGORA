@@ -1,27 +1,78 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { ArrowLeft, MessageCircle } from "lucide-react";
-import { BigFiveChart, Chip, Field, TimecodeRef } from "@/components/agora/Primitives";
-import { MOCK_ANSWERS, MOCK_PERSONAS, MOCK_STUDY } from "@/lib/mock-data";
-import { CRITERIA, CRITERIA_LABELS } from "@/lib/agora-types";
+import { ArrowLeft } from "lucide-react";
+
+import { Chip } from "@/components/agora/Primitives";
+import { withTenant } from "@/lib/server/db";
+import { requireSession } from "@/lib/server/guard";
+import { getPersona } from "@/lib/server/personas";
+import { categoryLabel, fieldLabel, SCALE_1_5 } from "@/lib/persona-dna-labels";
 
 /**
- * Полная карточка персоны.
+ * Полная карточка персоны (задача #6).
  *
- * Ключевое требование (задача #6): здесь показаны ВСЕ атрибуты DNA, а не парадное
- * подмножество. Смысл продукта — что персона не выдумана на ходу, а имеет
- * задокументированный профиль; если карточка показывает восемь полей из пятидесяти,
- * проверить это утверждение невозможно.
+ * ─── Почему обход структурой, а не перечисление полей ──────────────────────
+ * Требование cdd: «присутствует КАЖДОЕ непустое поле DNA — ни одно поле не
+ * потеряно при рендере». Перечисленный вручную список это требование не
+ * удерживает: добавили поле в canonical JSON Schema — карточка про него не
+ * знает, и заметить это можно только глазами.
+ *
+ * Здесь карточка обходит фактический объект DNA. Новое поле появляется на
+ * экране само; словарь подписей влияет лишь на то, будет ли у него русское
+ * название или имя из схемы.
+ *
+ * ─── Почему канонический тип, а не рукописный ──────────────────────────────
+ * До этой задачи страница строилась на apps/web/lib/agora-types.ts — рукописной
+ * модели, расходившейся со схемой и по именам (bigFive против big_five), и по
+ * составу: в схеме communication_style содержит directness и conflict_style,
+ * которых там не было, а его tone и vocabulary отсутствуют в схеме. Из 47
+ * листовых полей канона карточка показывала 12.
  */
 
-function Section({ title, hint, children }: { title: string; hint?: string; children: React.ReactNode }) {
+function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <section className="rounded-lg border border-border bg-[hsl(222_47%_7%)] p-5">
       <h2 className="text-sm font-semibold">{title}</h2>
-      {hint && <p className="mt-0.5 text-xs text-muted-foreground">{hint}</p>}
       <div className="mt-3">{children}</div>
     </section>
   );
+}
+
+/** Шкала 1–5: число без максимума не читается. */
+function Scale({ value }: { value: number }) {
+  return (
+    <span className="inline-flex items-center gap-1.5">
+      <span className="flex gap-0.5" aria-hidden>
+        {[1, 2, 3, 4, 5].map((i) => (
+          <span
+            key={i}
+            className={`h-1.5 w-4 rounded-sm ${i <= value ? "bg-foreground/70" : "bg-border"}`}
+          />
+        ))}
+      </span>
+      <span className="text-xs text-muted-foreground">{value} из 5</span>
+    </span>
+  );
+}
+
+function renderValue(key: string, value: unknown) {
+  if (Array.isArray(value)) {
+    if (value.length === 0) return <span className="text-muted-foreground">—</span>;
+    return (
+      <span className="flex flex-wrap gap-1">
+        {value.map((v, i) => (
+          <Chip key={`${String(v)}-${i}`} tone="outline">
+            {String(v)}
+          </Chip>
+        ))}
+      </span>
+    );
+  }
+  if (typeof value === "number" && SCALE_1_5.has(key)) return <Scale value={value} />;
+  if (value === null || value === undefined || value === "") {
+    return <span className="text-muted-foreground">—</span>;
+  }
+  return <span>{String(value)}</span>;
 }
 
 export default async function PersonaCardPage({
@@ -30,16 +81,21 @@ export default async function PersonaCardPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  const persona = MOCK_PERSONAS.find((p) => p.id === id);
-  // notFound() возвращает never, но полагаться на это ради корректности остального
-  // кода не стоит: явный return делает сужение типа независимым от сигнатуры Next.
+  const { tenantId } = await requireSession();
+
+  const persona = await withTenant(tenantId, async (client) => getPersona(client, id));
+
+  // Чужая персона неотличима от несуществующей: RLS не вернёт строку. Разный
+  // ответ на эти два случая сам сообщал бы, что объект есть у другого арендатора.
   if (!persona) {
     notFound();
     return null;
   }
 
-  const { dna } = persona;
-  const answer = MOCK_ANSWERS.find((a) => a.personaId === persona.id);
+  const dna = persona.dna as unknown as Record<string, unknown>;
+  const categories = Object.entries(dna).filter(
+    ([, v]) => v !== null && typeof v === "object" && !Array.isArray(v),
+  ) as [string, Record<string, unknown>][];
 
   return (
     <div className="mx-auto max-w-5xl p-8">
@@ -51,173 +107,37 @@ export default async function PersonaCardPage({
         Все персоны
       </Link>
 
-      {/* Шапка */}
-      <div className="flex flex-wrap items-start gap-5">
-        <div
-          className="grid h-16 w-16 shrink-0 place-items-center rounded-full text-lg font-semibold"
-          style={{
-            backgroundColor: `hsl(${persona.avatarHue} 45% 22%)`,
-            color: `hsl(${persona.avatarHue} 70% 78%)`,
-          }}
-        >
-          {persona.name.split(" ").map((w) => w[0]).join("")}
-        </div>
-        <div className="min-w-0 flex-1">
-          <h1 className="text-2xl font-semibold tracking-tight">{persona.name}</h1>
-          <p className="mt-0.5 text-muted-foreground">
-            {persona.jobTitle} · {persona.location}
+      <header className="mb-6">
+        <h1 className="text-2xl font-semibold">{persona.name}</h1>
+        <p className="mt-1 text-sm text-muted-foreground">
+          Создана {new Date(persona.createdAt).toLocaleDateString("ru-RU")}
+          {persona.seed !== null && ` · seed ${persona.seed}`}
+        </p>
+      </header>
+
+      {persona.narrative && (
+        <section className="mb-6 rounded-lg border border-border bg-[hsl(222_47%_7%)] p-5">
+          <h2 className="text-sm font-semibold">Описание</h2>
+          <p className="mt-2 whitespace-pre-line text-sm leading-relaxed text-muted-foreground">
+            {persona.narrative}
           </p>
-          <div className="mt-3 flex flex-wrap gap-1.5">
-            <Chip>{persona.generation}</Chip>
-            <Chip tone="outline">{dna.demographics.age} лет</Chip>
-            <Chip tone="outline">{dna.demographics.geo}</Chip>
-            <Chip tone="outline">seed {persona.seed}</Chip>
-          </div>
-        </div>
-        <Link
-          href={`/runs/${MOCK_STUDY.id}/chat?persona=${persona.id}`}
-          className="inline-flex items-center gap-2 rounded-md border border-border px-4 py-2 text-sm transition-colors hover:bg-secondary"
-        >
-          <MessageCircle className="h-4 w-4" />
-          Спросить персону
-        </Link>
-      </div>
-
-      <p className="mt-6 rounded-lg border border-border bg-secondary/30 p-4 text-sm leading-relaxed">
-        {persona.narrative}
-      </p>
-
-      {/* 8 категорий DNA */}
-      <div className="mt-6 grid gap-4 lg:grid-cols-2">
-        <Section title="1. Демография">
-          <dl>
-            <Field label="Пол" value={dna.demographics.gender} />
-            <Field label="Возраст" value={`${dna.demographics.age} (${dna.demographics.ageGroup})`} />
-            <Field label="Тип населённого пункта" value={dna.demographics.geo} />
-            <Field label="Город" value={dna.demographics.city} />
-            <Field label="Образование" value={dna.demographics.education} />
-            <Field label="Род занятий" value={dna.demographics.occupation} />
-            <Field label="Доход" value={dna.demographics.income} />
-            <Field label="Дети" value={dna.demographics.children} />
-            <Field label="Семейное положение" value={dna.demographics.maritalStatus} />
-          </dl>
-        </Section>
-
-        <Section title="2. Big Five" hint="Шкала 1–5">
-          <BigFiveChart value={dna.bigFive} />
-        </Section>
-
-        <Section title="3. Ценности и убеждения">
-          <dl>
-            <Field label="Базовые ценности" value={dna.values.coreValues} />
-            <Field label="Социальные приоритеты" value={dna.values.socialPriorities} />
-            <Field label="Культурный взгляд" value={dna.values.culturalOutlook} />
-            <Field label="Философия" value={dna.values.philosophy} />
-            <Field label="Отношение к будущему" value={dna.values.attitudeToFuture} />
-          </dl>
-        </Section>
-
-        <Section
-          title="4. Зрительское поведение"
-          hint="Самая важная категория: именно она определяет реакцию на материал"
-        >
-          <dl>
-            <Field label="Любимые жанры" value={dna.viewing.favouriteGenres} />
-            <Field label="Избегаемые жанры" value={dna.viewing.avoidedGenres} />
-            <Field label="Толерантность к насилию" value={dna.viewing.violenceTolerance} />
-            <Field label="Толерантность к темпу" value={dna.viewing.paceTolerance} />
-            <Field label="Толерантность к длине" value={dna.viewing.lengthTolerance} />
-            <Field label="Лояльность к франшизам" value={dna.viewing.franchiseLoyalty} />
-            <Field label="Лояльность к актёрам" value={dna.viewing.actorLoyalty} />
-            <Field label="Влияние рекомендаций" value={dna.viewing.recommendationInfluence} />
-            <Field label="Реакция на идеологический посыл" value={dna.viewing.reactionToIdeology} />
-            <Field label="Реакция на рекламу" value={dna.viewing.reactionToAdvertising} />
-            <Field label="Ожидания от продакшена" value={dna.viewing.productionExpectations} />
-            <Field label="Attention span" value={dna.viewing.attentionSpan} />
-          </dl>
-        </Section>
-
-        <Section title="5. Стиль общения" hint="Определяет, как звучат ответы персоны">
-          <dl>
-            <Field label="Тон" value={dna.communication.tone} />
-            <Field label="Лексика" value={dna.communication.vocabulary} />
-            <Field label="Многословность" value={dna.communication.verbosity} />
-            <Field label="Юмор" value={dna.communication.humour} />
-            <Field label="Манера критики" value={dna.communication.criticismStyle} />
-          </dl>
-        </Section>
-
-        <Section title="6. Принятие решений">
-          <dl>
-            <Field label="Готовность к риску" value={dna.decisions.riskAppetite} />
-            <Field label="Обдуманность" value={dna.decisions.deliberation} />
-            <Field label="Влияние окружения" value={dna.decisions.peerInfluence} />
-            <Field label="Доверие авторитету" value={dna.decisions.trustInAuthority} />
-            <Field label="Чувствительность к цене" value={dna.decisions.priceSensitivity} />
-          </dl>
-        </Section>
-
-        <Section title="7. Использование технологий">
-          <dl>
-            <Field label="Устройства" value={dna.technology.devices} />
-            <Field label="Платформы" value={dna.technology.platforms} />
-            <Field label="Контекст просмотра" value={dna.technology.viewingContext} />
-            <Field label="Второй экран" value={dna.technology.secondScreen} />
-          </dl>
-        </Section>
-
-        <Section title="8. Интересы и образ жизни">
-          <dl>
-            <Field label="Хобби" value={dna.lifestyle.hobbies} />
-            <Field label="Ритм дня" value={dna.lifestyle.dailyRhythm} />
-            <Field label="Социальная жизнь" value={dna.lifestyle.socialLife} />
-            <Field label="Медиапотребление" value={dna.lifestyle.mediaDiet} />
-            <Field label="Карьерный путь" value={dna.lifestyle.careerPath} />
-          </dl>
-        </Section>
-      </div>
-
-      {/* Ответы в контексте конкретного исследования */}
-      {answer && (
-        <section className="mt-6 rounded-lg border border-border bg-[hsl(222_47%_7%)] p-5">
-          <div className="flex flex-wrap items-baseline justify-between gap-2">
-            <h2 className="text-sm font-semibold">
-              Ответы в исследовании «{MOCK_STUDY.contentTitle}»
-            </h2>
-            <Link
-              href={`/runs/${MOCK_STUDY.id}`}
-              className="text-xs text-muted-foreground underline-offset-4 hover:underline"
-            >
-              Открыть отчёт
-            </Link>
-          </div>
-
-          <div className="mt-4 grid gap-4 sm:grid-cols-5">
-            {CRITERIA.map((c) => (
-              <div key={c}>
-                <p className="text-xs text-muted-foreground">{CRITERIA_LABELS[c]}</p>
-                <p className="mt-0.5 text-xl font-semibold tabular-nums">{answer.scores[c]}</p>
-              </div>
-            ))}
-          </div>
-
-          <blockquote className="mt-4 border-l-2 border-border pl-4 text-sm leading-relaxed">
-            «{answer.verbatim}»
-          </blockquote>
-
-          <div className="mt-4 flex flex-wrap gap-2">
-            {answer.groundingRefs.map((r) => (
-              <TimecodeRef key={r.timecode} timecode={r.timecode} note={r.note} />
-            ))}
-          </div>
-
-          <div className="mt-4 flex flex-wrap items-center gap-4 text-xs text-muted-foreground">
-            <span>Досмотрел(а) до {answer.watchedUntil}%</span>
-            <span>Порекомендует: {answer.wouldRecommend ? "да" : "нет"}</span>
-            <span>Эмоции: {answer.emotions.join(", ")}</span>
-          </div>
         </section>
       )}
+
+      <div className="grid gap-4 md:grid-cols-2">
+        {categories.map(([category, fields]) => (
+          <Section key={category} title={categoryLabel(category)}>
+            <dl className="space-y-2 text-sm">
+              {Object.entries(fields).map(([key, value]) => (
+                <div key={key} className="flex flex-wrap items-baseline gap-x-2">
+                  <dt className="text-muted-foreground">{fieldLabel(key)}:</dt>
+                  <dd>{renderValue(key, value)}</dd>
+                </div>
+              ))}
+            </dl>
+          </Section>
+        ))}
+      </div>
     </div>
   );
 }
