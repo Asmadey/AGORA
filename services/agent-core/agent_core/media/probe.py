@@ -91,9 +91,8 @@ def probe(path: str | Path) -> VideoInfo:
         capture_output=True, text=True, timeout=FFPROBE_TIMEOUT,
     )
     if proc.returncode != 0:
-        raise MediaError(
-            f"ffprobe не смог прочитать файл: {(proc.stderr or '').strip()[:200] or 'без объяснения'}"
-        )
+        why = (proc.stderr or "").strip()[:200] or "без объяснения"
+        raise MediaError(f"ffprobe не смог прочитать файл: {why}")
 
     try:
         meta = json.loads(proc.stdout)
