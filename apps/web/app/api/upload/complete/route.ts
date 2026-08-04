@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireSession, toResponse } from "@/lib/server/guard";
-import { withTenant } from "@/lib/server/db";
 import {
   createPresignedGetUrl,
   probeVideo,
@@ -72,21 +71,26 @@ export async function POST(req: NextRequest) {
     const presignedGet = createPresignedGetUrl(key);
     const probe = await probeVideo(presignedGet, sizeBytes);
 
-    // Сохраняем video_ref и mode в tasks (новая задача)
-    // Визард (#7) позже соберёт полный task; здесь — только контент + режим.
-    const taskId = await withTenant(session.tenantId, async (client) => {
-      const { rows } = await client.query<{ id: string }>(
-        `INSERT INTO tasks (tenant_id, video_ref, mode, status, created_by)
-         VALUES ($1, $2, $3, 'QUEUED', $4)
-         RETURNING id`,
-        [session.tenantId, key, mode, session.userId],
-      );
-      return rows[0].id;
-    });
-
-    const result: { key: string; taskId: string; probe: VideoProbeResult } = {
+    // Задача здесь НЕ создаётся — исправлено вместе с #11.
+    //
+    // Прежде каждая успешная загрузка вставляла строку в tasks со статусом
+    // QUEUED, пустым prompts_snapshot, без аудитории и без анкеты. Два
+    // следствия, оба неприятные:
+    //
+    // 1. Воркер, выбирающий задачи по статусу QUEUED, взял бы такую в работу —
+    //    без промптов и без персон. Это выглядело бы как сбой прогона, а не как
+    //    незаконченный визард.
+    //
+    // 2. После появления настоящего запуска (#11) одно исследование давало бы
+    //    ДВЕ строки в tasks: одну от загрузки, одну от запуска. Отличить их
+    //    потом нечем, а отчёт привязан к task_id.
+    //
+    // Загрузка отдаёт ключ; единственную задачу создаёт запуск, и он же
+    // пиннит промпты и «Перекрытие». Пункт cdd задачи #8 — «успешная загрузка
+    // даёт S3-ключ, привязанный к tenant_id» — этой правкой не затронут.
+    const result: { key: string; mode: string; probe: VideoProbeResult } = {
       key,
-      taskId,
+      mode,
       probe,
     };
     return NextResponse.json(result);

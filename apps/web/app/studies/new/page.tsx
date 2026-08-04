@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { Check, ChevronLeft, ChevronRight, Upload, FileText, Info } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -29,8 +30,107 @@ export default function NewStudyPage() {
   const [mode, setMode] = useState<"short" | "long">("short");
   const [criteria, setCriteria] = useState<AudienceCriteria>(DEFAULT_CRITERIA);
   const [replication, setReplication] = useState(1);
+  const [launching, setLaunching] = useState(false);
+  const [launchError, setLaunchError] = useState<string | null>(null);
+  const router = useRouter();
+
+  // Seed фиксируется ОДИН раз на сессию визарда, а не на каждый клик. Это и есть
+  // рабочая идемпотентность (#11): двойное нажатие «Запустить» уходит с тем же
+  // seed и возвращает ту же задачу, а новый визард даёт новый прогон.
+  // Генератор в инициализаторе useState, а не в теле компонента: иначе seed
+  // менялся бы на каждый ре-рендер, и защита от двойного клика не работала бы —
+  // выглядя при этом рабочей.
+  const [seed] = useState(() => Math.floor(Math.random() * 2 ** 31));
+
+  // Дефолт «Перекрытия» — из Настроек арендатора (#27), а не число в коде.
+  useEffect(() => {
+    let alive = true;
+    void fetch("/api/settings")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (alive && d?.settings?.defaultReplication) {
+          setReplication(d.settings.defaultReplication as number);
+        }
+      })
+      .catch(() => undefined);
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  async function launch() {
+    setLaunching(true);
+    setLaunchError(null);
+    try {
+      const res = await fetch("/api/tasks", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          mode,
+          videoRef,
+          personaSetId,
+          replicationCount: replication,
+          seed,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setLaunchError(data?.error ?? `запуск не удался (код ${res.status})`);
+        return;
+      }
+      router.push(`/runs/${data.id}/progress`);
+    } catch (e) {
+      setLaunchError((e as Error).message);
+    } finally {
+      setLaunching(false);
+    }
+  }
+
   const [personaSetId, setPersonaSetId] = useState<string | null>(null);
   const [contextFile, setContextFile] = useState<string | null>(null);
+  const [videoRef, setVideoRef] = useState<string | null>(null);
+  const [videoName, setVideoName] = useState<string | null>(null);
+  const [uploading, setUploading] = useState(false);
+
+  // Загрузка идёт по маршрутам #8, уже подтверждённым на стенде: presign → PUT
+  // байтов прямо в S3 → complete с ffprobe-валидацией. Веб файл не проксирует:
+  // 700 МБ через Next-роут упёрлись бы в лимит тела запроса.
+  async function uploadVideo(file: File) {
+    setUploading(true);
+    setLaunchError(null);
+    try {
+      const pres = await fetch("/api/upload/presign", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ fileName: file.name, contentType: file.type, fileSize: file.size }),
+      });
+      const p = await pres.json();
+      if (!pres.ok) throw new Error(p?.error ?? `presign вернул ${pres.status}`);
+
+      const put = await fetch(p.uploadUrl, {
+        method: "PUT",
+        headers: { "Content-Type": file.type },
+        body: file,
+      });
+      if (!put.ok) throw new Error(`заливка в S3 вернула ${put.status}`);
+
+      const done = await fetch("/api/upload/complete", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ key: p.key, mode }),
+      });
+      const d = await done.json();
+      if (!done.ok) throw new Error(d?.error ?? `complete вернул ${done.status}`);
+
+      setVideoRef(d.key);
+      setVideoName(file.name);
+    } catch (e) {
+      setLaunchError(`загрузка не удалась: ${(e as Error).message}`);
+    } finally {
+      setUploading(false);
+    }
+  }
+
   const [questions, setQuestions] = useState<SurveyQuestion[]>(BASE_QUESTIONS);
 
   const toggle = (arr: string[], set: (v: string[]) => void, v: string) =>
@@ -80,7 +180,15 @@ export default function NewStudyPage() {
                 <span className="mt-1 text-xs text-muted-foreground">
                   mp4, mov, avi · до 700 МБ
                 </span>
-                <input type="file" className="hidden" accept="video/mp4,video/quicktime,video/x-msvideo" />
+                <input
+                  type="file"
+                  className="hidden"
+                  accept="video/mp4,video/quicktime,video/x-msvideo"
+                  onChange={(e) => {
+                    const f = e.target.files?.[0];
+                    if (f) void uploadVideo(f);
+                  }}
+                />
               </label>
             </div>
 
@@ -187,12 +295,19 @@ export default function NewStudyPage() {
               <Chip tone="outline">Лимит стоимости: авто</Chip>
             </div>
 
-            <Link
-              href="/runs/task-9a55/progress"
-              className="block w-full rounded-md bg-foreground py-3 text-center text-sm font-medium text-background transition-opacity hover:opacity-90"
+            {launchError && (
+              <p className="rounded-md border border-red-500/25 bg-red-500/5 p-3 text-xs text-red-200/80">
+                {launchError}
+              </p>
+            )}
+
+            <button
+              onClick={launch}
+              disabled={launching}
+              className="block w-full rounded-md bg-foreground py-3 text-center text-sm font-medium text-background transition-opacity hover:opacity-90 disabled:opacity-50"
             >
-              Запустить исследование
-            </Link>
+              {launching ? "Запускаем…" : "Запустить исследование"}
+            </button>
           </div>
         )}
       </div>
