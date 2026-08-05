@@ -571,6 +571,123 @@ def _todo(name):
     return _res(name, "skip", detail="subsystem not implemented yet")
 
 
+def _answers_envelope():
+    """
+    Читает artifacts/persona_answers.json в двух формах.
+
+    До задачи #18 артефакт представлялся голым списком ответов, и
+    check_persona_grounding читает именно его. Прогон респондентов кладёт
+    конверт: ответы плюс число отказов и сводка по разнообразию. Метаданные не
+    украшение — отчёт обязан знать, на скольких ответах он построен, а сводка
+    нужна ровно этим двум метрикам.
+
+    Поддерживаются обе формы, чтобы старый артефакт не начал читаться как
+    пустой: пустой список даёт «нет данных», то есть skip, и метрика молча
+    перестала бы что-либо проверять.
+    """
+    raw = _load_json(PERSONA_ANSWERS)
+    if isinstance(raw, list):
+        return {"answers": raw, "failures": 0, "diversity": {}}
+    if isinstance(raw, dict) and isinstance(raw.get("answers"), list):
+        return raw
+    return None
+
+
+def _answer_bodies(envelope):
+    """Тела ответов независимо от того, лежат они плоско или под ключом answer."""
+    out = []
+    for item in envelope.get("answers", []):
+        if not isinstance(item, dict):
+            continue
+        body = item.get("answer") if isinstance(item.get("answer"), dict) else item
+        out.append(body)
+    return out
+
+
+def check_isolation_persona():
+    """
+    Метрика isolation_persona (задача #18).
+
+    PRD §13 требует «изоляция 100%», то есть ноль утечек, а не малую долю.
+    Проверяется по артефакту: ни в одном ответе персоны не должно быть
+    упоминания другой персоны из того же прогона.
+
+    Это ПОСТ-проверка, и она слабее структурной, которую делает CDD-тест задачи
+    по отправленным промптам. Здесь видно только то, что модель написала, а
+    утечка могла попасть в контекст и не попасть в текст ответа. Поэтому метрика
+    не заменяет тест, а страхует его на живом прогоне: маркеры в тесте
+    синтетические, а здесь имена настоящие.
+    """
+    env = _answers_envelope()
+    if env is None:
+        return _res("isolation_persona", "skip", threshold="cross-persona mentions == 0",
+                    detail=f"no answers at {PERSONA_ANSWERS} (respondents not run)")
+
+    names = {}
+    for item in env.get("answers", []):
+        if isinstance(item, dict) and item.get("persona_id") and item.get("persona_name"):
+            names[item["persona_id"]] = str(item["persona_name"])
+    if len(names) < 2:
+        return _res("isolation_persona", "skip", threshold="cross-persona mentions == 0",
+                    detail="менее двух именованных персон — утечке неоткуда взяться")
+
+    leaks = []
+    for item in env.get("answers", []):
+        if not isinstance(item, dict):
+            continue
+        own = item.get("persona_id")
+        body = item.get("answer") if isinstance(item.get("answer"), dict) else item
+        blob = json.dumps(body, ensure_ascii=False)
+        for pid, name in names.items():
+            if pid != own and name and name in blob:
+                leaks.append(f"{own}←{pid}")
+    return _res("isolation_persona", "pass" if not leaks else "fail",
+                threshold="cross-persona mentions == 0",
+                actual=f"{len(leaks)} leaks",
+                detail="; ".join(sorted(set(leaks))[:8]))
+
+
+def check_response_diversity():
+    """
+    Метрика response_diversity (задача #18) — отсутствие mode collapse.
+
+    Две величины сразу, потому что каждая по отдельности обманывается:
+    distinct-2 меряет лексику и пропускает «разными словами об одном и том же»,
+    дисперсия баллов меряет позицию и пропускает случайные баллы, не связанные с
+    текстом. Пороги и расчёт живут в agent_core/respondent/diversity.py — здесь
+    только чтение сводки, чтобы порог не разошёлся между воркером и гейтом.
+    """
+    env = _answers_envelope()
+    if env is None:
+        return _res("response_diversity", "skip", threshold="distinct-2 и дисперсия выше порога",
+                    detail=f"no answers at {PERSONA_ANSWERS} (respondents not run)")
+
+    div = env.get("diversity") or {}
+    if not div:
+        return _res("response_diversity", "skip",
+                    threshold="distinct-2 и дисперсия выше порога",
+                    detail="в артефакте нет сводки diversity — прогон сделан старой версией")
+
+    d2 = div.get("distinct_2")
+    sd = div.get("score_stdev")
+    d2_min = div.get("distinct_2_threshold")
+    sd_min = div.get("score_stdev_threshold")
+    if d2 is None or sd is None or d2_min is None or sd_min is None:
+        return _res("response_diversity", "skip",
+                    threshold="distinct-2 и дисперсия выше порога",
+                    detail="сводка diversity неполна")
+
+    fails = []
+    if d2 < d2_min:
+        fails.append(f"distinct-2 {d2:.3f} < {d2_min}")
+    if sd < sd_min:
+        fails.append(f"дисперсия баллов {sd:.3f} < {sd_min}")
+    return _res("response_diversity", "pass" if not fails else "fail",
+                threshold=f"distinct-2≥{d2_min}, stdev≥{sd_min}",
+                actual=f"distinct-2={d2:.3f}, stdev={sd:.3f}",
+                detail="; ".join(fails))
+
+
 def check_prompts_editable():
     """Метрика prompts_editable (задача #26).
 
@@ -695,11 +812,11 @@ CHECKS = [
     check_compose_health,
     check_e2e_short,
     check_e2e_long,
-    lambda: _todo("isolation_persona"),
+    check_isolation_persona,
     check_rls_tenant,
     check_schema_drift,
     check_persona_grounding,
-    lambda: _todo("response_diversity"),
+    check_response_diversity,
     lambda: _todo("qa_catches_injected"),
     check_prompts_editable,
     check_secret_scan,
