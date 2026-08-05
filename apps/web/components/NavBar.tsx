@@ -12,7 +12,6 @@ const links = [
   { href: '/projects', label: 'Проекты' },
   { href: '/audience', label: 'Аудитории' },
   { href: '/surveys', label: 'Анкеты' },
-  { href: '/news', label: 'Новости & Тренды' },
 ];
 
 function NavLinks({ mobile = false, onNavigate }: { mobile?: boolean, onNavigate?: () => void }) {
