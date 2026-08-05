@@ -131,7 +131,10 @@ def test_cache_key_ignores_narrative():
     """
     a = make_persona()
     b = make_persona()
-    b["narrative"] = "совершенно другой шаблонный текст, тоже длиннее ста символов ради схемы валидации"
+    b["narrative"] = (
+        "Совершенно другой шаблонный текст, тоже длиннее ста символов — "
+        "ровно столько требует canonical JSON Schema от поля narrative."
+    )
     assert cache_key(
         {k: a[k] for k in GROUNDED_FIELDS}, PROMPT, "m",
     ) == cache_key({k: b[k] for k in GROUNDED_FIELDS}, PROMPT, "m")
