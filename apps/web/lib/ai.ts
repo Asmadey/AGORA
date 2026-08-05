@@ -1,10 +1,19 @@
 /**
- * Client-side AI wrapper for AGORA.
+ * Клиентские обёртки над маршрутами /api/*.
  *
- * IMPORTANT: this module contains NO API keys and makes NO direct LLM calls.
- * Every function posts to a server route handler under /api/*, where the real
- * LLM logic runs (see lib/ai-server.ts). Function signatures are unchanged so
- * existing UI components keep working.
+ * Ключей здесь нет и прямых вызовов моделей тоже: каждая функция шлёт POST на
+ * серверный обработчик.
+ *
+ * ─── Что здесь смешано и почему это временно ───────────────────────────────
+ * `generateAudience` ходит в рабочий /api/audience — заземлённый генератор
+ * персон. Остальные три (simulateSurvey, generateReport, chatWithAudience) —
+ * прототипный контур на Gemini, который живёт параллельно продуктовому:
+ * настоящий прогон идёт через POST /api/tasks в воркер.
+ *
+ * Прототипные три оставлены намеренно до задач #20 и #21. Удалить их сейчас
+ * значило бы убрать работающую демонстрацию, не дав замены: аналитика и отчёт
+ * ещё не написаны, и страница проекта осталась бы без единственного способа
+ * что-то показать.
  */
 import type { Agent, SurveyResponse, Report } from './types';
 
@@ -27,11 +36,6 @@ async function postJson<T>(url: string, body: unknown): Promise<T> {
     throw new Error(msg);
   }
   return (await res.json()) as T;
-}
-
-export async function fetchNewsContext(): Promise<any> {
-  const { context } = await postJson<{ context: any }>('/api/news-context', {});
-  return context;
 }
 
 /**
@@ -104,9 +108,3 @@ export async function chatWithAudience(
   return response;
 }
 
-export async function generateNewsAnalysis(
-  agents: Agent[],
-  realNews: Array<{ title: string; source: string; summary: string }>
-): Promise<any> {
-  return await postJson<any>('/api/news-analysis', { agents, realNews });
-}
