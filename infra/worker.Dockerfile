@@ -50,6 +50,31 @@ RUN pip install --upgrade pip \
 
 RUN pip install -e ".[dev]" || pip install --upgrade pip
 
+# Проверка сборки opencv — на этапе сборки, а не при первом импорте на проде.
+#
+# scenedetect тянет opencv, и сборок две. Headless работает в python:3.13-slim
+# как есть; полная (opencv-python) линкуется с libGL.so.1, которого в slim нет,
+# и падает при импорте — то есть посреди задачи #16, через минуты после старта
+# прогона, уже после транскрипции.
+#
+# Соблазн «поставить libGL и не думать» решает симптом ценой смысла: GUI-сборка
+# тянет GTK и X11 в контейнер, которому нечего показывать, и следующий, кто
+# увидит libgl1 в списке пакетов, не сможет понять, зачем он здесь.
+#
+# Поэтому здесь стоит утверждение, а не пакет. Спек в pyproject закреплён
+# `scenedetect[opencv-headless]>=0.6.4,<0.7`, но на 0.7.x pip печатает
+# «does not provide the extra» и тихо ставит полную сборку — предупреждением,
+# не ошибкой. Эта строка превращает предупреждение в отказ сборки.
+RUN python -c "import importlib.metadata as md, sys; \
+names = {d.metadata['Name'] for d in md.distributions()}; \
+gui = 'opencv-python' in names; \
+ok = 'opencv-python-headless' in names and not gui; \
+sys.stderr.write('opencv: стоит ' + ('opencv-python (GUI)' if gui else 'НИ ОДНОЙ сборки') + \
+  '. В python:3.13-slim нет libGL.so.1 — воркер упадёт при импорте scenedetect, ' + \
+  'посреди задачи #16. Обычная причина: снят потолок scenedetect<0.7, а в 0.7.x ' + \
+  'экстру opencv-headless убрали и pip тихо ставит GUI-сборку.\n') if not ok else None; \
+sys.exit(0 if ok else 1)"
+
 COPY services/agent-core/ ./
 COPY packages/shared/ /app/shared/
 COPY prompts/ /app/prompts/

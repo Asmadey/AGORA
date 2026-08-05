@@ -14,6 +14,11 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
 MIGRATION_PATH = REPO / "infra" / "postgres" / "init" / "07_prompts_seed.sql"
+#: Промпты сеются не одним файлом: 07 сгенерирован скриптом и уже применён,
+#: а §5 CLAUDE.md запрещает править применённую миграцию. Каждый следующий
+#: промпт приезжает своим нумерованным файлом, поэтому реестр собирается по
+#: всем засевам сразу.
+SEED_PATHS = sorted((REPO / "infra" / "postgres" / "init").glob("*prompts_seed*.sql"))
 PROMPTS_DIR = REPO / "prompts"
 RESOLVER_PATH = REPO / "apps" / "web" / "lib" / "server" / "prompts.ts"
 API_DIR = REPO / "apps" / "web" / "app" / "api" / "prompts"
@@ -36,6 +41,9 @@ def skip(name, reason):
 print("== Статический уровень ==")
 
 # 1. Migration exists and is idempotent
+#: Полный текст всех засевов — по нему проверяется покрытие ключей.
+seed_text = "\n".join(sp.read_text("utf-8") for sp in SEED_PATHS)
+
 migration_text = ""
 if MIGRATION_PATH.exists():
     migration_text = MIGRATION_PATH.read_text("utf-8")
@@ -46,30 +54,53 @@ if MIGRATION_PATH.exists():
 else:
     check("миграция существует и идемпотентна", False, "файл не найден")
 
-# 2. Exactly 13 keys matching prompts/*.md
+# 2. Каждый файл prompts/*.md засеян миграцией.
+#
+# Литерал «13» отсюда убран. Добавление промпта — штатная операция продукта
+# (ровно для неё существует Промпт-студия), и проверка, которая падает при
+# каждом добавлении, заставляет править себя вместо того, чтобы ловить
+# дефект. Требование же не в количестве, а в покрытии: ни один файл не
+# должен остаться без строки в засеве, иначе на чистой базе он молча
+# отсутствует.
 prompt_files = sorted(PROMPTS_DIR.glob("*.md"))
 prompt_keys = {f.stem for f in prompt_files}
-migration_keys = set(re.findall(r"'([a-z._]+)'", migration_text))
+migration_keys = set(re.findall(r"'([a-z._]+)'", seed_text))
 # Filter to keys that match prompt file names
 migration_prompt_keys = migration_keys & prompt_keys
-# Also check all 13 file stems appear in migration
-all_keys_in_migration = prompt_keys.issubset(migration_keys)
-check("13 ключей совпадают с prompts/*.md", len(prompt_files) == 13 and all_keys_in_migration,
-      f"files={len(prompt_files)} all_in_migration={all_keys_in_migration}")
+unseeded = sorted(prompt_keys - migration_keys)
+check("каждый промпт из prompts/*.md засеян миграцией",
+      bool(prompt_files) and not unseeded,
+      f"файлов={len(prompt_files)}, без засева: {unseeded}" if unseeded
+      else f"файлов={len(prompt_files)}, все засеяны")
 
-# 3. Texts match files byte-exact
+# 3. Тексты в засеве совпадают с файлами.
+#
+# Раньше здесь сверялось наличие ключа в тексте миграции, хотя проверка
+# называлась «побайтово». Разница существенная: расхождение засева с файлом —
+# это когда в Промпт-студии на чистой базе показывается один текст, а в
+# prompts/ лежит другой, и никакой ключ такого не поймает.
+#
+# Литерал в SQL берётся из одинарных кавычек с удвоением внутри — обратное
+# преобразование и даёт исходный текст файла.
 texts_match = True
 mismatch_detail = ""
-if migration_text:
+if seed_text:
     for f in prompt_files:
         content = f.read_text("utf-8")
-        # Check if the file content appears in migration (as part of INSERT)
-        # The migration uses dollar-quoted strings, so we check for key presence
-        if f.stem not in migration_text:
+        m = re.search(
+            rf"VALUES \(NULL, '{re.escape(f.stem)}', '(?:[^']|'')*?', '((?:[^']|'')*)'",
+            seed_text,
+            re.DOTALL,
+        )
+        if not m:
             texts_match = False
-            mismatch_detail = f"ключ {f.stem} не найден в миграции"
+            mismatch_detail = f"ключ {f.stem} не найден в засеве"
             break
-check("тексты в миграции совпадают с файлами", texts_match, mismatch_detail)
+        if m.group(1).replace("''", "'") != content:
+            texts_match = False
+            mismatch_detail = f"текст {f.stem} в засеве разошёлся с prompts/{f.name}"
+            break
+check("тексты в засеве совпадают с файлами", texts_match, mismatch_detail)
 
 # 4. No app-level INSERT of defaults
 resolver_text = RESOLVER_PATH.read_text("utf-8") if RESOLVER_PATH.exists() else ""
@@ -100,7 +131,7 @@ for route in mutating_routes:
         break
 check("правка промпта требует requireOwner", all_require_owner)
 
-# 7. Non-empty {{}} in all 13 files
+# 7. Non-empty {{}} in every prompt file
 all_have_placeholders = True
 empty_files = []
 for f in prompt_files:
@@ -108,7 +139,7 @@ for f in prompt_files:
     if not re.search(r"\{\{[^}]+\}\}", content):
         all_have_placeholders = False
         empty_files.append(f.name)
-check("в каждом из 13 файлов {{}} непусто", all_have_placeholders,
+check("в каждом файле промпта {{}} непусто", all_have_placeholders,
       f"нет плейсхолдеров: {empty_files}" if empty_files else "")
 
 

@@ -199,6 +199,18 @@ else
   warn "нет $INIT/09_task_idempotency.sql — запуск исследования не идемпотентен (задача #11)"
 fi
 
+# 10_prompts_seed_persona_enrich.sql — промпт обогащения персон моделью.
+# Без него генерация аудитории работает, но портреты остаются шаблонными:
+# enrich.py не находит промпт и деградирует молча — то есть дефект выглядит как
+# «модель пишет скучно», а не как незасеянная строка.
+if [ -f "$INIT/10_prompts_seed_persona_enrich.sql" ]; then
+  echo "   применяю 10_prompts_seed_persona_enrich.sql"
+  "${PSQL[@]}" -f "$INIT/10_prompts_seed_persona_enrich.sql" >/dev/null
+  ok "10_prompts_seed_persona_enrich.sql"
+else
+  warn "нет $INIT/10_prompts_seed_persona_enrich.sql — портреты персон будут шаблонными"
+fi
+
 echo
 echo "── Итог ─────────────────────────────────────────────────────────────"
 TABLES=$(q "SELECT count(*) FROM pg_tables WHERE schemaname = 'public'")

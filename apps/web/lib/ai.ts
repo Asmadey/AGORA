@@ -34,17 +34,34 @@ export async function fetchNewsContext(): Promise<any> {
   return context;
 }
 
+/**
+ * Генерация аудитории через заземлённый на корпус генератор.
+ *
+ * Контракт тела задаёт parseAudienceChoice (lib/audience.ts): поля читаются с
+ * верхнего уровня, ветка «переиспользовать набор» отличается наличием
+ * personaSetId. Прежняя версия слала {size, context, options} — вокабуляр
+ * прототипа, которого маршрут не понимает, и отвечал он на это 400 на каждую
+ * попытку. Дефект был невидим: страница /audience — единственный её вызывающий,
+ * а CDD #9 прогоняет генератор напрямую, минуя и маршрут, и страницу.
+ *
+ * `context` из сигнатуры убран намеренно. Раньше сюда подмешивался новостной
+ * контекст — источник, которого нет в корпусе. Он влиял на персон, а метрика
+ * persona_grounding о нём не знала: заземление считалось по корпусу, а текст
+ * персоны частично приезжал извне.
+ */
 export async function generateAudience(
-  size = 20,
-  context?: any,
-  options?: Record<string, any>
-): Promise<Agent[]> {
-  const { agents } = await postJson<{ agents: Agent[] }>('/api/audience', {
-    size,
-    context,
-    options,
-  });
-  return agents;
+  criteria: {
+    size: number;
+    ageGroups: string[];
+    geos: string[];
+    genders: string[];
+    education?: string[];
+  },
+): Promise<{ personaSetId: string; size: number; personas: unknown[] }> {
+  return await postJson<{ personaSetId: string; size: number; personas: unknown[] }>(
+    '/api/audience',
+    criteria,
+  );
 }
 
 export async function simulateSurvey(
