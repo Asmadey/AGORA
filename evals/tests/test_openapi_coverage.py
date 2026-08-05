@@ -31,7 +31,11 @@ from _harness import live_env, login  # noqa: E402
 
 REPO = Path(__file__).resolve().parents[2]
 WEB = REPO / "apps" / "web"
-API_DIR = WEB / "app" / "api"
+#: Каталоги, в которых лежат обработчики. `/api-docs` — второй потому, что
+#: спецификация обязана отвечать без сессии, а публичные пути сопоставляются по
+#: префиксу: открыть её внутри `/api` можно было бы только вместе со всем
+#: деревом маршрутов арендатора.
+ROUTE_DIRS = (WEB / "app" / "api", WEB / "app" / "api-docs")
 SPEC_PATH = REPO / "packages" / "shared" / "openapi" / "agora.openapi.json"
 
 METHODS = ("GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS")
@@ -106,7 +110,7 @@ spec_paths: dict[str, set[str]] = {
 # ─── Маршруты в коде ────────────────────────────────────────────────────────
 
 code_paths: dict[str, set[str]] = {}
-for route_file in sorted(API_DIR.rglob("route.ts")):
+for route_file in sorted(f for d in ROUTE_DIRS for f in d.rglob("route.ts")):
     src = route_file.read_text("utf-8")
     found = set(re.findall(r"export\s+(?:async\s+)?function\s+(" + "|".join(METHODS) + ")", src))
     path = to_openapi_path(route_file)
@@ -172,15 +176,30 @@ check(
 
 print("\nПубликация")
 
-openapi_route = WEB / "app" / "api" / "openapi" / "route.ts"
-docs_page = WEB / "app" / "api" / "page.tsx"
+DOCS_DIR = WEB / "app" / "api-docs"
+openapi_route = DOCS_DIR / "openapi" / "route.ts"
+docs_page = DOCS_DIR / "page.tsx"
 
-check("маршрут /api/openapi отдаёт спецификацию", openapi_route.exists())
-check("страница /api рендерит Swagger UI", docs_page.exists())
+check("маршрут /api-docs/openapi отдаёт спецификацию", openapi_route.exists())
+check("страница /api-docs рендерит Swagger UI", docs_page.exists())
 check(
     "Swagger UI берёт спецификацию по тому же URL, что и внешние потребители",
-    "/api/openapi" in (WEB / "components" / "agora" / "SwaggerDocs.tsx").read_text("utf-8"),
+    "/api-docs/openapi" in (WEB / "components" / "agora" / "SwaggerDocs.tsx").read_text("utf-8"),
     "иначе страница и генератор клиента смотрят на разные копии документа",
+)
+
+# Сегмент /api-docs объявлен публичным целиком — сопоставление идёт по префиксу.
+# Любой новый обработчик под ним окажется открытым, и заметить это будет негде:
+# ни сборка, ни типы про доступ ничего не знают.
+stray = sorted(
+    p.relative_to(DOCS_DIR).as_posix()
+    for p in DOCS_DIR.rglob("route.ts")
+    if p != openapi_route
+)
+check(
+    "под /api-docs нет посторонних обработчиков",
+    not stray,
+    "сегмент публичен целиком, а здесь лежит: " + ", ".join(stray[:6]),
 )
 
 pkg = json.loads((WEB / "package.json").read_text("utf-8"))
@@ -193,25 +212,54 @@ check(
 
 print("\nПоведение (нужен поднятый веб)")
 
-BEHAVIOURAL = ("GET /api/openapi отдаёт спецификацию",)
+#: Проверяется анонимный доступ, а не доступ под сессией. Под сессией маршрут
+#: отвечал и раньше — сломан он был именно для тех, для кого документация и
+#: существует: страница уводила на /login, а Swagger UI получал 401 и рисовал
+#: пустой каркас.
+BEHAVIOURAL = (
+    "GET /api-docs/openapi отдаёт спецификацию без входа",
+    "GET /api-docs открывается без входа",
+)
 
 if not live_env():
     for name in BEHAVIOURAL:
         skip(name, "нет поднятого сервера (BASE_URL/E2E_BASE_URL не задан)")
 else:
-    base = os.environ.get("BASE_URL") or os.environ.get("E2E_BASE_URL") or ""
-    client, why = login(base)
-    if client is None:
-        skip(BEHAVIOURAL[0], why)
-    else:
-        status, text = client.call("/api/openapi")
-        ok = status == 200
-        if ok:
-            try:
-                ok = json.loads(text).get("openapi", "").startswith("3.1")
-            except json.JSONDecodeError:
-                ok = False
-        check(BEHAVIOURAL[0], ok, f"код {status}")
+    import urllib.error
+    import urllib.request
+
+    base = (os.environ.get("BASE_URL") or os.environ.get("E2E_BASE_URL") or "").rstrip("/")
+
+    def anonymous(path: str) -> tuple[int, str, str]:
+        """Запрос без куки сессии: код, конечный адрес, тело."""
+        req = urllib.request.Request(base + path, headers={"Accept": "*/*"})
+        try:
+            with urllib.request.urlopen(req, timeout=20) as resp:
+                return resp.status, resp.url, resp.read(4096).decode("utf-8", "replace")
+        except urllib.error.HTTPError as e:
+            return e.code, base + path, ""
+        except OSError as e:  # сеть, TLS, отказ в соединении
+            return 0, base + path, str(e)
+
+    status, _, body = anonymous("/api-docs/openapi")
+    ok = status == 200
+    if ok:
+        try:
+            ok = json.loads(body if len(body) < 4096 else "{}").get("openapi", "").startswith("3.1")
+        except json.JSONDecodeError:
+            # Тело обрезано на 4 КБ — для документа в 70 КБ это норма.
+            ok = body.lstrip().startswith("{")
+    check(BEHAVIOURAL[0], ok, f"код {status}")
+
+    # urllib следует за перенаправлением молча, поэтому смотрим не код, а адрес,
+    # на котором запрос закончился: редирект на /login — это и есть тот отказ,
+    # который видел пользователь.
+    status, final_url, _ = anonymous("/api-docs")
+    check(
+        BEHAVIOURAL[1],
+        status == 200 and "/login" not in final_url,
+        f"код {status}, закончилось на {final_url}",
+    )
 
 
 # ═══════════════════════════════════════════════════════════════════════════

@@ -11,8 +11,15 @@ import type { NextAuthConfig } from "next-auth";
  * исключительно из серверных маршрутов Node.
  */
 
-/** Открытые маршруты. Всё остальное закрыто по умолчанию. */
-export const PUBLIC_PATHS = ["/login", "/api/auth", "/api/health"] as const;
+/**
+ * Открытые маршруты. Всё остальное закрыто по умолчанию.
+ *
+ * Сравнение идёт по префиксу (см. `isPublicPath`), поэтому запись открывает не
+ * один адрес, а всё поддерево под ним. Отсюда `/api-docs` отдельным сегментом:
+ * документация обязана отвечать без сессии, а открыть её внутри `/api` значило
+ * бы открыть вместе с ней все маршруты арендатора.
+ */
+export const PUBLIC_PATHS = ["/login", "/api/auth", "/api/health", "/api-docs"] as const;
 
 export function isPublicPath(pathname: string): boolean {
   return PUBLIC_PATHS.some((p) => pathname === p || pathname.startsWith(`${p}/`));
