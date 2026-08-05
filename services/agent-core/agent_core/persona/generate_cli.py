@@ -52,14 +52,43 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         gen = PersonaGenerator.from_corpus(Path(args.corpus) if args.corpus else None)
-        personas = gen.generate(config)
+        named = gen.generate_named(config)
     except ValueError as e:
         # Отказ по критериям. Текст обязан дойти до пользователя целиком: в нём
         # написано, какой критерий пуст и что есть в корпусе.
         print(str(e), file=sys.stderr)
         return 1
 
-    json.dump({"personas": personas}, sys.stdout, ensure_ascii=False)
+    names = [n for n, _ in named]
+    personas = [dna for _, dna in named]
+
+    # ── Обогащение моделью ───────────────────────────────────────────────────
+    # Скелет собран и заземлён; модель переписывает только narrative. Отказ
+    # модели не влияет на код возврата: аудитория из 20 заземлённых персон с
+    # шаблонными портретами — рабочий результат, а не сбой. Причину деградации
+    # маршрут кладёт в ответ, чтобы шаг мог её показать.
+    meta: dict[str, object] = {"enriched": False, "llm_calls": 0, "cache_hits": 0}
+    sources = ["template"] * len(personas)
+    if config.use_llm:
+        from .enrich import enrich_personas
+
+        outcome = enrich_personas(personas)
+        personas = outcome.personas
+        sources = outcome.sources
+        meta = {
+            "enriched": outcome.enriched,
+            "llm_calls": outcome.calls_made,
+            "cache_hits": outcome.cache_hits,
+            "degraded_reason": outcome.degraded_reason,
+        }
+
+    # names и sources — отдельными списками, а не полями персоны: canonical JSON
+    # Schema закрыта, лишний ключ в DNA означает отказ валидации при сохранении.
+    json.dump(
+        {"personas": personas, "names": names, "sources": sources, "meta": meta},
+        sys.stdout,
+        ensure_ascii=False,
+    )
     return 0
 
 

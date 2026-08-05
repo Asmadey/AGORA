@@ -5,7 +5,8 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { db, AudienceConfig } from '@/lib/db';
 import { Users, Plus, Trash2, Settings, Loader2 } from 'lucide-react';
-import { generateAudience, fetchNewsContext } from '@/lib/ai';
+import { generateAudience } from '@/lib/ai';
+import { AGE_GROUPS, GENDERS, GEOS } from '@/lib/audience';
 import {
   Dialog,
   DialogContent,
@@ -27,8 +28,6 @@ export default function AudiencePage() {
   const [bAge, setBAge] = useState('all');
   const [bGender, setBGender] = useState('all');
   const [bLocation, setBLocation] = useState('all');
-  const [bIncome, setBIncome] = useState('all');
-  const [bExtra, setBExtra] = useState('');
 
   const loadAudiences = async () => {
     const data = await db.audiences.getAll();
@@ -46,39 +45,48 @@ export default function AudiencePage() {
     setBAge('all');
     setBGender('all');
     setBLocation('all');
-    setBIncome('all');
-    setBExtra('');
     setIsBuilderOpen(true);
   };
 
+  /**
+   * Генерация аудитории.
+   *
+   * Идёт тем же путём, что шаг визарда: POST /api/audience → заземлённый на
+   * корпус генератор → набор сохраняется в базе арендатора. Раньше страница
+   * слала вокабуляр прототипа (ageGroup / incomeLevel / extraRequirements) и
+   * получала 400 на каждую попытку — контракт маршрута переписали в #9, а
+   * страницу забыли.
+   *
+   * Критерии «доход» и «свободные требования» отброшены сознательно: в корпусе
+   * таких полей нет, заземлить их нечем, а молча отправлять незаземлённый
+   * критерий в генерацию — ровно тот подлог, от которого уходила задача #9.
+   */
   const handleGenerate = async () => {
     setIsGenerating(true);
     try {
-      const context = await fetchNewsContext();
-      
-      const options: Record<string, any> = {};
-      if (bAge !== 'all') options.ageGroup = bAge;
-      if (bGender !== 'all') options.gender = bGender;
-      if (bLocation !== 'all') options.locationType = bLocation;
-      if (bIncome !== 'all') options.incomeLevel = bIncome;
-      if (bExtra.trim()) options.extraRequirements = bExtra.trim();
+      const result = await generateAudience({
+        size: parseInt(bSize, 10) || 20,
+        // «Все» означает весь диапазон, а не пустой список: пустой контракт
+        // отвергает как незаполненный критерий.
+        ageGroups: bAge !== 'all' ? [bAge] : [...AGE_GROUPS],
+        geos: bLocation !== 'all' ? [bLocation] : [...GEOS],
+        genders: bGender !== 'all' ? [bGender] : [...GENDERS],
+      });
 
-      const agents = await generateAudience(parseInt(bSize, 10) || 20, context, options);
-      
       const newAudience: AudienceConfig = {
-        id: crypto.randomUUID(),
+        id: result.personaSetId,
         name: bName || `Синтетическая аудитория (${new Date().toLocaleDateString()})`,
-        size: agents.length,
-        agents,
+        size: result.size,
+        agents: result.personas as AudienceConfig['agents'],
         createdAt: Date.now()
       };
-      
+
       await db.audiences.save(newAudience);
       await loadAudiences();
       setIsBuilderOpen(false);
     } catch (error) {
       console.error(error);
-      alert('Ошибка при генерации аудитории');
+      alert(`Не удалось создать аудиторию: ${(error as Error).message}`);
     } finally {
       setIsGenerating(false);
     }
@@ -185,12 +193,15 @@ export default function AudiencePage() {
                 onChange={(e) => setBAge(e.target.value)}
                 className="col-span-3 flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background"
               >
+                {/* Группы берутся из контракта, а не переписываются здесь.
+                    Прежний список расходился с корпусом сразу в трёх местах:
+                    45-54 и 55+ против 45-59 и 60+, и не было 14-17. Выбор такой
+                    группы отправлял в генератор значение, которого корпус не
+                    знает, — то есть заведомо отвергаемый запрос. */}
                 <option value="all">Любой (репрезентативно)</option>
-                <option value="18-24">Молодежь (18-24)</option>
-                <option value="25-34">Молодые взрослые (25-34)</option>
-                <option value="35-44">Взрослые (35-44)</option>
-                <option value="45-54">Зрелые (45-54)</option>
-                <option value="55+">Старшее поколение (55+)</option>
+                {AGE_GROUPS.map((g) => (
+                  <option key={g} value={g}>{g}</option>
+                ))}
               </select>
             </div>
             <div className="grid grid-cols-4 items-center gap-4">
@@ -204,8 +215,11 @@ export default function AudiencePage() {
                 className="col-span-3 flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background"
               >
                 <option value="all">Смешанный</option>
-                <option value="male">Только мужчины</option>
-                <option value="female">Только женщины</option>
+                {GENDERS.map((g) => (
+                  <option key={g} value={g}>
+                    {g === "муж" ? "Только мужчины" : "Только женщины"}
+                  </option>
+                ))}
               </select>
             </div>
             <div className="grid grid-cols-4 items-center gap-4">
@@ -219,38 +233,22 @@ export default function AudiencePage() {
                 className="col-span-3 flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background"
               >
                 <option value="all">Вся Россия</option>
-                <option value="mega">Только миллионники (Москва, СПб и др.)</option>
-                <option value="regions">Регионы и малые города</option>
+                {GEOS.map((g) => (
+                  <option key={g} value={g}>{g}</option>
+                ))}
               </select>
             </div>
-            <div className="grid grid-cols-4 items-center gap-4">
-              <label htmlFor="income" className="text-right text-sm font-medium">
-                Доход
-              </label>
-              <select
-                id="income"
-                value={bIncome}
-                onChange={(e) => setBIncome(e.target.value)}
-                className="col-span-3 flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background"
-              >
-                <option value="all">Разный</option>
-                <option value="low">Низкий</option>
-                <option value="medium">Средний</option>
-                <option value="high">Высокий</option>
-              </select>
-            </div>
-            <div className="grid grid-cols-4 flex-col gap-4">
-              <label htmlFor="extra" className="text-right text-sm font-medium pt-2">
-                Доп. условия
-              </label>
-              <textarea
-                id="extra"
-                placeholder="Специфические профессии, хобби, взгляды..."
-                value={bExtra}
-                onChange={(e) => setBExtra(e.target.value)}
-                className="col-span-3 min-h-[80px] rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background resize-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-              />
-            </div>
+            {/* Здесь были «Доход» и «Доп. условия». Убраны, а не отключены:
+                в корпусе таких полей нет ни у одной записи, заземлить их
+                нечем. Поле, которое пользователь заполняет, а генератор
+                игнорирует, хуже отсутствующего — оно обещает влияние на
+                результат и создаёт доверие к персонам, которого те не
+                заслуживают. */}
+            <p className="col-span-4 rounded-md border border-border/60 bg-secondary/40 px-3 py-2 text-xs leading-relaxed text-muted-foreground">
+              Персоны собираются по реальным долям исследовательского корпуса.
+              Критерии, которых в корпусе нет — доход, профессия, свободные
+              требования — не предлагаются: заземлить их нечем.
+            </p>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setIsBuilderOpen(false)} disabled={isGenerating}>Отмена</Button>

@@ -149,6 +149,34 @@ export async function listPersonas(
   return rows.map(toPersona);
 }
 
+export async function insertPersonas(
+  client: PoolClient,
+  personaSetId: string,
+  personas: { name: string; dna: Record<string, unknown>; narrative: string | null; seed: number | null }[],
+): Promise<number> {
+  if (personas.length === 0) return 0;
+
+  // Один INSERT с unnest, а не N запросов в цикле. Набор по умолчанию — 20
+  // персон, при перекрытии бывает больше; двадцать round-trip'ов к managed
+  // Postgres из другого дата-центра стоят заметно дороже одного, и главное —
+  // при обрыве на середине цикла набор остался бы наполовину заполненным, а
+  // отличить такой от полного можно только пересчётом.
+  const { rowCount } = await client.query(
+    `INSERT INTO personas (tenant_id, persona_set_id, name, dna, narrative, seed)
+     SELECT app.current_tenant(), $1::uuid, t.name, t.dna::jsonb, t.narrative, t.seed
+       FROM unnest($2::text[], $3::text[], $4::text[], $5::bigint[])
+              AS t(name, dna, narrative, seed)`,
+    [
+      personaSetId,
+      personas.map((p) => p.name),
+      personas.map((p) => JSON.stringify(p.dna)),
+      personas.map((p) => p.narrative),
+      personas.map((p) => p.seed),
+    ],
+  );
+  return rowCount ?? 0;
+}
+
 export async function getPersona(
   client: PoolClient,
   id: string,

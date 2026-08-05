@@ -67,6 +67,13 @@ function toggle<T extends string>(list: T[], value: T): T[] {
   return list.includes(value) ? list.filter((v) => v !== value) : [...list, value];
 }
 
+/** Что вернула генерация. Нужно, чтобы показать результат, не перезагружая шаг. */
+interface GenerationOutcome {
+  personaSetId: string;
+  size: number;
+  enrichment: { enriched: boolean; llm_calls: number; degraded_reason?: string | null };
+}
+
 /** Подпись охвата под группой чипов. Показывается только когда есть что сказать. */
 function coverageNote(rows: CriterionCoverage[], picked: string[], total: number) {
   const problems = rows.filter((r) => picked.includes(r.value) && r.level !== "grounded");
@@ -96,6 +103,9 @@ export function AudienceStep({
   contextFile,
   onContextFileChange,
 }: AudienceStepProps) {
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [genError, setGenError] = useState<string | null>(null);
+  const [generated, setGenerated] = useState<GenerationOutcome | null>(null);
   const [grounding, setGrounding] = useState<Grounding | null>(null);
   const [sets, setSets] = useState<PersonaSetSummary[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -125,7 +135,58 @@ export function AudienceStep({
     };
   }, []);
 
-  const set = (patch: Partial<AudienceCriteria>) => onCriteriaChange({ ...criteria, ...patch });
+  const set = (patch: Partial<AudienceCriteria>) => {
+    // Правка критериев обесценивает ранее созданный набор: показывать «готово
+    // 20 персон» рядом с изменёнными галочками значило бы обещать то, чего в
+    // наборе нет.
+    if (generated) {
+      setGenerated(null);
+      onPersonaSetChange(null);
+    }
+    onCriteriaChange({ ...criteria, ...patch });
+  };
+
+  /**
+   * Генерация аудитории по критериям.
+   *
+   * Здесь замыкается цепочка «критерии → генератор → набор → запуск». До этой
+   * правки шаг только складывал критерии в черновик, а POST не делал никто:
+   * маршрут /api/audience существовал и работал, но вызвать его было некому.
+   */
+  const generate = async () => {
+    // Повторное нажатие во время работы — это второй оплаченный прогон модели,
+    // а не просто дубль запроса. Поэтому защита стоит здесь, а не только на
+    // атрибуте disabled: атрибут снимается разметкой, состояние — нет.
+    if (isGenerating) return;
+    setIsGenerating(true);
+    setGenError(null);
+    try {
+      const res = await fetch("/api/audience", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        // Тело плоское: parseAudienceChoice читает size/ageGroups/geos/genders
+        // с верхнего уровня и различает ветки по наличию personaSetId, а не по
+        // полю-дискриминатору.
+        body: JSON.stringify(criteria),
+      });
+      const data = (await res.json()) as Record<string, unknown>;
+      if (!res.ok) {
+        throw new Error((data.error as string) ?? `генерация не удалась (${res.status})`);
+      }
+      const outcome: GenerationOutcome = {
+        personaSetId: data.personaSetId as string,
+        size: data.size as number,
+        enrichment: data.enrichment as GenerationOutcome["enrichment"],
+      };
+      setGenerated(outcome);
+      // Набор сохранён — запуск (#11) заберёт его по id.
+      onPersonaSetChange(outcome.personaSetId);
+    } catch (e) {
+      setGenError((e as Error).message);
+    } finally {
+      setIsGenerating(false);
+    }
+  };
 
   return (
     <div className="space-y-6">
@@ -323,6 +384,47 @@ export function AudienceStep({
                 onChange={(e) => onContextFileChange(e.target.files?.[0]?.name ?? null)}
               />
             </label>
+          </div>
+
+          <div className="border-t border-border pt-6">
+            <button
+              onClick={generate}
+              disabled={isGenerating}
+              className="flex w-full items-center justify-center gap-2 rounded-md bg-foreground px-4 py-3 text-sm font-medium text-background transition-opacity hover:opacity-90 disabled:opacity-40"
+            >
+              {isGenerating && <Loader2 className="h-4 w-4 animate-spin" />}
+              {isGenerating
+                ? "Генерируем аудиторию…"
+                : `Создать аудиторию из ${criteria.size} персон`}
+            </button>
+
+            {genError && (
+              <p className="mt-3 rounded-md border border-red-500/25 bg-red-500/5 p-3 text-xs leading-relaxed text-red-200/80">
+                {genError}
+              </p>
+            )}
+
+            {generated && (
+              <div className="mt-3 rounded-md border border-emerald-500/25 bg-emerald-500/5 p-3 text-xs leading-relaxed text-emerald-200/80">
+                <p>
+                  Готово: {generated.size} персон сохранено. Набор подставлен в запуск —
+                  менять критерии больше не нужно.
+                </p>
+                {/* Деградация до шаблонных портретов обязана быть видна здесь, а
+                    не только в логах: заземление персон при этом не пострадало,
+                    но читаются они заметно суше, и пользователь вправе понимать,
+                    почему. */}
+                {!generated.enrichment?.enriched && (
+                  <p className="mt-2 text-amber-200/80">
+                    Портреты собраны по шаблону: модель не отвечала
+                    {generated.enrichment?.degraded_reason
+                      ? ` (${generated.enrichment.degraded_reason})`
+                      : ""}
+                    . Соцдем, ценности и баллы заземлены на корпус как обычно.
+                  </p>
+                )}
+              </div>
+            )}
           </div>
         </>
       )}

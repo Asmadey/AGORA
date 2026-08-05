@@ -2,7 +2,12 @@ import { parseAudienceChoice, toGenerationConfig } from "@/lib/audience";
 import { audienceGrounding, warningsFor } from "@/lib/audience-grounding";
 import { withTenant } from "@/lib/server/db";
 import { requireSession, toResponse } from "@/lib/server/guard";
-import { listPersonaSets, listPersonas } from "@/lib/server/personas";
+import {
+  createPersonaSet,
+  insertPersonas,
+  listPersonaSets,
+  listPersonas,
+} from "@/lib/server/personas";
 
 /**
  * Шаг «Аудитория» визарда (задача #9).
@@ -33,7 +38,17 @@ export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 interface GenerationResult {
-  personas: unknown[];
+  personas: Record<string, unknown>[];
+  /** Имена персон отдельным списком: DNA описана закрытой схемой (#4). */
+  names?: string[];
+  /** Для каждой персоны: "model" или "template". */
+  sources?: string[];
+  meta?: {
+    enriched: boolean;
+    llm_calls: number;
+    cache_hits: number;
+    degraded_reason?: string | null;
+  };
 }
 
 export async function POST(request: Request) {
@@ -99,7 +114,12 @@ export async function POST(request: Request) {
     const seed = typeof rawSeed === "number" && Number.isInteger(rawSeed) && rawSeed >= 0
       ? rawSeed
       : 42;
-    const config = toGenerationConfig(criteria, seed);
+    // use_llm — обогащение narrative моделью поверх заземлённого скелета.
+    // Включено по умолчанию: продукт обещает живые портреты, а не строки
+    // таблицы. Выключается телом запроса — это нужно эталонному прогону
+    // persona_grounding, которому важна воспроизводимость, а не читаемость.
+    const useLlm = (body as { useLlm?: unknown }).useLlm !== false;
+    const config = { ...toGenerationConfig(criteria, seed), use_llm: useLlm };
 
     const { execFile } = await import("node:child_process");
     const { promisify } = await import("node:util");
@@ -134,13 +154,48 @@ export async function POST(request: Request) {
       );
     }
 
+    // ── Сохранение набора ──────────────────────────────────────────────────
+    // Без него результат генерации существует только в теле ответа: запуск
+    // (#11) принимает personaSetId, и передать ему было бы нечего. Раньше здесь
+    // возвращался personaSetId: null — то есть ветка «создать аудиторию»
+    // обрывалась ровно на этом месте, и заметить это по зелёному CDD #9 было
+    // невозможно: тот прогоняет генератор напрямую, минуя маршрут.
+    const names = result.names ?? [];
+    const saved = await withTenant(tenantId, async (client) => {
+      const set = await createPersonaSet(
+        client,
+        (body as { name?: unknown }).name as string ||
+          `Аудитория от ${new Date().toLocaleDateString("ru-RU")}`,
+        result.personas.length,
+        config,
+        seed,
+      );
+      const inserted = await insertPersonas(
+        client,
+        set.id,
+        result.personas.map((dna, i) => ({
+          // Имя приходит списком рядом с DNA. Запасной вариант нужен не для
+          // красоты: колонка NOT NULL, и персона без имени обрушила бы вставку
+          // целиком, потеряв весь набор из-за одного пропуска.
+          name: names[i] || `Персона ${i + 1}`,
+          dna,
+          narrative: (dna.narrative as string) ?? null,
+          seed: (dna.seed as number) ?? seed,
+        })),
+      );
+      return { set, inserted };
+    });
+
     return Response.json({
       generated: true,
-      personaSetId: null,
-      size: result.personas.length,
+      personaSetId: saved.set.id,
+      size: saved.inserted,
       personas: result.personas,
       config,
       warnings,
+      // Видно, поработала ли модель. Без этого «живой портрет» и «шаблон из
+      // полей» различимы только на глаз, а причина деградации не видна вовсе.
+      enrichment: result.meta ?? { enriched: false, llm_calls: 0, cache_hits: 0 },
     });
   } catch (error) {
     return toResponse(error);

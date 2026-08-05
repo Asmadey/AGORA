@@ -483,8 +483,11 @@ class PersonaGenerator:
         idx: int,
         config: GenerationConfig,
         dist: CorpusDistribution | None = None,
-    ) -> dict[str, Any]:
+    ) -> tuple[str, dict[str, Any]]:
         """Генерирует одну персону — deterministic режим (без LLM).
+
+        Возвращает пару (имя, DNA). Имя отдельно, потому что схема DNA закрыта:
+        см. generate_named().
 
         `dist` — распределения, суженные критериями шага «Аудитория» (#9).
         None означает «без критериев» и берёт полный корпус: так остаются
@@ -656,13 +659,30 @@ class PersonaGenerator:
             "narrative": narrative,
             "seed": config.seed,
         }
-        return persona
+        return name, persona
 
     def generate(self, config: GenerationConfig) -> list[dict[str, Any]]:
         """Генерирует ``config.size`` персон детерминированно.
 
         Один seed → один результат. CDD-тест проверяет:
         ``generate(cfg) == generate(cfg)`` (diff == 0).
+
+        Возвращает ЧИСТУЮ Persona DNA — ровно те десять полей, что объявлены в
+        canonical JSON Schema. Схема закрыта (``additionalProperties: false``),
+        поэтому ни имя персоны, ни служебные пометки сюда класть нельзя: тест #5
+        валидирует каждый элемент этого списка. За именем — generate_named().
+        """
+        return [dna for _, dna in self.generate_named(config)]
+
+    def generate_named(self, config: GenerationConfig) -> list[tuple[str, dict[str, Any]]]:
+        """То же самое, но с именем персоны рядом с её DNA.
+
+        Имя сэмплируется тем же rng, что и всё остальное, то есть принадлежит
+        персоне и воспроизводится вместе с ней. До этой правки оно вычислялось
+        внутри _generate_one, подставлялось в narrative и выбрасывалось — а
+        колонка ``personas.name`` объявлена NOT NULL. Сохранить сгенерированный
+        набор было в принципе нечем, и это единственная причина, по которой
+        цепочка «критерии → генератор → набор → запуск» нигде не была замкнута.
         """
         config.validate()
         rng = random.Random(config.seed)
@@ -676,11 +696,10 @@ class PersonaGenerator:
             genders=config.genders,
         )
 
-        personas: list[dict[str, Any]] = []
+        out: list[tuple[str, dict[str, Any]]] = []
         for i in range(config.size):
-            persona = self._generate_one(rng, i, config, dist)
-            personas.append(persona)
-        return personas
+            out.append(self._generate_one(rng, i, config, dist))
+        return out
 
     def build_prompt_context(self, config: GenerationConfig) -> dict[str, str]:
         """Собирает контекст для LLM-промпта ``persona.generate.md``.
