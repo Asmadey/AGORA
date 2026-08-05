@@ -1,6 +1,7 @@
 import { DEFAULT_SETTINGS } from "@/lib/settings";
 import { withTenant } from "@/lib/server/db";
 import { requireSession, toResponse } from "@/lib/server/guard";
+import { enqueuePipeline } from "@/lib/server/queue";
 import { launchTask, listTasks, type LaunchParams } from "@/lib/server/tasks";
 
 /**
@@ -116,10 +117,61 @@ export async function POST(request: Request) {
         seed: body.seed as number,
       };
 
-      return launchTask(client, params, userId ?? null);
+      const launched = await launchTask(client, params, userId ?? null);
+
+      // Персоны набора читаются здесь же, внутри тенант-контекста: воркер
+      // получает готовый список идентификаторов и не ходит за ним отдельно.
+      const personaIds = params.personaSetId
+        ? (
+            await client.query<{ id: string }>(
+              "SELECT id::text FROM personas WHERE persona_set_id = $1::uuid",
+              [params.personaSetId],
+            )
+          ).rows.map((r) => r.id)
+        : [];
+
+      const survey = params.surveyId
+        ? (
+            await client.query<{ questions: unknown }>(
+              "SELECT questions FROM surveys WHERE id = $1::uuid",
+              [params.surveyId],
+            )
+          ).rows[0]?.questions ?? null
+        : null;
+
+      return { launched, personaIds, survey };
     });
 
-    return Response.json(task, { status: task.created ? 201 : 200 });
+    // Постановка в очередь — только для действительно созданного прогона.
+    // Повторный запуск ничего не создал, и слать вторую задачу воркеру значило
+    // бы обойти идемпотентность там, где она и заводилась: прогон платный.
+    let queued = false;
+    let queueError: string | null = null;
+    if (task.launched.created) {
+      try {
+        await enqueuePipeline({
+          task_id: task.launched.id,
+          tenant_id: tenantId,
+          mode: task.launched.mode as "short" | "long",
+          video_ref: task.launched.videoRef,
+          persona_ids: task.personaIds,
+          survey: task.survey,
+          replication_count: task.launched.replicationCount,
+          prompts_snapshot: task.launched.promptsSnapshot,
+        });
+        queued = true;
+      } catch (e) {
+        // Прогон создан, но воркер о нём не знает. Молчать нельзя: экран
+        // прогресса показывал бы QUEUED вечно, и это выглядело бы как медленная
+        // система, а не как недоехавшая задача.
+        queueError = e instanceof Error ? e.message : "очередь недоступна";
+      }
+    }
+
+    return Response.json(
+      { ...task.launched, queued, queueError },
+      { status: task.launched.created ? 201 : 200 },
+    );
   } catch (error) {
     return toResponse(error);
   }

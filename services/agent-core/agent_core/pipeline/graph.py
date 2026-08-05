@@ -25,7 +25,9 @@ merge_transcript — фан-ин ждёт обе ветки сам. Послед
 
 from __future__ import annotations
 
+import json
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 
 from langgraph.graph import END, START, StateGraph
@@ -33,24 +35,40 @@ from langgraph.graph import END, START, StateGraph
 from .progress import ProgressWriter
 from .state import PipelineState
 
-#: Узлы конвейера в порядке PRD §8. Порядок значим: по нему экран прогресса
-#: (#12) рисует шкалу, не зная устройства графа.
-NODES: tuple[str, ...] = (
-    "probe_and_normalize",
-    "extract_audio",
-    "detect_speech",
-    "transcribe",
-    "diarize",
-    "merge_transcript",
-    "segment_video",
-    "sample_frames",
-    "analyze_chunks",
-    "stitch",
-    "pack",
-    "evaluate_personas",
-    "qa",
-    "analytics",
-)
+
+def _load_nodes() -> tuple[str, ...]:
+    """
+    Узлы конвейера из packages/shared/pipeline/nodes.json.
+
+    Список общий с вебом намеренно. Шкалу прогресса (#12) рисует интерфейс, а
+    порядок узлов знает граф; продублированный в TypeScript список разошёлся бы
+    с графом при первой правке конвейера — и не сломал бы ничего заметного:
+    шкала просто показывала бы не тот этап. Такое расхождение не находится
+    тестом, потому что обе стороны по отдельности исправны.
+    """
+    here = Path(__file__).resolve()
+    # Два варианта раскладки. В репозитории это packages/shared/…; в образе
+    # воркера — /app/shared/…, потому что Dockerfile копирует
+    # `packages/shared/ → /app/shared/`. Искать только по первому пути значит
+    # получить рабочий репозиторий и неподнимающийся контейнер.
+    tails = (
+        Path("packages") / "shared" / "pipeline" / "nodes.json",
+        Path("shared") / "pipeline" / "nodes.json",
+    )
+    for parent in here.parents[:6]:
+        for tail in tails:
+            candidate = parent / tail
+            if candidate.exists():
+                data = json.loads(candidate.read_text("utf-8"))
+                return tuple(n["name"] for n in data["nodes"])
+    raise FileNotFoundError(
+        "packages/shared/pipeline/nodes.json не найден: список узлов конвейера "
+        "общий у воркера и веба и не дублируется в коде"
+    )
+
+
+#: Узлы конвейера в порядке PRD §8.
+NODES: tuple[str, ...] = _load_nodes()
 
 #: Узел, который проходят только длинные прогоны.
 LONG_ONLY = "segment_video"
