@@ -7,6 +7,7 @@ CDD-тест задачи #27 — Настройки (per-tenant).
 """
 from __future__ import annotations
 import json
+import time
 import os
 import re
 import sys
@@ -184,9 +185,55 @@ else:
             check("настройки арендатора A из-под B не видны", code_g == 200,
                   f"member sees: {list(member_body.keys())[:5]}")
 
-        # 13/14. settings_snapshot in task — requires task creation API
-        skip("снимок настроек в задаче при постановке", "требует API задач")
-        skip("смена настроек после постановки — снимок не изменился", "требует API задач")
+        # 13/14. Снимок настроек на прогоне.
+        #
+        # Пропуск «требует API задач» стоял здесь с тех пор, когда запуска не
+        # существовало. Задача #11 его добавила, и пропуск стал ложью: проверка
+        # не выполнялась не потому, что не могла, а потому, что никто не
+        # перечитал причину.
+        #
+        # Проверяется то, ради чего снимок и заведён: «Перекрытие» берётся из
+        # настроек В МОМЕНТ постановки и дальше не меняется. Без этого прогон,
+        # простоявший в очереди, пока команда правила настройки, прошёл бы часть
+        # персон один раз, а часть — три, и расхождение списали бы на модель.
+        launch = json.dumps({"mode": "short", "seed": 27_000 + int(time.time()) % 1000}).encode()
+        req = urllib.request.Request(f"{base_url}/api/tasks", data=launch, method="POST")
+        req.add_header("Content-Type", "application/json")
+        req.add_header("Cookie", cookies)
+        try:
+            resp = opener.open(req, timeout=30)
+            task = json.loads(resp.read())
+        except urllib.error.HTTPError as e:
+            task = {}
+            check("снимок настроек в задаче при постановке", False,
+                  f"POST /api/tasks → HTTP {e.code}: {e.read()[:120].decode('utf-8', 'replace')}")
+
+        if task:
+            # Настройки выше выставлены на defaultReplication = 3.
+            check("снимок настроек в задаче при постановке",
+                  task.get("replicationCount") == 3,
+                  f"replicationCount={task.get('replicationCount')}, ожидалось 3 из настроек")
+
+            # Меняем настройки и перечитываем УЖЕ СОЗДАННЫЙ прогон.
+            changed = json.dumps({
+                "costCap": "hard", "costCapValue": 300,
+                "whisperModel": "large-v3-turbo", "defaultReplication": 1,
+            }).encode()
+            req = urllib.request.Request(f"{base_url}/api/settings", data=changed, method="PUT")
+            req.add_header("Content-Type", "application/json")
+            req.add_header("Cookie", cookies)
+            opener.open(req, timeout=10)
+
+            req = urllib.request.Request(f"{base_url}/api/tasks")
+            req.add_header("Cookie", cookies)
+            listed = json.loads(opener.open(req, timeout=10).read()).get("tasks", [])
+            same = next((t for t in listed if t.get("id") == task.get("id")), None)
+            check("смена настроек после постановки — снимок не изменился",
+                  same is not None and same.get("replicationCount") == 3,
+                  f"после смены настроек прогон показывает {(same or {}).get('replicationCount')}")
+        else:
+            check("смена настроек после постановки — снимок не изменился", False,
+                  "прогон не создан — проверять нечего")
 
     except ImportError:
         for i in range(6, 15):
