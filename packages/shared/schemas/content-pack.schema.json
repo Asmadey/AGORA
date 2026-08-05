@@ -1,0 +1,111 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agora.dev/schemas/content-pack.schema.json",
+  "title": "Content Pack",
+  "description": "Результат склейки (reduce) материала видео: транскрипт с диаризацией и VLM-разбор сцен, сведённые в единый таймлайн по глобальным таймкодам. Существует в двух формах (Decision Log #15): полная уходит контрольной подвыборке на глубокий просмотр, компактная — в массовый прогон респондентов. Схема одна на обе формы: это позволяет валидировать их одной проверкой и не даёт компактной форме тихо разойтись с полной по составу ключей. Различие описано полем form и набором необязательных полей, а не двумя схемами.",
+  "type": "object",
+  "required": ["form", "title", "duration_sec", "stitched", "timeline", "scenes"],
+  "additionalProperties": false,
+  "properties": {
+    "form": {
+      "description": "Какая это форма. Поле обязательное и не выводимое из состава: пакет без полного транскрипта может быть и компактной формой, и полной от немого материала.",
+      "enum": ["full", "compact"]
+    },
+    "title": { "type": "string" },
+    "duration_sec": {
+      "description": "Длительность ролика по proxy — единственный источник времени (Decision Log #14). Все таймкоды пакета лежат в [0, duration_sec].",
+      "type": "number",
+      "exclusiveMinimum": 0
+    },
+    "stitched": {
+      "description": "Собран ли пакет из нескольких сегментов. Для длинного режима всегда true. Признак нужен отчёту: у сшитого материала стыки сегментов — известное место потери контекста, и низкая связность вокруг них объясняется обработкой, а не монтажом.",
+      "type": "boolean"
+    },
+    "timeline": {
+      "description": "Единый таймлайн, упорядоченный по start. Позвоночник — транскрипт: записи строятся от реплик, а разбор сцен прикрепляется к ним по таймкоду.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["start", "end", "lines"],
+        "additionalProperties": false,
+        "properties": {
+          "start": { "type": "number", "minimum": 0 },
+          "end": { "type": "number", "minimum": 0 },
+          "scene": { "type": ["string", "null"] },
+          "mood": { "type": ["string", "null"] },
+          "lines": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["start", "end", "text"],
+              "additionalProperties": false,
+              "properties": {
+                "start": { "type": "number", "minimum": 0 },
+                "end": { "type": "number", "minimum": 0 },
+                "text": { "type": "string" },
+                "speaker": { "type": ["string", "null"] }
+              }
+            }
+          }
+        }
+      }
+    },
+    "scenes": {
+      "description": "Разбор сцен. В полной форме все, в компактной — только ключевые.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["timestamp_sec", "scene_description"],
+        "additionalProperties": true,
+        "properties": {
+          "timestamp_sec": { "type": "number", "minimum": 0 },
+          "scene_description": { "type": "string" },
+          "mood": { "type": ["string", "null"] },
+          "key": {
+            "description": "Ключевая сцена: переживает сжатие. Отбор описан в agent_core/content/pack.py.",
+            "type": "boolean"
+          }
+        }
+      }
+    },
+    "transcript": {
+      "description": "Полный транскрипт. Только в полной форме — именно он даёт основную экономию при сжатии.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["start", "end", "text"],
+        "additionalProperties": false,
+        "properties": {
+          "start": { "type": "number", "minimum": 0 },
+          "end": { "type": "number", "minimum": 0 },
+          "text": { "type": "string" },
+          "speaker": { "type": ["string", "null"] }
+        }
+      }
+    },
+    "dropped_scenes": {
+      "description": "Сцены, выброшенные из-за таймкода вне ролика, с причиной. Список обязателен даже пустой: молчаливое отбрасывание скрыло бы систематическую ошибку VLM с таймкодами, а заметить её иначе нечем — видео к моменту разбора отчёта уже удалено по политике хранения.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["timestamp_sec", "reason"],
+        "additionalProperties": false,
+        "properties": {
+          "timestamp_sec": { "type": "number" },
+          "panel_index": { "type": ["integer", "null"] },
+          "reason": { "type": "string" }
+        }
+      }
+    },
+    "stats": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "scenes_total": { "type": "integer", "minimum": 0 },
+        "scenes_key": { "type": "integer", "minimum": 0 },
+        "lines_total": { "type": "integer", "minimum": 0 },
+        "speakers": { "type": "integer", "minimum": 0 }
+      }
+    }
+  }
+}
