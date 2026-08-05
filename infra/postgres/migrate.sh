@@ -213,14 +213,33 @@ fi
 
 echo
 echo "── Итог ─────────────────────────────────────────────────────────────"
-TABLES=$(q "SELECT count(*) FROM pg_tables WHERE schemaname = 'public'")
+# users — единственная таблица без tenant_id: глобальная идентичность, к
+# арендатору не привязана (02_schema.sql, 03_rls.sql). RLS по арендатору на ней
+# бессмысленна, ограничивает её Auth.js и прикладной код.
+#
+# Исключение перечислено здесь, а не проверяется «на глаз», по конкретной
+# причине: до этой правки итог всегда печатал WARN «не на всех таблицах включён
+# FORCE RLS», потому что users в счёт попадала. Предупреждение, которое горит
+# всегда, перестают читать — и настоящая таблица без FORCE прошла бы незамеченной
+# ровно тем же текстом.
+RLS_EXEMPT="'users'"
+
+TABLES=$(q "SELECT count(*) FROM pg_tables
+             WHERE schemaname = 'public' AND tablename NOT IN ($RLS_EXEMPT)")
 RLS_ON=$(q "SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
-            WHERE n.nspname = 'public' AND c.relkind = 'r' AND c.relrowsecurity AND c.relforcerowsecurity")
+            WHERE n.nspname = 'public' AND c.relkind = 'r'
+              AND c.relname NOT IN ($RLS_EXEMPT)
+              AND c.relrowsecurity AND c.relforcerowsecurity")
 POLICIES=$(q "SELECT count(*) FROM pg_policies WHERE schemaname = 'public'")
-ok "таблиц: $TABLES · с FORCE RLS: $RLS_ON · политик: $POLICIES"
+ok "таблиц: $TABLES · с FORCE RLS: $RLS_ON · политик: $POLICIES · вне RLS: users"
 
 if [ "$TABLES" != "$RLS_ON" ]; then
-  warn "не на всех таблицах включён FORCE RLS — таблица без него доступна владельцу целиком"
+  MISSING=$(q "SELECT string_agg(c.relname, ', ' ORDER BY c.relname)
+                 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+                WHERE n.nspname = 'public' AND c.relkind = 'r'
+                  AND c.relname NOT IN ($RLS_EXEMPT)
+                  AND NOT (c.relrowsecurity AND c.relforcerowsecurity)")
+  die "FORCE RLS отсутствует на таблицах: $MISSING — они доступны владельцу целиком"
 fi
 
 echo
