@@ -15,6 +15,12 @@ dependencies = [
     "pydantic>=2.9",
     "python-dotenv>=1.0",
     "psycopg[binary,pool]>=3.2",
+    # #13 — оркестратор. Чекпоинтер написан свой (pipeline/checkpoint.py):
+    # langgraph-checkpoint-redis требует модулей RediSearch/RedisJSON, то есть
+    # Redis Stack, а в развёртывании Valkey 9.1 — этих модулей в нём нет и
+    # доставить их нельзя. Пакет установился бы молча и отказал бы при первой
+    # записи чекпоинта, то есть уже после транскрипции и вызовов VLM.
+    "langgraph>=1.0",
     "pymongo>=4.10",
     # #15 — транскрипт и диаризация. Обе библиотеки CPU-only: модели рассуждения
     # ходят по API, локально крутятся только Whisper и pyannote (Decision Log #1).
