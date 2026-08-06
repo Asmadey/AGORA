@@ -40,15 +40,24 @@ def _model(name: str, compute_type: str):
     Импорт внутри функции намеренно: faster-whisper тянет CTranslate2 и модель
     целиком, и делать это при импорте модуля значит платить за них даже там, где
     транскрипция не нужна — например, в статическом уровне CDD-теста.
+
+    ─── Почему download_root не передаётся ──────────────────────────────────
+    Раньше сюда уходило `download_root=HF_HOME`. Параметр отдаётся в
+    huggingface_hub как `cache_dir`, то есть заменяет собой корень кэша целиком,
+    а не задаёт его родителя: модели ложились в `$HF_HOME/models--Systran--*`,
+    тогда как всё остальное (pyannote, любой другой вызов hub) читает и пишет в
+    `$HF_HOME/hub/`. В одном томе получалось два кэша.
+
+    Само по себе это работало и потому было незаметно. Ломается оно при первом
+    же взгляде со стороны: `try_to_load_from_cache` смотрит в стандартный корень,
+    отвечает «модели нет» — и вывод «воркер скачает 2.9 ГБ заново» выглядит
+    обоснованным, хотя модель на диске есть. Мы на этом уже потеряли проход.
+
+    Без параметра действует HF_HOME, и оба каталога сходятся в `$HF_HOME/hub/`.
     """
     from faster_whisper import WhisperModel
 
-    return WhisperModel(
-        name,
-        device="cpu",
-        compute_type=compute_type,
-        download_root=os.environ.get("HF_HOME") or None,
-    )
+    return WhisperModel(name, device="cpu", compute_type=compute_type)
 
 
 def _settings() -> tuple[str, str]:
