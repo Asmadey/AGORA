@@ -6,6 +6,7 @@ OpenAI-совместимый API timeweb; Whisper + pyannote self-host на CPU
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass
 
 
@@ -77,6 +78,98 @@ class ModelConfig:
             vlm_model=_optional("VLM_MODEL", "qwen3.6"),
             proxy_source=_optional("MODEL_PROXY_SOURCE", "agora"),
         )
+
+
+#: Порог уверенности, ниже которого вердикт судьи идёт на перепроверку моделью
+#: большего размера. Значение ПРЕДВАРИТЕЛЬНОЕ — ровно в том смысле, в каком это
+#: сказано в PRD §14.1: «назначать его до того, как известно распределение
+#: confidence, значит выдумывать число».
+#:
+#: Калибровать так: прогнать QA на полном наборе ответов с эскалацией
+#: ВЫКЛЮЧЕННОЙ, собрать распределение confidence из qa_report.json и поставить
+#: порог по доле ответов, которую готовы оплачивать дважды.
+#:
+#: Число обязано совпадать с apps/web/.env.example — там же оно объявлено как
+#: контракт окружения. Разойдясь, они дали бы разный порог в зависимости от
+#: того, скопировал ли оператор файл: у одного эскалация на трети ответов, у
+#: другого на десятой части, и оба уверены, что настройка одна. Совпадение
+#: держится проверкой test_default_threshold_matches_env_example.
+DEFAULT_ESCALATION_CONFIDENCE = 0.6
+
+#: Где в базовом URL провайдера стоит идентификатор агента. Endpoint TimeWeb —
+#: /api/v1/cloud-ai/agents/{agent_access_id}/v1 (см. docs/providers.md §2), и
+#: «другая модель» означает «другой агент», а не другое значение поля model:
+#: поле model этим endpoint игнорируется.
+_AGENT_SEGMENT = re.compile(r"(/agents/)[^/]+(/|$)")
+
+
+@dataclass(frozen=True)
+class QaConfig:
+    """Политика QA-агента (#19): порог уверенности и агент для перепроверки.
+
+    ``escalation_agent_id`` НЕОБЯЗАТЕЛЕН, и его отсутствие — штатный режим, а не
+    деградация (Decision Log #16, PRD §14.1). Без него все проверки закрываются
+    основной моделью, и это ровно то, что происходит у большинства арендаторов.
+
+    Отсюда правило, которое легко нарушить из лучших побуждений: отсутствие
+    эскалации не пишется в ``degraded``. Канал деградаций читает отчёт, и запись
+    «эскалации не было» приучила бы читать её как изъян прогона — а через
+    несколько прогонов перестали бы читать весь канал целиком.
+    """
+
+    escalation_agent_id: str | None
+    escalation_confidence: float
+
+    @property
+    def escalation_enabled(self) -> bool:
+        return bool(self.escalation_agent_id)
+
+    @classmethod
+    def from_env(cls) -> QaConfig:
+        raw = _optional("QA_ESCALATION_CONFIDENCE", str(DEFAULT_ESCALATION_CONFIDENCE))
+        try:
+            threshold = float(raw)
+        except ValueError as exc:
+            raise ConfigError(
+                f"QA_ESCALATION_CONFIDENCE={raw!r} не число. Порог сравнивается с "
+                f"confidence судьи (0.0..1.0)"
+            ) from exc
+        if not 0.0 <= threshold <= 1.0:
+            raise ConfigError(
+                f"QA_ESCALATION_CONFIDENCE={threshold} вне диапазона 0.0..1.0: "
+                f"confidence судьи нормирован, и порог вне шкалы означает либо "
+                f"«эскалировать всегда», либо «никогда» — оба случая стоит написать явно"
+            )
+        return cls(
+            escalation_agent_id=os.environ.get("QA_ESCALATION_AGENT_ID") or None,
+            escalation_confidence=threshold,
+        )
+
+    def escalation_base_url(self, base_url: str) -> str:
+        """
+        Базовый URL агента-перепроверщика.
+
+        Если в переменной лежит готовый URL — берётся он. Иначе идентификатор
+        подставляется в базовый URL основного агента вместо его собственного.
+
+        Когда подставить некуда, поднимается ошибка, а не тихий возврат
+        ``base_url``. Молчаливый откат означал бы, что «эскалация» уходит в ту
+        же модель: вердикт получал бы штамп «перепроверено моделью большего
+        размера», не будучи перепроверенным ничем, — и в отчёте разницы не видно.
+        """
+        agent = self.escalation_agent_id
+        if not agent:
+            raise ConfigError("QA_ESCALATION_AGENT_ID не задан — эскалировать не к кому")
+        if agent.startswith(("http://", "https://")):
+            return agent.rstrip("/")
+        patched, count = _AGENT_SEGMENT.subn(rf"\g<1>{agent}\g<2>", base_url, count=1)
+        if not count:
+            raise ConfigError(
+                f"в OPENAI_BASE_URL={base_url!r} нет сегмента /agents/<id>, и подставить "
+                f"QA_ESCALATION_AGENT_ID={agent!r} некуда. Задайте переменной полный URL "
+                f"второго агента целиком"
+            )
+        return patched.rstrip("/")
 
 
 @dataclass(frozen=True)

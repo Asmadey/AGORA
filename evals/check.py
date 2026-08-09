@@ -688,6 +688,103 @@ def check_response_diversity():
                 detail="; ".join(fails))
 
 
+#: Подсадки для метрики qa_catches_injected. Оба дефекта детерминированные:
+#: противоречие внутри ответа и таймкод за пределами ролика. Подсадка,
+#: требующая суждения модели, сделала бы метрику зависимой от ключа провайдера —
+#: то есть пропускаемой в CI и на машине разработчика, а гейт, который обычно
+#: пропускается, не сообщает ничего.
+_QA_PACK = {
+    "form": "compact", "title": "Ролик", "duration_sec": 100.0,
+    "scenes": [{"timestamp_sec": 0.0, "scene_description": "Двое спорят на кухне"}],
+}
+
+
+def _qa_answer(idx, **over):
+    """Ответ персоны в формате prompts/respondent.user.md."""
+    score = over.get("overall", 4 + idx)
+    texts = ["Зацепил спор на кухне", "Скучновато, бросил бы", "Красивая картинка",
+             "Не мой жанр", "Неожиданно тронуло"]
+    return {
+        "persona_id": over.get("persona_id", f"p{idx}"),
+        "persona_name": f"Персона {idx}",
+        "replication": 0,
+        "answer": {
+            "scores": {k: score for k in CRITERIA},
+            "perception": {
+                "interest_level": "скорее интересен",
+                "emotions_evoked": ["интерес"],
+                "idea_comprehension": "понятно",
+                "realism_perception": "скорее реалистичные",
+                "retention_intent": over.get(
+                    "retention", "скорее досмотреть" if score >= 5 else "скорее выключить"),
+                "recommendation_nps_1_to_10": over.get("nps", score),
+            },
+            "survey_answers": {},
+            "verbatims": {"why_impression": texts[idx % len(texts)],
+                          "memorable_elements": f"деталь {idx}",
+                          "character_opinions": f"герой {idx}"},
+            "grounding_refs": over.get("refs", ["00:10 спор на кухне"]),
+        },
+    }
+
+
+def check_qa_catches_injected():
+    """
+    Метрика qa_catches_injected (задача #19).
+
+    Проверяется подсадкой, а не чтением артефакта прогона, и это отличие от
+    соседних метрик намеренное. isolation_persona и response_diversity читают
+    результат прогона потому, что меряют поведение модели на живом материале.
+    Здесь вопрос другой: ловит ли QA то, что заведомо дефектно. На настоящем
+    прогоне подсаженных дефектов нет, и пустой список флагов означал бы разом и
+    «ответы чистые», и «QA не работает» — различить нечем.
+
+    Поэтому метрика конструирует набор сама: пять чистых ответов и два
+    испорченных. Требуется поймать оба и не тронуть ни одного чистого. Вторая
+    половина не менее важна первой: QA, флагующий всё подряд, ловит подсадку
+    стопроцентно и не стоит при этом ничего.
+    """
+    name = "qa_catches_injected"
+    threshold = "2 из 2 подсадок пойманы, ложноположительных 0"
+    sys.path.insert(0, str(CORE))
+    try:
+        from agent_core.qa.run import run_qa
+    except Exception as e:
+        return _res(name, "skip", threshold=threshold,
+                    detail=f"agent_core.qa не импортируется: {type(e).__name__}: {str(e)[:120]}")
+
+    clean = [_qa_answer(i) for i in range(5)]
+    injected = {
+        # 10/10 рядом с намерением выключить: противоречие внутри ответа.
+        "inconsistent": _qa_answer(0, persona_id="inconsistent", overall=10, nps=10,
+                                   retention="выключил бы"),
+        # 07:45 при ролике в 100 секунд: выдуманный таймкод.
+        "hallucinated_timecode": _qa_answer(1, persona_id="hallucinated_timecode",
+                                            refs=["07:45 сцена в лесу"]),
+    }
+
+    try:
+        outcome = run_qa(answers=clean + list(injected.values()), pack=_QA_PACK,
+                         personas=[], survey={}, judge=None)
+    except Exception as e:
+        return _res(name, "fail", threshold=threshold,
+                    detail=f"{type(e).__name__}: {str(e)[:160]}")
+
+    flagged = {f.get("persona_id") for f in outcome.flagged}
+    missed = sorted(k for k in injected if k not in flagged)
+    false_positives = sorted(f for f in flagged if f in {a["persona_id"] for a in clean})
+
+    problems = []
+    if missed:
+        problems.append(f"не пойманы подсадки: {', '.join(missed)}")
+    if false_positives:
+        problems.append(f"ложноположительные: {', '.join(false_positives)}")
+    return _res(name, "pass" if not problems else "fail", threshold=threshold,
+                actual=f"поймано {len(injected) - len(missed)}/{len(injected)}, "
+                       f"ложноположительных {len(false_positives)}",
+                detail="; ".join(problems))
+
+
 def check_prompts_editable():
     """Метрика prompts_editable (задача #26).
 
@@ -817,7 +914,7 @@ CHECKS = [
     check_schema_drift,
     check_persona_grounding,
     check_response_diversity,
-    lambda: _todo("qa_catches_injected"),
+    check_qa_catches_injected,
     check_prompts_editable,
     check_secret_scan,
     lambda: _todo("subjective_persona_realism"),   # external LLM grader, blind, ≥7/10
