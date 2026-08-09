@@ -199,10 +199,32 @@ def test_broken_snapshot_does_not_raise():
 
 
 def test_unimplemented_stages_fail_loudly():
-    """qa и analytics обязаны отказывать с номером задачи, а не возвращать пустоту."""
-    from agent_core.pipeline.nodes import StageNotImplemented, analytics, qa
+    """Ненаписанный этап обязан отказывать с номером задачи, а не возвращать пустоту."""
+    from agent_core.pipeline.nodes import StageNotImplemented, analytics
 
-    for fn, task in ((qa, "#19"), (analytics, "#20")):
-        with pytest.raises(StageNotImplemented) as e:
-            fn(new_state(task_id="t", tenant_id="x"))
-        assert task in str(e.value)
+    with pytest.raises(StageNotImplemented) as e:
+        analytics(new_state(task_id="t", tenant_id="x"))
+    assert "#20" in str(e.value)
+
+
+def test_implemented_stage_without_input_fails_as_missing_input():
+    """
+    Реализованный этап без входа поднимает ValueError, а не StageNotImplemented.
+
+    Проверка появилась вместе с #19 и стоит здесь по конкретному поводу. Пока
+    узел qa был заглушкой, соседняя проверка ждала от него StageNotImplemented;
+    когда узел дописали, она покраснела — и это правильное поведение, она
+    поймала смену контракта. Но список ненаписанных этапов сокращается по мере
+    работы, и вычёркивать из проверки узел за узлом, ничего не оставляя взамен,
+    значит терять требование целиком.
+
+    Требование же остаётся: StageNotImplemented означает «этапа нет», а не
+    «входа нет». По первому читающий лог идёт искать ненаписанную задачу —
+    вместо отказавшего evaluate_personas, который и не дал ответов.
+    """
+    from agent_core.pipeline.nodes import StageNotImplemented, qa
+
+    with pytest.raises(ValueError) as e:
+        qa(new_state(task_id="t", tenant_id="x"))
+    assert not isinstance(e.value, StageNotImplemented)
+    assert "evaluate_personas" in str(e.value)
