@@ -90,7 +90,11 @@ export function PersonaAccordion({
 
               <div className="hidden w-32 shrink-0 text-right sm:block">
                 <p className="text-xs text-muted-foreground">Досмотрит</p>
-                <p className="truncate text-sm">{a.retentionIntent ?? "—"}</p>
+                <p className="truncate text-sm">
+                  {a.watchedShare !== null
+                    ? `${a.watchedShare}%`
+                    : (a.retentionIntent ?? "—")}
+                </p>
               </div>
 
               <div className="w-14 shrink-0 text-right">

@@ -86,19 +86,29 @@ if schema:
 else:
     check("схема определяет 5 базовых критериев в enum", False, "схема не загружена")
 
-# 4. Schema defines 5 question types as enum
+# 4. Schema defines the closed set of question types as enum
+#
+# Изначально типов было пять. Шестой, `watched_share`, добавлен при закрытии
+# #21: экран отчёта показывал «Досмотрено, %», а взять это число было неоткуда —
+# `retention_intent` категориален, и процент из категории не выводится. В
+# прототипе интерфейса там стояло выдуманное значение.
+#
+# Проверка осталась на равенство множеству, а не превратилась в «содержит
+# нужные». Смысл её в том, что список ЗАКРЫТ: воркер разбирает ответ только
+# известных форм, и седьмой тип обязан сломать этот тест — чтобы вместе с ним
+# поправили prompts/respondent.user.md, миграцию засева и разбор в agent_core.
+QUESTION_TYPES = {"scale", "emotions", "retention", "watched_share", "recommendation", "open"}
+
 if schema:
     qt_def = defs.get("QuestionType", {})
     qt_enum = qt_def.get("enum", [])
     check(
-        "схема определяет 5 типов вопросов в enum",
-        len(qt_enum) == 5 and set(qt_enum) == {
-            "scale", "emotions", "retention", "recommendation", "open"
-        },
-        f"enum={qt_enum}",
+        "схема определяет закрытый набор типов вопросов в enum",
+        set(qt_enum) == QUESTION_TYPES,
+        f"enum={qt_enum}, ожидалось {sorted(QUESTION_TYPES)}",
     )
 else:
-    check("схема определяет 5 типов вопросов в enum", False, "схема не загружена")
+    check("схема определяет закрытый набор типов вопросов в enum", False, "схема не загружена")
 
 # 5. Schema requires base criteria with scale 1-10
 if schema:
@@ -192,10 +202,16 @@ check(
     f"keys={base_keys_in_component}",
 )
 
-# 17. SurveyBuilder defines 5 question types
+# 17. SurveyBuilder offers every type the schema allows
+#
+# Сверка с тем же множеством, что и в проверке 4, а не со своим списком. Два
+# списка типов в одном тесте разошлись бы при первом добавлении: конструктор
+# предлагал бы не то, что принимает валидатор, и разницу увидел бы только
+# пользователь — как вопрос, который не сохраняется.
 check(
-    "SurveyBuilder определяет 5 типов вопросов",
-    all(qt in sb_text for qt in ["scale", "emotions", "retention", "recommendation", "open"]),
+    "SurveyBuilder предлагает все типы из схемы",
+    all(qt in sb_text for qt in QUESTION_TYPES),
+    f"нет в конструкторе: {sorted(qt for qt in QUESTION_TYPES if qt not in sb_text)}",
 )
 
 # 18. DB table 'surveys' has questions jsonb column

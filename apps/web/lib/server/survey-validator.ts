@@ -22,7 +22,13 @@ import { resolve } from "node:path";
 
 // ─── Типы ────────────────────────────────────────────────────────────────
 
-export type QuestionType = "scale" | "emotions" | "retention" | "recommendation" | "open";
+export type QuestionType =
+  | "scale"
+  | "emotions"
+  | "retention"
+  | "watched_share"
+  | "recommendation"
+  | "open";
 
 export type BaseCriterionKey =
   | "overall_impression"
@@ -62,6 +68,7 @@ export const ALLOWED_QUESTION_TYPES: QuestionType[] = [
   "scale",
   "emotions",
   "retention",
+  "watched_share",
   "recommendation",
   "open",
 ];

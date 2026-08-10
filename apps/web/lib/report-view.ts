@@ -41,6 +41,8 @@ export interface ReportView {
   spread: Partial<Record<Criterion, { mean: number; min: number; max: number; stdev: number }>>;
   nps: number | null;
   retentionRate: number | null;
+  /** Средняя доля просмотренного. null — в анкете не было вопроса о ней. */
+  watchedShare: number | null;
   emotionalIndex: number | null;
   topEmotions: { name: string; pct: number }[];
   sampleSize: number;
@@ -77,6 +79,7 @@ export interface AnswerView {
   scores: Record<Criterion, number | null>;
   overall: number | null;
   retentionIntent: string | null;
+  watchedShare: number | null;
   nps: number | null;
   emotions: string[];
   verbatim: string | null;
@@ -195,6 +198,7 @@ export function parseReport(raw: Record<string, unknown>): ReportView {
     spread,
     nps: num(agg.nps),
     retentionRate: num(agg.retention_rate),
+    watchedShare: num(agg.watched_share_mean),
     emotionalIndex: num(agg.emotional_index),
     topEmotions: (Array.isArray(agg.top_emotions) ? agg.top_emotions : []).flatMap((raw) => {
       const e = obj(raw);
@@ -278,6 +282,7 @@ export function parseAnswer(card: {
     scores,
     overall: scores.overall_impression,
     retentionIntent: str(perception.retention_intent),
+    watchedShare: num(perception.watched_share_pct),
     nps: num(perception.recommendation_nps_1_to_10),
     emotions: strings(perception.emotions_evoked),
     // Первое непустое обоснование: у анкеты их несколько, а в свёрнутой строке

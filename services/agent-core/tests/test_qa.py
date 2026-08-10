@@ -253,3 +253,49 @@ def test_escalation_without_agent_segment_fails_loudly():
     policy = QaConfig(escalation_agent_id="big-agent", escalation_confidence=0.7)
     with pytest.raises(ConfigError):
         policy.escalation_base_url("https://api.example.com/v1")
+
+
+# ─── Доля просмотра против намерения ─────────────────────────────────────────
+
+
+def _with_share(stance, pct, overall=7):
+    return {
+        "scores": {"overall_impression": overall, "plot": overall, "acting": overall,
+                   "music": overall, "cinematography": overall},
+        "perception": {
+            "retention_intent": stance,
+            "watched_share_pct": pct,
+            "recommendation_nps_1_to_10": overall,
+            "emotions_evoked": ["интерес"],
+        },
+        "verbatims": {"why_impression": "обоснование"},
+    }
+
+
+def test_share_outside_scale_is_flagged():
+    """Промпт требует проценты. Доля от единицы занизила бы досмотр на порядок."""
+    reasons = consistency_reasons(_with_share("скорее досмотреть", 0.9))
+    assert any("watched_share_pct" in r for r in reasons)
+
+
+def test_high_share_with_intent_to_stop_is_a_contradiction():
+    """Промпт обещает персоне, что такой ответ забракуют — обещание должно исполняться."""
+    reasons = consistency_reasons(_with_share("скорее выключить", 95))
+    assert any("95" in r and "прекратить" in r for r in reasons)
+
+
+def test_low_share_with_intent_to_finish_is_a_contradiction():
+    reasons = consistency_reasons(_with_share("скорее досмотреть", 10))
+    assert any("10" in r and "досмотреть" in r for r in reasons)
+
+
+def test_share_agreeing_with_intent_is_clean():
+    assert consistency_reasons(_with_share("скорее досмотреть", 95)) == []
+    assert consistency_reasons(_with_share("скорее выключить", 15, overall=3)) == []
+
+
+def test_absent_share_is_not_a_defect():
+    """Анкета без вопроса о доле просмотра — законный случай, а не брак."""
+    answer = _with_share("скорее досмотреть", 95)
+    del answer["perception"]["watched_share_pct"]
+    assert consistency_reasons(answer) == []

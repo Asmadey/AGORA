@@ -347,3 +347,53 @@ def test_single_replication_persona_does_not_widen_the_band():
     bounds = aggregate(answers, replication_count=2)["replication_bounds"]
     assert bounds["overall_impression"]["min"] == 4.0
     assert bounds["overall_impression"]["max"] == 10.0
+
+
+# ─── Доля просмотра ──────────────────────────────────────────────────────────
+
+
+def watched(persona, pct):
+    a = answer(persona)
+    a["answer"]["perception"]["watched_share_pct"] = pct
+    return a
+
+
+def test_watched_share_absent_gives_none_not_zero():
+    """
+    «Не спрашивали» и «не смотрели» на экране выглядят одинаково, если оба ноль.
+
+    Поле необязательное: анкету без вопроса о доле просмотра пользователь вправе
+    запустить, и отчёт по ней обязан честно показать прочерк.
+    """
+    assert aggregate([answer("p0")])["watched_share_mean"] is None
+
+
+def test_watched_share_is_averaged():
+    agg = aggregate([watched("p0", 100), watched("p1", 50)])
+    assert agg["watched_share_mean"] == 75.0
+
+
+def test_watched_share_outside_scale_is_dropped():
+    """
+    Шкала 0–100. Значение вне её — не «очень досмотрел», а испорченный ответ:
+    модель отдала долю единицей либо промахнулась мимо формата. Втянув 1.0 в
+    среднее, отчёт занизил бы досмотр на порядок и выглядел бы правдоподобно.
+    """
+    agg = aggregate([watched("p0", 80), watched("p1", 140), watched("p2", -5)])
+    assert agg["watched_share_mean"] == 80.0
+
+
+def test_watched_share_ignores_non_numeric():
+    agg = aggregate([watched("p0", 80), watched("p1", "почти всё")])
+    assert agg["watched_share_mean"] == 80.0
+
+
+def test_watched_share_zero_is_a_real_answer():
+    """Ноль — «не смотрел вообще», это ответ, а не отсутствие ответа."""
+    assert aggregate([watched("p0", 0), watched("p1", 100)])["watched_share_mean"] == 50.0
+
+
+def test_watched_share_respects_qa_exclusion():
+    flags = [{"persona_id": "bad", "replication": 0, "verdict": "regenerate"}]
+    agg = aggregate([watched("p0", 90), watched("bad", 10)], qa_flags=flags)
+    assert agg["watched_share_mean"] == 90.0

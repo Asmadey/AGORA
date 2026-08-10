@@ -107,8 +107,12 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
           </section>
         )}
 
-        {/* Сводные метрики */}
-        <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        {/* Сводные метрики.
+            «Досмотрят до конца» и «Досмотрено» — две разные величины, и стоят
+            рядом намеренно. Первая считается по retention_intent: он
+            категориален, и процента просмотра из него не выводится. Вторая
+            приходит из шкального вопроса анкеты, и без него честно пуста. */}
+        <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
           <StatCard
             label="Общее впечатление"
             value={fmt(view.scores.overall_impression, 1)}
@@ -123,11 +127,18 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
           <StatCard
             label="Досмотрят до конца"
             value={view.retentionRate === null ? "—" : `${view.retentionRate.toFixed(0)}%`}
-            // Это доля намеренных досмотреть, а не доля просмотренного:
-            // retention_intent категориален, и процент просмотра из него не
-            // выводится. Подпись обязана называть то, что посчитано.
             hint="доля намеренных досмотреть"
             tone={view.retentionRate === null ? undefined : view.retentionRate < 70 ? "warn" : "good"}
+          />
+          <StatCard
+            label="Досмотрено"
+            value={view.watchedShare === null ? "—" : `${view.watchedShare.toFixed(0)}%`}
+            hint={
+              view.watchedShare === null
+                ? "в анкете не было вопроса о доле просмотра"
+                : "средняя доля просмотренного"
+            }
+            tone={view.watchedShare === null ? undefined : view.watchedShare < 60 ? "warn" : "good"}
           />
           <StatCard
             label="Эмоциональный индекс"

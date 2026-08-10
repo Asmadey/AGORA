@@ -145,6 +145,7 @@ def aggregate(
         "core_scores_mean": _core_means(bodies),
         "nps": _nps(bodies),
         "retention_rate": _retention_rate(bodies),
+        "watched_share_mean": _watched_share(bodies),
         "emotional_index": _emotional_index(bodies),
         "top_emotions": _top_emotions(bodies),
         "sample_size": len(kept),
@@ -294,6 +295,29 @@ def _retention_rate(bodies: list[dict[str, Any]]) -> float | None:
     if not known:
         return None
     return round(sum(1 for s in known if s == "continue") * 100.0 / len(known), 4)
+
+
+def _watched_share(bodies: list[dict[str, Any]]) -> float | None:
+    """
+    Средняя доля просмотренного, в процентах.
+
+    Отдельно от `retention_rate`, а не вместо него: `retention_intent`
+    категориален («скорее досмотреть» / «скорее выключить»), и процент из него
+    не выводится никаким честным способом. Это две разные величины — намерение
+    и поведение, — и одна не заменяет другую.
+
+    Поле необязательное: оно появляется в ответе, только если в анкете есть
+    вопрос типа `watched_share`. Его отсутствие даёт None, а не ноль.
+    """
+    values = [
+        v for v in (_num((b.get("perception") or {}).get("watched_share_pct"))
+                    for b in bodies)
+        # Вне шкалы 0–100 — испорченный ответ, а не крайнее значение: модель
+        # могла отдать долю единицей. Втянутая в среднее единица занижает
+        # досмотр на порядок и выглядит правдоподобно.
+        if v is not None and 0.0 <= v <= 100.0
+    ]
+    return round(statistics.fmean(values), 4) if values else None
 
 
 def _emotional_index(bodies: list[dict[str, Any]]) -> float | None:

@@ -21,7 +21,8 @@ import type { SurveyQuestion, QuestionType } from "@/lib/agora-types";
 export const QUESTION_TYPES: { v: QuestionType; label: string; hint: string }[] = [
   { v: "scale", label: "Шкала", hint: "числовая оценка в заданных границах" },
   { v: "emotions", label: "Эмоции", hint: "набор эмоций, вызванных материалом" },
-  { v: "retention", label: "Удержание", hint: "момент, где persona перестала бы смотреть" },
+  { v: "retention", label: "Удержание", hint: "досмотрел бы или выключил" },
+  { v: "watched_share", label: "Доля просмотра", hint: "какую часть ролика досмотрел бы, 0–100%" },
   { v: "recommendation", label: "Рекомендация", hint: "порекомендует ли и кому" },
   { v: "open", label: "Открытый", hint: "свободный ответ текстом" },
 ];
@@ -37,6 +38,11 @@ export const BASE_QUESTIONS: SurveyQuestion[] = [
   { id: "base-3", baseKey: "acting", label: "Актёрская игра", type: "scale", scaleMin: 1, scaleMax: 10 },
   { id: "base-4", baseKey: "music", label: "Музыка", type: "scale", scaleMin: 1, scaleMax: 10 },
   { id: "base-5", baseKey: "cinematography", label: "Операторская работа", type: "scale", scaleMin: 1, scaleMax: 10 },
+  // Не базовый критерий (baseKey нет — их ровно пять, это проверяет валидатор),
+  // а системный вопрос: он подставляется в новую анкету по умолчанию и
+  // удаляется как обычный. Без него секция «Досмотрено, %» в отчёте пуста —
+  // взять это число больше неоткуда, retention_intent категориален.
+  { id: "base-6", label: "Какую часть ролика вы бы досмотрели", type: "watched_share", scaleMin: 0, scaleMax: 100 },
 ];
 
 /** Базовый критерий считается изменённым, если разошлись подпись, тип или шкала. */
