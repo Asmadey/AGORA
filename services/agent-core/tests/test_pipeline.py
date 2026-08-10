@@ -195,36 +195,53 @@ def test_broken_snapshot_does_not_raise():
     assert ProgressWriter(valkey, "run-10").snapshot() == {}
 
 
-# ─── Незаконченные этапы ─────────────────────────────────────────────────────
+# ─── Отказ узла: «этапа нет» против «входа нет» ──────────────────────────────
+#
+# Здесь стояла проверка test_unimplemented_stages_fail_loudly: она перечисляла
+# qa (#19) и analytics (#20) и требовала от обоих StageNotImplemented с номером
+# задачи. Оба узла написаны, и предмета у неё не осталось — последний
+# ненаписанный этап конвейера исчез вместе с #20.
+#
+# Выбрасывать требование вместе с проверкой было бы неверно: правило не в том,
+# что qa и analytics отказывают, а в том, ЧЕМ отказывает узел. Оно переживает
+# конкретные задачи, поэтому переписано в форме, которая не зависит от того,
+# сколько этапов ещё не написано.
+#
+# История, из-за которой это важно: пока qa был заглушкой, старая проверка
+# ждала StageNotImplemented; после реализации она покраснела в CI — и поймала
+# ровно то, что должна была, смену контракта узла. Но если из такой проверки
+# вычёркивать узел за узлом по мере написания, к концу графа от требования не
+# останется ничего.
 
 
-def test_unimplemented_stages_fail_loudly():
-    """Ненаписанный этап обязан отказывать с номером задачи, а не возвращать пустоту."""
-    from agent_core.pipeline.nodes import StageNotImplemented, analytics
-
-    with pytest.raises(StageNotImplemented) as e:
-        analytics(new_state(task_id="t", tenant_id="x"))
-    assert "#20" in str(e.value)
-
-
-def test_implemented_stage_without_input_fails_as_missing_input():
+@pytest.mark.parametrize("node_name", ["qa", "analytics"])
+def test_stage_without_input_fails_as_missing_input(node_name):
     """
     Реализованный этап без входа поднимает ValueError, а не StageNotImplemented.
 
-    Проверка появилась вместе с #19 и стоит здесь по конкретному поводу. Пока
-    узел qa был заглушкой, соседняя проверка ждала от него StageNotImplemented;
-    когда узел дописали, она покраснела — и это правильное поведение, она
-    поймала смену контракта. Но список ненаписанных этапов сокращается по мере
-    работы, и вычёркивать из проверки узел за узлом, ничего не оставляя взамен,
-    значит терять требование целиком.
-
-    Требование же остаётся: StageNotImplemented означает «этапа нет», а не
-    «входа нет». По первому читающий лог идёт искать ненаписанную задачу —
-    вместо отказавшего evaluate_personas, который и не дал ответов.
+    Различие не косметическое. StageNotImplemented означает «этапа нет», и по
+    нему читающий лог идёт искать ненаписанную задачу — вместо отказавшего
+    evaluate_personas, который и не дал ответов. Поэтому в тексте отказа обязан
+    стоять узел-виновник, а не номер задачи.
     """
-    from agent_core.pipeline.nodes import StageNotImplemented, qa
+    from agent_core.pipeline import nodes
 
     with pytest.raises(ValueError) as e:
-        qa(new_state(task_id="t", tenant_id="x"))
-    assert not isinstance(e.value, StageNotImplemented)
+        getattr(nodes, node_name)(new_state(task_id="t", tenant_id="x"))
+    assert not isinstance(e.value, nodes.StageNotImplemented)
     assert "evaluate_personas" in str(e.value)
+
+
+def test_stage_not_implemented_stays_available_for_future_stages():
+    """
+    Исключение «этап не написан» никуда не делось вместе с последней заглушкой.
+
+    Ф4 (#28–#31) добавит узлы, и первым их состоянием снова будет заглушка.
+    Проверка держит сам механизм: класс на месте и остаётся подтипом ошибки
+    времени выполнения, а не превращается, скажем, в ValueError — иначе
+    проверка выше перестала бы что-либо различать.
+    """
+    from agent_core.pipeline.nodes import StageNotImplemented
+
+    assert issubclass(StageNotImplemented, RuntimeError)
+    assert not issubclass(StageNotImplemented, ValueError)

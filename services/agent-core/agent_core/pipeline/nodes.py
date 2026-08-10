@@ -427,14 +427,65 @@ def qa(state: PipelineState) -> dict[str, Any]:
     return update
 
 
-# ─── Ещё не реализованные этапы ──────────────────────────────────────────────
+# ─── Аналитика и отчёт (#20) ─────────────────────────────────────────────────
 
 
 def analytics(state: PipelineState) -> dict[str, Any]:
-    raise StageNotImplemented(
-        "Analytics-агент не реализован — задача #20. Прогон остановлен на этом узле; "
-        "чекпоинт сохранён, продолжение пойдёт отсюда, а не с транскрипции"
+    """
+    Агрегат, точки риска и групповой синтез (#20).
+
+    Числовая часть считается кодом и от модели не зависит — поэтому без ключа
+    провайдера узел не падает, а отдаёт отчёт без нарратива и говорит об этом в
+    `degraded`. Отказ здесь стоил бы всего прогона: транскрипция, разбор кадров
+    и пятьсот ответов персон уже оплачены, а не хватает только текста поверх
+    посчитанных чисел.
+
+    `qa_flags` из #19 передаются дальше: ответы, помеченные на перегенерацию, в
+    агрегат не идут. Отчёт, построенный на ответах, которые сам же забраковал,
+    противоречит себе.
+    """
+    from ..analytics.report import build_report
+    from ..config import ConfigError
+
+    answers = state.get("persona_answers") or []
+    if not answers:
+        raise ValueError(
+            "считать нечего: persona_answers пуст. Узел evaluate_personas не дал "
+            "ни одного ответа — смотреть надо его отказ, а не этот"
+        )
+
+    degraded: list[str] = []
+    model = None
+    try:
+        from ..analytics.report import QwenAnalystClient
+
+        model = QwenAnalystClient()
+    except ConfigError as exc:
+        degraded.append(f"analytics: аналитик не поднят ({exc}); собран только агрегат")
+
+    template, why = _prompt("analytics.report", state)
+    if why:
+        degraded.append(why)
+
+    report = build_report(
+        answers=answers,
+        pack=state.get("content_pack_compact") or state.get("content_pack_full") or {},
+        survey=state.get("survey") or {},
+        qa_flags=state.get("qa_flags") or [],
+        model=model,
+        template=template,
+        replication_count=int(state.get("replication_count") or 1),
+        artifact_path=workdir(state) / "report.json",
     )
+
+    # Статус прогона здесь не выставляется: REPORT_READY ставит tasks.py после
+    # того, как граф дошёл до конца. Два места, пишущих один статус, рано или
+    # поздно разойдутся, и «отчёт готов» появилось бы раньше, чем отчёт записан.
+    update: dict[str, Any] = {"report": report}
+    degraded.extend(report.get("degraded") or [])
+    if degraded:
+        update["degraded"] = degraded
+    return update
 
 
 DEFAULT_NODES = {
