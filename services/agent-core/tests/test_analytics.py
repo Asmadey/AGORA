@@ -397,3 +397,47 @@ def test_watched_share_respects_qa_exclusion():
     flags = [{"persona_id": "bad", "replication": 0, "verdict": "regenerate"}]
     agg = aggregate([watched("p0", 90), watched("bad", 10)], qa_flags=flags)
     assert agg["watched_share_mean"] == 90.0
+
+
+# ─── Персоны как запасной источник среза ─────────────────────────────────────
+
+
+def persona_row(pid, *, age_group="25-34", geo="столицы", gender="жен"):
+    return {"id": pid, "dna": {"demographics": {
+        "age_group": age_group, "geo": geo, "gender": gender, "age": 30}}}
+
+
+def test_personas_fill_the_segment_when_the_card_has_none():
+    """
+    Прогоны, сохранённые до появления среза в карточке, разрез всё же получают —
+    если состав аудитории передан явно.
+    """
+    answers = [answer(f"p{i}") for i in range(6)]
+    personas = [persona_row(f"p{i}", age_group="18-24") for i in range(6)]
+    by_age = aggregate(answers, personas=personas)["segment_breakdown"]["age_group"]
+    assert by_age["18-24"]["personas"] == 6
+
+
+def test_card_segment_wins_over_the_persona():
+    """
+    Карточка главнее реестра. Персону могли отредактировать после прогона, и
+    тогда реестр описывает не ту аудиторию, на которой отчёт посчитан. Молча
+    подменить срез значило бы задним числом переписать результат исследования.
+    """
+    answers = cohort(6, age_group="18-24", prefix="y")
+    personas = [persona_row(f"y{i}", age_group="60+") for i in range(6)]
+    by_age = aggregate(answers, personas=personas)["segment_breakdown"]["age_group"]
+    assert "18-24" in by_age
+    assert "60+" not in by_age
+
+
+def test_personas_absent_from_the_run_are_ignored():
+    """Реестр шире прогона: в нём персоны, которых в этом исследовании не было."""
+    answers = [answer(f"p{i}") for i in range(6)]
+    personas = [persona_row(f"p{i}") for i in range(50)]
+    breakdown = aggregate(answers, personas=personas)["segment_breakdown"]
+    assert breakdown["geo"]["столицы"]["personas"] == 6
+
+
+def test_no_personas_and_no_segment_still_gives_none():
+    assert aggregate([answer("p0")], personas=[])["segment_breakdown"] is None

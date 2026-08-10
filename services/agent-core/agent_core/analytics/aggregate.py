@@ -135,6 +135,7 @@ def aggregate(
     survey: dict[str, Any] | None = None,
     qa_flags: list[dict[str, Any]] | None = None,
     replication_count: int = 1,
+    personas: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Числовая часть отчёта. Ничего не спрашивает у модели и ничего не меняет во входе."""
     answers = copy.deepcopy(list(answers))
@@ -154,7 +155,7 @@ def aggregate(
         "per_persona": {},
         "replication_bounds": {},
         "replication_stability": None,
-        "segment_breakdown": _segment_breakdown(kept),
+        "segment_breakdown": _segment_breakdown(kept, personas),
     }
     _ = survey  # разбор ответов анкеты — задача отчёта (#21), не агрегата
 
@@ -196,7 +197,20 @@ def _replication_bounds(
     return out
 
 
-def _segment_breakdown(kept: list[dict[str, Any]]) -> dict[str, Any] | None:
+def _segment_of_persona(persona: dict[str, Any]) -> dict[str, str]:
+    """Три поля разреза из DNA персоны. Пустые значения не попадают."""
+    demographics = (persona.get("dna") or {}).get("demographics") or {}
+    return {
+        field: str(demographics[field])
+        for field in SEGMENT_DIMENSIONS
+        if demographics.get(field)
+    }
+
+
+def _segment_breakdown(
+    kept: list[dict[str, Any]],
+    personas: list[dict[str, Any]] | None = None,
+) -> dict[str, Any] | None:
     """
     Те же средние, посчитанные отдельно по группам аудитории.
 
@@ -204,16 +218,35 @@ def _segment_breakdown(kept: list[dict[str, Any]]) -> dict[str, Any] | None:
     делать, а «8.1 у 18–24 против 4.2 у 45+» — уже вывод о том, на кого ролик
     работает.
 
-    Срез читается из поля `segment` самого ответа, а не из переданных персон.
-    Причина в том, что агрегат считается и при перепрогоне отчёта по сохранённым
-    ответам, когда состав аудитории уже не под рукой: то, что не записали в
-    момент прогона, потом не восстанавливается.
+    Основной источник среза — поле `segment` самого ответа: его записывает
+    respondent-агент в момент прогона, и оно уезжает вместе с карточкой в Mongo.
+    `personas` — запасной путь для ответов, где среза нет: прогоны, сохранённые
+    до его появления, и пересчёт отчёта по сохранённым ответам.
 
-    Возвращает None, если срез не записан ни в одном ответе. Пустой словарь
+    Порядок именно такой, а не наоборот. Карточка описывает ту аудиторию, на
+    которой отчёт посчитан, а реестр — сегодняшнюю: персону могли отредактировать
+    или сгенерировать заново. Дать реестру перебить карточку значило бы задним
+    числом переписать результат исследования, и никакого следа этого в отчёте бы
+    не осталось.
+
+    Возвращает None, если среза нет ни в ответах, ни в персонах. Пустой словарь
     означал бы «посчитали, групп нет» — на экране это неотличимо от аудитории
     без сегментов, то есть от результата.
     """
-    if not any(isinstance(a.get("segment"), dict) for a in kept):
+    by_persona = {
+        str(p.get("id")): _segment_of_persona(p)
+        for p in (personas or [])
+        if isinstance(p, dict) and p.get("id")
+    }
+
+    def segment_of(item: dict[str, Any]) -> dict[str, str] | None:
+        own = item.get("segment")
+        if isinstance(own, dict) and own:
+            return {k: str(v) for k, v in own.items() if v}
+        fallback = by_persona.get(str(item.get("persona_id")))
+        return fallback or None
+
+    if not any(segment_of(a) for a in kept):
         return None
 
     out: dict[str, Any] = {d: {} for d in SEGMENT_DIMENSIONS}
@@ -222,8 +255,8 @@ def _segment_breakdown(kept: list[dict[str, Any]]) -> dict[str, Any] | None:
     for dimension in SEGMENT_DIMENSIONS:
         groups: dict[str, list[dict[str, Any]]] = {}
         for item in kept:
-            segment = item.get("segment")
-            if not isinstance(segment, dict):
+            segment = segment_of(item)
+            if segment is None:
                 continue
             value = segment.get(dimension)
             if not isinstance(value, str) or not value:
