@@ -90,6 +90,7 @@ STORE_CASES = [
     "каждая запись несёт tenant_id — в Mongo изоляцию держит только код",
     "карточек ровно столько, сколько ответов",
     "повторное сохранение не плодит документы",
+    "карточка несёт срез DNA — иначе посегментный разрез не восстановить",
 ]
 
 if save_report is None:
@@ -124,6 +125,7 @@ else:
 
     def answer(i: int) -> dict:
         return {"persona_id": f"p{i}", "persona_name": f"Персона {i}", "replication": 0,
+                "segment": {"age_group": "25-34", "geo": "столицы", "gender": "жен"},
                 "answer": {"scores": {"overall_impression": 7},
                            "verbatims": {"why_impression": "на 00:40 зацепило"},
                            "grounding_refs": ["00:40 спор на кухне"]}}
@@ -152,6 +154,13 @@ else:
                     answers=answers, qa_flags=[])
         check(STORE_CASES[3], len(db[REPORT_PERSONAS].docs) == len(answers),
               f"после повторного сохранения карточек {len(db[REPORT_PERSONAS].docs)}")
+
+        cards = list(db[REPORT_PERSONAS].docs.values())
+        with_segment = [c for c in cards
+                        if (c.get("segment") or {}).get("age_group") == "25-34"]
+        check(STORE_CASES[4], len(with_segment) == len(answers),
+              f"карточек со срезом {len(with_segment)} из {len(answers)}; "
+              f"состав первой: {sorted(cards[0]) if cards else '—'}")
     except Exception as e:  # noqa: BLE001
         import traceback
         traceback.print_exc()

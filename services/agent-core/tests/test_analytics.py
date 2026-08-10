@@ -210,3 +210,97 @@ def test_model_failure_does_not_lose_the_aggregate():
     report = build_report(answers=[answer("p0")], pack=PACK, model=Broken())
     assert report["aggregate"]["sample_size"] == 1
     assert any("провайдер недоступен" in d for d in report["degraded"])
+
+
+# ─── Посегментный срез ───────────────────────────────────────────────────────
+
+
+def seg_answer(persona, *, age_group, geo, gender, replication=0, overall=7):
+    """Ответ с записанным срезом DNA — так его кладёт respondent/run.py."""
+    a = answer(persona, replication=replication, overall=overall)
+    a["segment"] = {"age_group": age_group, "geo": geo, "gender": gender}
+    return a
+
+
+def cohort(n, *, age_group="25-34", geo="столицы", gender="жен", overall=7, prefix="p"):
+    return [
+        seg_answer(f"{prefix}{i}", age_group=age_group, geo=geo, gender=gender,
+                   overall=overall)
+        for i in range(n)
+    ]
+
+
+def test_no_segment_data_gives_none_not_empty_dict():
+    """
+    «Срез не считали» и «посчитали, групп нет» — разные факты.
+
+    Пустой словарь на экране выглядит как аудитория без сегментов, то есть как
+    результат. None говорит, что данных для среза в прогоне не было.
+    """
+    agg = aggregate([answer("p0")])
+    assert agg["segment_breakdown"] is None
+
+
+def test_breakdown_splits_by_each_dimension():
+    answers = (
+        cohort(6, age_group="18-24", overall=9, prefix="young")
+        + cohort(6, age_group="45-59", overall=4, prefix="old")
+    )
+    by_age = aggregate(answers)["segment_breakdown"]["age_group"]
+    assert by_age["18-24"]["core_scores_mean"]["overall_impression"] == 9.0
+    assert by_age["45-59"]["core_scores_mean"]["overall_impression"] == 4.0
+    assert by_age["18-24"]["personas"] == 6
+
+
+def test_small_segment_is_suppressed_not_shown():
+    """Средняя по трём персонам — шум, который на экране неотличим от факта."""
+    answers = cohort(6, geo="столицы", prefix="a") + cohort(3, geo="иные НП", prefix="b")
+    by_geo = aggregate(answers)["segment_breakdown"]["geo"]
+    assert "столицы" in by_geo
+    assert "иные НП" not in by_geo
+
+
+def test_suppressed_segment_is_reported_not_silently_dropped():
+    """Молча пропавшая группа читается как потерянные данные."""
+    answers = cohort(6, geo="столицы", prefix="a") + cohort(3, geo="иные НП", prefix="b")
+    suppressed = aggregate(answers)["segment_breakdown"]["suppressed"]
+    assert {"dimension": "geo", "value": "иные НП", "personas": 3} in suppressed
+
+
+def test_threshold_counts_personas_not_answers():
+    """
+    Порог по персонам, а не по ответам.
+
+    Две персоны при перекрытии ×3 дают шесть ответов. Считать их шестью
+    наблюдениями — это выдать удвоенную уверенность за расширенную выборку:
+    повтор одной персоны не независим от неё самой.
+    """
+    answers = [
+        seg_answer(f"p{i}", age_group="60+", geo="столицы", gender="жен", replication=r)
+        for i in range(2) for r in range(3)
+    ]
+    breakdown = aggregate(answers, replication_count=3)["segment_breakdown"]
+    assert "60+" not in breakdown["age_group"]
+    assert any(s["value"] == "60+" and s["personas"] == 2
+               for s in breakdown["suppressed"])
+
+
+def test_qa_flagged_answers_leave_the_segment_too():
+    """Иначе сегмент считался бы по ответам, которые отчёт сам забраковал."""
+    answers = cohort(6, age_group="18-24", overall=9, prefix="y")
+    answers.append(seg_answer("bad", age_group="18-24", geo="столицы",
+                              gender="жен", overall=1))
+    flags = [{"persona_id": "bad", "replication": 0, "verdict": "regenerate"}]
+    by_age = aggregate(answers, qa_flags=flags)["segment_breakdown"]["age_group"]
+    assert by_age["18-24"]["core_scores_mean"]["overall_impression"] == 9.0
+    assert by_age["18-24"]["personas"] == 6
+
+
+def test_partial_segment_does_not_break_other_dimensions():
+    """Ответ без geo не должен обнулять разрез по возрасту."""
+    answers = cohort(6, age_group="18-24", prefix="y")
+    for a in answers[:2]:
+        a["segment"].pop("geo")
+    breakdown = aggregate(answers)["segment_breakdown"]
+    assert breakdown["age_group"]["18-24"]["personas"] == 6
+    assert "столицы" not in breakdown["geo"]

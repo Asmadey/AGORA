@@ -57,6 +57,21 @@ TOP_EMOTIONS = 5
 #: а не измерено. Калибруется на первых прогонах с replication_count = 3.
 STABILITY_ZERO_STDEV = 3.0
 
+#: Измерения посегментного среза. Взяты из `demographics` в Persona DNA — те
+#: три поля, по которым генератор аудитории выравнивает выборку на корпус
+#: (`persona/generator.py`). Разрез по полю, которое не контролируется при
+#: генерации, показывал бы перекос выборки, а не различие групп.
+SEGMENT_DIMENSIONS = ("age_group", "geo", "gender")
+
+#: Сколько персон должно быть в сегменте, чтобы его показывать. Средняя по
+#: четверым выглядит на экране ровно так же, как средняя по сотне, и решение по
+#: ней принимают такое же — а держится она на четырёх ответах.
+#:
+#: Значение ПРЕДВАРИТЕЛЬНОЕ: пять — это не результат расчёта мощности, а нижняя
+#: граница, ниже которой одна персона двигает среднее больше чем на балл.
+#: Калибруется на первых прогонах с настоящей аудиторией.
+MIN_SEGMENT_PERSONAS = 5
+
 _TIMECODE = re.compile(r"(?<![\d:])(\d{1,2}):([0-5]\d)(?::([0-5]\d))?(?![\d:])")
 
 
@@ -137,6 +152,7 @@ def aggregate(
         "replication_count": replication_count,
         "per_persona": {},
         "replication_stability": None,
+        "segment_breakdown": _segment_breakdown(kept),
     }
     _ = survey  # разбор ответов анкеты — задача отчёта (#21), не агрегата
 
@@ -144,6 +160,64 @@ def aggregate(
         result["per_persona"] = _per_persona_bounds(kept)
         result["replication_stability"] = _stability(result["per_persona"])
     return result
+
+
+def _segment_breakdown(kept: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """
+    Те же средние, посчитанные отдельно по группам аудитории.
+
+    Ради этого разреза сервис и нужен: «6.4 в среднем» — число, с которым нечего
+    делать, а «8.1 у 18–24 против 4.2 у 45+» — уже вывод о том, на кого ролик
+    работает.
+
+    Срез читается из поля `segment` самого ответа, а не из переданных персон.
+    Причина в том, что агрегат считается и при перепрогоне отчёта по сохранённым
+    ответам, когда состав аудитории уже не под рукой: то, что не записали в
+    момент прогона, потом не восстанавливается.
+
+    Возвращает None, если срез не записан ни в одном ответе. Пустой словарь
+    означал бы «посчитали, групп нет» — на экране это неотличимо от аудитории
+    без сегментов, то есть от результата.
+    """
+    if not any(isinstance(a.get("segment"), dict) for a in kept):
+        return None
+
+    out: dict[str, Any] = {d: {} for d in SEGMENT_DIMENSIONS}
+    suppressed: list[dict[str, Any]] = []
+
+    for dimension in SEGMENT_DIMENSIONS:
+        groups: dict[str, list[dict[str, Any]]] = {}
+        for item in kept:
+            segment = item.get("segment")
+            if not isinstance(segment, dict):
+                continue
+            value = segment.get(dimension)
+            if not isinstance(value, str) or not value:
+                continue
+            groups.setdefault(value, []).append(item)
+
+        for value, items in sorted(groups.items()):
+            # Персоны, а не ответы: повтор одной персоны не независим от неё
+            # самой, и считать перекрытие ×3 утроенной выборкой значит выдать
+            # утроенную уверенность за расширенные данные.
+            personas = {str(i.get("persona_id")) for i in items}
+            if len(personas) < MIN_SEGMENT_PERSONAS:
+                suppressed.append({
+                    "dimension": dimension, "value": value, "personas": len(personas),
+                })
+                continue
+            bodies = [_body(i) for i in items]
+            out[dimension][value] = {
+                "core_scores_mean": _core_means(bodies),
+                "nps": _nps(bodies),
+                "retention_rate": _retention_rate(bodies),
+                "personas": len(personas),
+                "answers": len(items),
+            }
+
+    out["suppressed"] = suppressed
+    out["min_personas"] = MIN_SEGMENT_PERSONAS
+    return out
 
 
 def _core_means(bodies: list[dict[str, Any]]) -> dict[str, float | None]:
