@@ -4,65 +4,83 @@ import { useState } from "react";
 import Link from "next/link";
 import { ChevronDown, MessageCircle, AlertTriangle } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { CRITERIA, CRITERIA_LABELS, type PersonaAnswer, type Persona } from "@/lib/agora-types";
+import { CRITERIA, CRITERIA_LABELS } from "@/lib/agora-types";
+import type { AnswerView } from "@/lib/report-view";
 import { TimecodeRef } from "./Primitives";
 
 /**
  * Аккордеон по персонам (PRD §5.E, §6).
  *
- * Свёрнутая строка показывает то, по чему принимают решение: балл и досмотр.
- * Развёрнутая — обоснование с таймкодами. Смысл в том, чтобы средний балл всегда
- * можно было раскрыть до конкретной реплики конкретной персоны — иначе агрегат
- * ничем не отличается от догадки.
+ * Свёрнутая строка показывает то, по чему принимают решение: балл и намерение
+ * досмотреть. Развёрнутая — обоснование с таймкодами. Смысл в том, чтобы
+ * средний балл всегда можно было раскрыть до конкретной реплики конкретной
+ * персоны — иначе агрегат ничем не отличается от догадки.
+ *
+ * Компонент получает разобранные карточки отчёта, а не персон из реестра.
+ * Персону могли отредактировать или удалить после прогона, а отчёт обязан
+ * показывать ту аудиторию, на которой посчитан.
+ *
+ * Ключ строки — персона И номер повтора: при перекрытии ×3 одна персона даёт
+ * три карточки, и ключ по одному persona_id схлопнул бы их в одну строку.
  */
 export function PersonaAccordion({
-  personas,
   answers,
   runId,
 }: {
-  personas: Persona[];
-  answers: PersonaAnswer[];
+  answers: AnswerView[];
   runId: string;
 }) {
-  const [openId, setOpenId] = useState<string | null>(null);
+  const [openKey, setOpenKey] = useState<string | null>(null);
+
+  if (answers.length === 0) {
+    return (
+      <p className="rounded-lg border border-border p-5 text-sm text-muted-foreground">
+        Ответов нет. Если прогон завершён, смотрите причины на экране прогресса —
+        пустой отчёт при успешном прогоне означает, что все ответы забракованы QA.
+      </p>
+    );
+  }
 
   return (
     <div className="divide-y divide-border overflow-hidden rounded-lg border border-border">
       {answers.map((a) => {
-        const persona = personas.find((p) => p.id === a.personaId);
-        if (!persona) return null;
-        const open = openId === a.personaId;
-        const overall = a.scores.overall_impression;
+        const key = `${a.personaId}#${a.replication}`;
+        const open = openKey === key;
 
         return (
-          <div key={a.personaId} className="bg-[hsl(222_47%_7%)]">
+          <div key={key} className="bg-[hsl(222_47%_7%)]">
             <button
-              onClick={() => setOpenId(open ? null : a.personaId)}
+              onClick={() => setOpenKey(open ? null : key)}
               className="flex w-full items-center gap-4 px-5 py-4 text-left transition-colors hover:bg-secondary/40"
               aria-expanded={open}
             >
               <div
                 className="grid h-9 w-9 shrink-0 place-items-center rounded-full text-xs font-semibold"
                 style={{
-                  backgroundColor: `hsl(${persona.avatarHue} 45% 22%)`,
-                  color: `hsl(${persona.avatarHue} 70% 78%)`,
+                  backgroundColor: `hsl(${a.avatarHue} 45% 22%)`,
+                  color: `hsl(${a.avatarHue} 70% 78%)`,
                 }}
               >
-                {persona.name.split(" ").map((w) => w[0]).join("")}
+                {a.initials}
               </div>
 
               <div className="min-w-0 flex-1">
                 <p className="truncate text-sm font-medium">
-                  {persona.name.split(" ")[0]}, {persona.dna.demographics.age}
+                  {a.personaName}
+                  {a.replication > 0 && (
+                    <span className="ml-2 text-xs text-muted-foreground">
+                      повтор {a.replication + 1}
+                    </span>
+                  )}
                 </p>
                 <p className="truncate text-xs text-muted-foreground">
-                  {persona.jobTitle} · {persona.location}
+                  {a.segmentLabel ?? "срез не записан"}
                 </p>
               </div>
 
               {a.qaFlags.length > 0 && (
                 <span
-                  title={`QA-флаги: ${a.qaFlags.join(", ")}`}
+                  title={`QA: ${a.qaFlags.join("; ")}`}
                   className="hidden items-center gap-1 text-xs text-amber-400 sm:inline-flex"
                 >
                   <AlertTriangle className="h-3.5 w-3.5" />
@@ -70,19 +88,25 @@ export function PersonaAccordion({
                 </span>
               )}
 
-              <div className="hidden w-24 shrink-0 text-right sm:block">
-                <p className="text-xs text-muted-foreground">Досмотр</p>
-                <p className="text-sm tabular-nums">{a.watchedUntil}%</p>
+              <div className="hidden w-32 shrink-0 text-right sm:block">
+                <p className="text-xs text-muted-foreground">Досмотрит</p>
+                <p className="truncate text-sm">{a.retentionIntent ?? "—"}</p>
               </div>
 
               <div className="w-14 shrink-0 text-right">
                 <p
                   className={cn(
                     "text-xl font-semibold tabular-nums",
-                    overall >= 8 ? "text-emerald-400" : overall >= 6.5 ? "" : "text-amber-400",
+                    a.overall === null
+                      ? "text-muted-foreground"
+                      : a.overall >= 8
+                        ? "text-emerald-400"
+                        : a.overall >= 6.5
+                          ? ""
+                          : "text-amber-400",
                   )}
                 >
-                  {overall.toFixed(1)}
+                  {a.overall === null ? "—" : a.overall.toFixed(1)}
                 </p>
               </div>
 
@@ -100,32 +124,46 @@ export function PersonaAccordion({
                   {CRITERIA.map((c) => (
                     <div key={c}>
                       <p className="text-xs text-muted-foreground">{CRITERIA_LABELS[c]}</p>
-                      <p className="mt-0.5 text-lg font-semibold tabular-nums">{a.scores[c]}</p>
+                      <p className="mt-0.5 text-lg font-semibold tabular-nums">
+                        {a.scores[c] ?? "—"}
+                      </p>
                     </div>
                   ))}
                 </div>
 
-                <blockquote className="mt-5 border-l-2 border-border pl-4 text-sm leading-relaxed">
-                  «{a.verbatim}»
-                </blockquote>
+                {a.verbatim && (
+                  <blockquote className="mt-5 border-l-2 border-border pl-4 text-sm leading-relaxed">
+                    «{a.verbatim}»
+                  </blockquote>
+                )}
 
-                <div className="mt-4 flex flex-wrap gap-2">
-                  {a.groundingRefs.map((r) => (
-                    <TimecodeRef key={r.timecode} timecode={r.timecode} note={r.note} />
-                  ))}
-                </div>
+                {a.groundingRefs.length > 0 && (
+                  <div className="mt-4 flex flex-wrap gap-2">
+                    {a.groundingRefs.map((r) => (
+                      <TimecodeRef key={`${r.timecode}${r.note}`} timecode={r.timecode} note={r.note} />
+                    ))}
+                  </div>
+                )}
+
+                {a.qaFlags.length > 0 && (
+                  <ul className="mt-4 space-y-1 text-xs text-amber-400">
+                    {a.qaFlags.map((f) => (
+                      <li key={f}>— {f}</li>
+                    ))}
+                  </ul>
+                )}
 
                 <div className="mt-5 flex flex-wrap items-center gap-x-5 gap-y-2 text-xs text-muted-foreground">
-                  <span>Порекомендует: {a.wouldRecommend ? "да" : "нет"}</span>
-                  <span>Эмоции: {a.emotions.join(", ")}</span>
+                  {a.nps !== null && <span>Порекомендует: {a.nps} из 10</span>}
+                  {a.emotions.length > 0 && <span>Эмоции: {a.emotions.join(", ")}</span>}
                   <Link
-                    href={`/personas/${persona.id}`}
+                    href={`/personas/${a.personaId}`}
                     className="underline-offset-4 hover:text-foreground hover:underline"
                   >
                     Карточка персоны
                   </Link>
                   <Link
-                    href={`/runs/${runId}/chat?persona=${persona.id}`}
+                    href={`/runs/${runId}/chat?persona=${a.personaId}`}
                     className="inline-flex items-center gap-1.5 underline-offset-4 hover:text-foreground hover:underline"
                   >
                     <MessageCircle className="h-3.5 w-3.5" />

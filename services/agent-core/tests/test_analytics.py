@@ -304,3 +304,46 @@ def test_partial_segment_does_not_break_other_dimensions():
     breakdown = aggregate(answers)["segment_breakdown"]
     assert breakdown["age_group"]["18-24"]["personas"] == 6
     assert "столицы" not in breakdown["geo"]
+
+
+# ─── Разброс между повторами на уровне критерия ──────────────────────────────
+
+
+def test_no_replication_gives_no_bounds():
+    """При одном прогоне разбрасываться нечему, и пустая полоса на шкале врёт."""
+    agg = aggregate([answer("p0")], replication_count=1)
+    assert agg["replication_bounds"] == {}
+
+
+def test_bounds_describe_one_persona_spread_not_the_crowd():
+    """
+    Полоса на шкале подписана «разброс между повторами», и она обязана мерить
+    именно это. Разброс между персонами — другая величина: две согласные между
+    собой персоны с разными оценками дали бы широкую полосу там, где ни одна
+    персона сама себе не противоречила.
+    """
+    answers = [
+        # p0 стабильна: 7,7,7. p1 скачет: 4,10 — среднее то же, разброс разный.
+        answer("p0", replication=0, overall=7),
+        answer("p0", replication=1, overall=7),
+        answer("p1", replication=0, overall=4),
+        answer("p1", replication=1, overall=10),
+    ]
+    bounds = aggregate(answers, replication_count=2)["replication_bounds"]
+    overall = bounds["overall_impression"]
+    # Средние границы по персонам: min (7+4)/2 = 5.5, max (7+10)/2 = 8.5.
+    assert overall["min"] == 5.5
+    assert overall["max"] == 8.5
+    assert overall["mean"] == 7.0
+
+
+def test_single_replication_persona_does_not_widen_the_band():
+    """Персона с одним ответом разброса не имеет — её нельзя считать нулевым."""
+    answers = [
+        answer("p0", replication=0, overall=4),
+        answer("p0", replication=1, overall=10),
+        answer("p1", replication=0, overall=7),
+    ]
+    bounds = aggregate(answers, replication_count=2)["replication_bounds"]
+    assert bounds["overall_impression"]["min"] == 4.0
+    assert bounds["overall_impression"]["max"] == 10.0

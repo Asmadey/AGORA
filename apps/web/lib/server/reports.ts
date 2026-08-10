@@ -48,6 +48,13 @@ export interface PersonaCard {
   personaId: string;
   personaName: string | null;
   replication: number;
+  /**
+   * Срез DNA, записанный в момент прогона (`agent_core/respondent/run.py`).
+   * Пустой объект у карточек, сохранённых до появления среза, — читается как
+   * «не записывали», и подставлять вместо него данные персоны нельзя: персону
+   * могли отредактировать после прогона.
+   */
+  segment: Record<string, string>;
   answer: Record<string, unknown>;
   qaFlags: Record<string, unknown>[];
 }
@@ -102,8 +109,18 @@ export async function loadReportPersonas(
       personaId: String(d.persona_id ?? ""),
       personaName: typeof d.persona_name === "string" ? d.persona_name : null,
       replication: typeof d.replication === "number" ? d.replication : 0,
+      segment: isStringMap(d.segment) ? d.segment : {},
       answer: (d.answer ?? {}) as Record<string, unknown>,
       qaFlags: Array.isArray(d.qa_flags) ? (d.qa_flags as Record<string, unknown>[]) : [],
     })),
   };
+}
+
+function isStringMap(value: unknown): value is Record<string, string> {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    !Array.isArray(value) &&
+    Object.values(value).every((v) => typeof v === "string")
+  );
 }

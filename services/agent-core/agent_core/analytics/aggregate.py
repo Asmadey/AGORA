@@ -151,6 +151,7 @@ def aggregate(
         "excluded_by_qa": len(answers) - len(kept),
         "replication_count": replication_count,
         "per_persona": {},
+        "replication_bounds": {},
         "replication_stability": None,
         "segment_breakdown": _segment_breakdown(kept),
     }
@@ -158,8 +159,40 @@ def aggregate(
 
     if replication_count > 1:
         result["per_persona"] = _per_persona_bounds(kept)
+        result["replication_bounds"] = _replication_bounds(result["per_persona"])
         result["replication_stability"] = _stability(result["per_persona"])
     return result
+
+
+def _replication_bounds(
+    per_persona: dict[str, dict[str, Any]],
+) -> dict[str, dict[str, float]]:
+    """
+    Разброс между повторами, сведённый к критерию — то, что рисует полоса на шкале.
+
+    Усреднение персональных границ, а не их объединение. Объединение (минимум
+    из минимумов, максимум из максимумов) описывало бы самый нестабильный ответ
+    одной персоны, а полоса подписана «разброс между повторами» и читается как
+    типичный. Один выброс растянул бы её на всю шкалу, и график перестал бы
+    различать стабильный прогон от неустойчивого — а именно за этим на него и
+    смотрят.
+
+    Персоны с одним ответом в расчёт не идут: у них разброса нет, и считать его
+    нулевым значит занижать полосу тем сильнее, чем больше ответов потерял QA.
+    """
+    out: dict[str, dict[str, float]] = {}
+    for field in CRITERIA:
+        entries = [
+            e[field] for e in per_persona.values()
+            if isinstance(e.get(field), dict) and int(e.get("replications") or 0) > 1
+        ]
+        if not entries:
+            continue
+        out[field] = {
+            key: round(statistics.fmean([float(e[key]) for e in entries]), 4)
+            for key in ("mean", "min", "max", "stdev")
+        }
+    return out
 
 
 def _segment_breakdown(kept: list[dict[str, Any]]) -> dict[str, Any] | None:
