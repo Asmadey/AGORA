@@ -14,11 +14,16 @@ CTranslate2 и torch в каждый такой вызов: секунды на 
 там, где ни одна модель не нужна.
 
 ─── Незаконченные этапы отказывают явно ─────────────────────────────────────
-Узлы `qa` (#19) и `analytics` (#20) поднимают StageNotImplemented с номером
-задачи. Альтернатива — вернуть пустой результат — выглядела бы как успешный
-прогон с пустым отчётом, и отличить «QA ничего не нашёл» от «QA не написан»
-было бы нечем. Чекпоинтер при этом работает на пользу: когда задача будет
-сделана, прогон продолжится с этого узла, а не с транскрипции.
+Узел `analytics` (#20) поднимает StageNotImplemented с номером задачи.
+Альтернатива — вернуть пустой результат — выглядела бы как успешный прогон с
+пустым отчётом, и отличить «аналитика ничего не нашла» от «аналитика не
+написана» было бы нечем. Чекпоинтер при этом работает на пользу: когда задача
+будет сделана, прогон продолжится с этого узла, а не с транскрипции.
+
+Отсюда же граница употребления этого исключения: оно означает «этапа нет», а не
+«входа нет». Узел, которому не дали данных, поднимает ValueError — иначе
+читающий лог пойдёт искать ненаписанную задачу вместо отказавшего предыдущего
+узла.
 """
 
 from __future__ import annotations
@@ -350,14 +355,79 @@ def _load_personas(state: PipelineState) -> list[dict[str, Any]]:
         return [{"id": r[0], "name": r[1], "dna": r[2]} for r in cur.fetchall()]
 
 
-# ─── Ещё не реализованные этапы ──────────────────────────────────────────────
+# ─── Проверка ответов (#19) ──────────────────────────────────────────────────
 
 
 def qa(state: PipelineState) -> dict[str, Any]:
-    raise StageNotImplemented(
-        "QA-агент не реализован — задача #19. Прогон остановлен на этом узле; "
-        "чекпоинт сохранён, продолжение пойдёт отсюда, а не с транскрипции"
+    """
+    Проверка ответов персон: правила + судья (#19).
+
+    Материалом для проверки заземления берётся КОМПАКТНЫЙ пакет — тот самый,
+    который видела персона (#18). Полный пакет дал бы QA больше знания о ролике,
+    чем было у отвечавшего: деталь, отсутствующая в компактной форме, для
+    персоны выдумана, даже если в полной форме она есть.
+
+    Без ключа провайдера прогон не падает, а идёт одними правилами и говорит об
+    этом в `degraded`. Отказ был бы хуже: правила ловят таймкоды за пределами
+    ролика и внутренние противоречия — то есть большую часть подсаженных
+    дефектов, — и терять их из-за отсутствующего ключа незачем.
+    """
+    from ..config import ConfigError, QaConfig
+    from ..qa.run import run_qa
+
+    answers = state.get("persona_answers") or []
+    if not answers:
+        # ValueError, а не StageNotImplemented: этап написан, входа нет. Разница
+        # не косметическая — по StageNotImplemented читающий лог пойдёт искать
+        # ненаписанную задачу вместо отказавшего evaluate_personas.
+        raise ValueError(
+            "проверять нечего: persona_answers пуст. Узел evaluate_personas не дал "
+            "ни одного ответа — смотреть надо его отказ, а не этот"
+        )
+
+    degraded: list[str] = []
+    judge = None
+    try:
+        from ..qa.judge import QwenJudgeClient
+
+        judge = QwenJudgeClient()
+    except ConfigError as exc:
+        degraded.append(f"qa: судья не поднят ({exc}); проверены только правила")
+
+    try:
+        policy = QaConfig.from_env()
+    except ConfigError as exc:
+        policy = None
+        degraded.append(f"qa: политика эскалации не прочитана ({exc}); эскалации нет")
+
+    templates: dict[str, str] = {}
+    for key in ("qa.consistency", "qa.grounding", "qa.diversity"):
+        template, why = _prompt(key, state)
+        templates[key] = template
+        if why:
+            degraded.append(why)
+
+    outcome = run_qa(
+        answers=answers,
+        pack=state.get("content_pack_compact") or state.get("content_pack_full") or {},
+        personas=_load_personas(state),
+        survey=state.get("survey") or {},
+        judge=judge,
+        policy=policy,
+        templates=templates,
+        artifact_path=workdir(state) / "qa_report.json",
     )
+
+    update: dict[str, Any] = {"qa_flags": outcome.flagged}
+    degraded.extend(outcome.degraded)
+    if outcome.failures:
+        degraded.append(f"qa: отказов судьи {outcome.failures}")
+    if degraded:
+        update["degraded"] = degraded
+    return update
+
+
+# ─── Ещё не реализованные этапы ──────────────────────────────────────────────
 
 
 def analytics(state: PipelineState) -> dict[str, Any]:

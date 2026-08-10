@@ -82,21 +82,44 @@ check("каждый промпт из prompts/*.md засеян миграцие
 #
 # Литерал в SQL берётся из одинарных кавычек с удвоением внутри — обратное
 # преобразование и даёт исходный текст файла.
+#
+# Сверяется ПОСЛЕДНЕЕ присвоение шаблона, а не первое. Дефолт живёт дольше
+# одной миграции: 07 его засевает, а следующая нумерованная может переписать
+# (так задача #19 добавила confidence в три промпта qa.*). Сверка только с 07
+# требовала бы либо править применённую миграцию, что запрещено §5, либо
+# оставить проверку красной навсегда — а красная навсегда проверка перестаёт
+# читаться и уже ничего не удерживает.
+_INSERT = re.compile(
+    r"VALUES \(NULL, '(?P<key>[a-z._]+)', '(?:[^']|'')*?', '(?P<tpl>(?:[^']|'')*)'",
+    re.DOTALL,
+)
+_UPDATE = re.compile(
+    r"SET template = '(?P<tpl>(?:[^']|'')*)'.*?key = '(?P<key>[a-z._]+)'",
+    re.DOTALL,
+)
+
+# Порядок — по положению в тексте, а не по типу оператора: файлы склеены
+# отсортированными, и последний по счёту оператор для ключа и есть тот, что
+# останется в базе после прогона всех миграций.
+_assignments = [
+    (m.start(), m.group("key"), m.group("tpl").replace("''", "'"))
+    for pattern in (_INSERT, _UPDATE)
+    for m in pattern.finditer(seed_text)
+]
+latest_template: dict[str, str] = {
+    key: tpl for _, key, tpl in sorted(_assignments, key=lambda a: a[0])
+}
+
 texts_match = True
 mismatch_detail = ""
 if seed_text:
     for f in prompt_files:
-        content = f.read_text("utf-8")
-        m = re.search(
-            rf"VALUES \(NULL, '{re.escape(f.stem)}', '(?:[^']|'')*?', '((?:[^']|'')*)'",
-            seed_text,
-            re.DOTALL,
-        )
-        if not m:
+        seeded = latest_template.get(f.stem)
+        if seeded is None:
             texts_match = False
             mismatch_detail = f"ключ {f.stem} не найден в засеве"
             break
-        if m.group(1).replace("''", "'") != content:
+        if seeded != f.read_text("utf-8"):
             texts_match = False
             mismatch_detail = f"текст {f.stem} в засеве разошёлся с prompts/{f.name}"
             break
