@@ -478,6 +478,29 @@ def analytics(state: PipelineState) -> dict[str, Any]:
         artifact_path=workdir(state) / "report.json",
     )
 
+    # Отчёт обязан покинуть процесс воркера, иначе интерфейсу его читать
+    # неоткуда: состояние графа живёт в чекпоинтере, а report.json — в локальном
+    # каталоге контейнера. Отказ записи не роняет прогон: числа уже посчитаны, и
+    # терять их из-за недоступной Mongo незачем — но и молчать нельзя, иначе
+    # «отчёт не открывается» будет выглядеть как дефект интерфейса.
+    try:
+        from ..analytics.store import save_report
+        from ..mongo import mongo_db
+
+        save_report(
+            mongo_db(),
+            tenant_id=state["tenant_id"],
+            task_id=str(state["task_id"]),
+            report=report,
+            answers=answers,
+            qa_flags=state.get("qa_flags") or [],
+        )
+    except Exception as exc:  # noqa: BLE001
+        degraded.append(
+            f"analytics: отчёт не сохранён ({type(exc).__name__}: {exc}); "
+            f"интерфейс его не покажет"
+        )
+
     # Статус прогона здесь не выставляется: REPORT_READY ставит tasks.py после
     # того, как граф дошёл до конца. Два места, пишущих один статус, рано или
     # поздно разойдутся, и «отчёт готов» появилось бы раньше, чем отчёт записан.

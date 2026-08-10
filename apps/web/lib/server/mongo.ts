@@ -62,9 +62,22 @@ export interface SessionUser {
   tenantId: string;
 }
 
-async function getDraftsCollection(): Promise<Collection> {
+/**
+ * Коллекция по имени.
+ *
+ * Экспортируется, чтобы соседние модули (`reports.ts`) не заводили второй
+ * MongoClient со своими настройками: клиент здесь один на процесс, и
+ * directConnection дописан в одном месте. Имя коллекции остаётся на совести
+ * вызывающего, а вот фильтр по tenant_id — нет: он обязателен в каждом запросе,
+ * потому что в Mongo нет RLS и изоляцию держит только код.
+ */
+export async function collection(name: string): Promise<Collection> {
   const database = await getDb();
-  return database.collection("wizard_drafts");
+  return database.collection(name);
+}
+
+async function getDraftsCollection(): Promise<Collection> {
+  return collection("wizard_drafts");
 }
 
 /** Загрузить черновик визарда для проекта. tenant_id — из сессии. */
