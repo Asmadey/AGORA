@@ -85,15 +85,35 @@ def log(message: str) -> None:
 # ─── Шаги прогона ────────────────────────────────────────────────────────────
 
 
+def _why_unreachable(payload: str, base_url: str) -> str:
+    """
+    Отличает недоступный сервер от недоверенного сертификата.
+
+    Первая редакция на любой отказ советовала «проверьте BASE_URL». На
+    macOS-сборке python.org это неверный совет: адрес правильный, сервер отвечает,
+    а Python не пользуется системной связкой корневых сертификатов и не доверяет
+    валидному Let's Encrypt. Диагностика, уводящая в сторону, стоит дороже, чем
+    её отсутствие: по ней проверяют адрес, находят его верным и остаются без
+    объяснения.
+    """
+    if "CERTIFICATE_VERIFY_FAILED" in payload or "SSL" in payload:
+        return (
+            f"сертификат {base_url} не проверен. Сам адрес при этом рабочий — "
+            f"проверьте curl'ом. Python из python.org на macOS не читает связку "
+            f"корневых сертификатов системы; лечится один раз: "
+            f"'/Applications/Python 3.13/Install Certificates.command' либо "
+            f"pip install --upgrade certifi и "
+            f"export SSL_CERT_FILE=$(python3 -m certifi)"
+        )
+    return f"сервер недоступен ({payload[:160]}). Проверьте BASE_URL={base_url}"
+
+
 def connect(base_url: str) -> ApiClient:
     client = ApiClient(base_url)
 
     code, payload = client.call("/api/health")
     if code != 200:
-        raise RunFailed(
-            f"сервер недоступен: GET /api/health вернул {code} ({payload[:120]}). "
-            f"Проверьте BASE_URL={base_url}"
-        )
+        raise RunFailed(f"GET /api/health вернул {code}: {_why_unreachable(payload, base_url)}")
 
     email, password = creds("owner")
     if not email or not password:
