@@ -18,7 +18,7 @@ concurrency:
 
 jobs:
   web:
-    name: Веб — типы и сборка
+    name: Веб — типы, линт и сборка
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -29,6 +29,21 @@ jobs:
       - run: npm ci
       - name: tsc --noEmit
         run: npx tsc --noEmit
+        working-directory: apps/web
+      # Линт добавлен в гейт после того, как в apps/web накопилось 11 ошибок при
+      # зелёном CI. Среди них было чтение ref во время отрисовки в ProgressView:
+      # список этапов конвейера не пересчитывался при смене режима, и на длинном
+      # прогоне шкала показывала бы этапы короткого. Правила react-hooks ловят
+      # такое, tsc — нет. Гейт, не гоняющий линтер, делает его необязательным, а
+      # необязательный линтер копит ошибки до состояния «чинить некогда».
+      - name: eslint
+        run: npm run lint
+        working-directory: apps/web
+      # Раннер — встроенный node:test, TypeScript Node исполняет сам. Ни одной
+      # новой зависимости: нативные модули в apps/web запрещены (§6), а тянуть
+      # ради разбора отчёта vitest с его цепочкой пакетов несоразмерно задаче.
+      - name: node --test
+        run: npm run test
         working-directory: apps/web
       - name: next build
         run: npm run build

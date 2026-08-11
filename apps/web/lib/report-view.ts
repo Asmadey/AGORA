@@ -1,4 +1,4 @@
-import { CRITERIA, type Criterion } from "./agora-types";
+import { CRITERIA, type Criterion } from "./agora-types.ts";
 
 /**
  * Разбор отчёта в то, что рисует экран (задача #21).

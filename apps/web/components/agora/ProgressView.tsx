@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { AlertTriangle, Check, Circle, Loader2 } from "lucide-react";
 
@@ -53,7 +53,11 @@ export function ProgressView({
   const [event, setEvent] = useState<ProgressEvent | null>(null);
   const [connected, setConnected] = useState(false);
   const [elapsed, setElapsed] = useState(0);
-  const nodes = useRef<PipelineNode[]>(nodesForMode(mode));
+  // useMemo, а не useRef: инициализатор ref вычисляется один раз за жизнь
+  // компонента и на смену mode не реагирует — на длинном прогоне шкала осталась
+  // бы со списком этапов короткого режима. Вдобавок чтение ref во время
+  // отрисовки React не отслеживает, поэтому перерисовки от него не будет.
+  const nodes = useMemo<PipelineNode[]>(() => nodesForMode(mode), [mode]);
 
   useEffect(() => {
     const source = new EventSource(`/api/tasks/${taskId}/progress`);
@@ -82,11 +86,11 @@ export function ProgressView({
     return () => clearInterval(timer);
   }, [finished, failed]);
 
-  const currentIndex = nodes.current.findIndex((n) => n.name === event?.node);
+  const currentIndex = nodes.findIndex((n) => n.name === event?.node);
   const doneCount = finished
-    ? nodes.current.length
+    ? nodes.length
     : Math.max(currentIndex, 0) + (event?.status === "DONE" ? 1 : 0);
-  const pct = Math.round((doneCount / nodes.current.length) * 100);
+  const pct = Math.round((doneCount / nodes.length) * 100);
 
   function stateOf(index: number): NodeState {
     if (finished) return "done";
@@ -106,7 +110,7 @@ export function ProgressView({
               ? "Прогон завершён"
               : failed
                 ? "Прогон остановлен"
-                : `Шаг ${Math.min(Math.max(currentIndex + 1, 1), nodes.current.length)} из ${nodes.current.length}`}
+                : `Шаг ${Math.min(Math.max(currentIndex + 1, 1), nodes.length)} из ${nodes.length}`}
           </span>
           <span className="text-sm tabular-nums text-muted-foreground">
             {!connected && !finished && !failed
@@ -154,7 +158,7 @@ export function ProgressView({
       )}
 
       <ol className="space-y-1">
-        {nodes.current.map((node, i) => {
+        {nodes.map((node, i) => {
           const state = stateOf(i);
           return (
             <li

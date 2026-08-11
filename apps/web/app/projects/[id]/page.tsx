@@ -110,12 +110,8 @@ export default function ProjectDetailsPage() {
     }
   }, [project]);
 
-  useEffect(() => {
-    if (id) {
-      loadData();
-    }
-  }, [id]);
-
+  // Объявление выше useEffect намеренно: обращение к `const` до строки
+  // объявления работает лишь потому, что эффект выполняется после отрисовки.
   const loadData = async () => {
     const p = await db.projects.get(id);
     if (p) {
@@ -130,6 +126,12 @@ export default function ProjectDetailsPage() {
       }
     }
   };
+
+  useEffect(() => {
+    if (id) {
+      loadData();
+    }
+  }, [id]);
 
   const runSimulation = async () => {
     if (!project || !audience || !survey) return;
