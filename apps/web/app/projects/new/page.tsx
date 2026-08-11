@@ -25,11 +25,10 @@ export default function NewProjectPage() {
   const [lastSaved, setLastSaved] = useState<Date | null>(null);
   const [isSaving, setIsSaving] = useState(false);
 
-  useEffect(() => {
-    document.title = "Новый проект | Agora";
-    loadData();
-  }, []);
-
+  // Объявление стоит выше useEffect намеренно: обращение к `const` до строки
+  // объявления работает лишь потому, что эффект выполняется после отрисовки.
+  // Порядок, который держится на этом, ломается от переноса вызова в тело
+  // компонента — а выглядит правкой без последствий.
   const loadData = async () => {
     const auds = await db.audiences.getAll();
     const survs = await db.surveys.getAll();
@@ -38,6 +37,11 @@ export default function NewProjectPage() {
     if (auds.length > 0) setSelectedAudience(auds[0].id);
     if (survs.length > 0) setSelectedSurvey(survs[0].id);
   };
+
+  useEffect(() => {
+    document.title = "Новый проект | Agora";
+    loadData();
+  }, []);
 
   const performSave = async (isManual = false) => {
     if (!title.trim() && !isManual) return; // Skip auto-save if no title

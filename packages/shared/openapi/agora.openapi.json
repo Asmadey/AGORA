@@ -76,6 +76,29 @@
     }
   ],
   "paths": {
+    "/api-docs/openapi": {
+      "get": {
+        "summary": "Спецификация OpenAPI 3.1",
+        "description": "Сам этот документ в машинном виде. Отдаётся отдельным маршрутом, потому что нужен не одному Swagger UI: по этому адресу его забирают генераторы клиентов, линтеры контрактов и каталоги API — им нужен документ, а не страница.\n\nЧеловеческий вид — страница `/api-docs`. Она берёт документ по этому же URL, а не своей копией: иначе расхождение между тем, что видит человек, и тем, что получает генератор клиента, стало бы невидимым.\n\nАдрес лежит вне `/api` намеренно. Публичные пути сопоставляются по префиксу, поэтому открыть документацию внутри `/api` можно было бы только вместе со всем деревом маршрутов арендатора.",
+        "tags": [
+          "Служебное"
+        ],
+        "operationId": "openapiSpec",
+        "responses": {
+          "200": {
+            "description": "Документ OpenAPI 3.1",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        },
+        "security": []
+      }
+    },
     "/api/audience": {
       "post": {
         "summary": "Собрать аудиторию",
@@ -1551,6 +1574,239 @@
         ]
       }
     },
+    "/api/tasks/{id}/report": {
+      "get": {
+        "summary": "Отчёт прогона",
+        "description": "Агрегат, групповой синтез, точки риска прекращения просмотра и дисклеймер.\n\nКарточки персон сюда НЕ входят: на 500 персонах с перекрытием 3 они весят 2.1 МБ против 178 КБ самого отчёта. Их отдаёт /api/tasks/{id}/report/personas страницами.\n\nНа чужой прогон возвращается 404, а не 403: фильтр по арендатору стоит в самом запросе, и отличать «нет такого» от «не ваш» означало бы подтверждать наличие чужих данных.",
+        "tags": [
+          "Прогон"
+        ],
+        "operationId": "taskReport",
+        "responses": {
+          "200": {
+            "description": "Отчёт",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "taskId": {
+                      "type": "string"
+                    },
+                    "audienceSize": {
+                      "type": "integer"
+                    },
+                    "updatedAt": {
+                      "type": "string",
+                      "format": "date-time",
+                      "nullable": true
+                    },
+                    "aggregate": {
+                      "type": "object",
+                      "additionalProperties": true
+                    },
+                    "retention_risk_points": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "timestamp_sec": {
+                            "type": "number"
+                          },
+                          "personas": {
+                            "type": "integer"
+                          },
+                          "scene": {
+                            "type": "string",
+                            "nullable": true
+                          }
+                        }
+                      }
+                    },
+                    "narrative": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "themes": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "additionalProperties": true
+                      }
+                    },
+                    "disagreements": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "strengths": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "weaknesses": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "disclaimer": {
+                      "type": "string"
+                    },
+                    "degraded": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Нет действующей сессии",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Отчёта нет: прогон не завершён, не существует или чужой",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ]
+      }
+    },
+    "/api/tasks/{id}/report/personas": {
+      "get": {
+        "summary": "Карточки персон отчёта",
+        "description": "Страница карточек для аккордеона. `total` возвращается всегда, а не только на первой странице: приёмка требует len(per_persona) == audience_size, и проверять это по длине одной страницы нельзя.\n\n`limit` больше 200 не отвергается, а урезается: отвергнуть значило бы сломать вызывающего, который просто просил всё.",
+        "tags": [
+          "Прогон"
+        ],
+        "operationId": "taskReportPersonas",
+        "responses": {
+          "200": {
+            "description": "Страница карточек",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "personaId": {
+                            "type": "string"
+                          },
+                          "personaName": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "replication": {
+                            "type": "integer"
+                          },
+                          "answer": {
+                            "type": "object",
+                            "additionalProperties": true
+                          },
+                          "qaFlags": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "additionalProperties": true
+                            }
+                          }
+                        }
+                      }
+                    },
+                    "total": {
+                      "type": "integer"
+                    },
+                    "limit": {
+                      "type": "integer"
+                    },
+                    "skip": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Нет действующей сессии",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200,
+              "default": 50
+            }
+          },
+          {
+            "name": "skip",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0
+            }
+          }
+        ]
+      }
+    },
     "/api/upload/complete": {
       "post": {
         "summary": "Подтвердить загрузку",
@@ -1770,29 +2026,6 @@
             }
           }
         }
-      }
-    },
-    "/api-docs/openapi": {
-      "get": {
-        "summary": "Спецификация OpenAPI 3.1",
-        "description": "Сам этот документ в машинном виде. Отдаётся отдельным маршрутом, потому что нужен не одному Swagger UI: по этому адресу его забирают генераторы клиентов, линтеры контрактов и каталоги API — им нужен документ, а не страница.\n\nЧеловеческий вид — страница `/api-docs`. Она берёт документ по этому же URL, а не своей копией: иначе расхождение между тем, что видит человек, и тем, что получает генератор клиента, стало бы невидимым.\n\nАдрес лежит вне `/api` намеренно. Публичные пути сопоставляются по префиксу, поэтому открыть документацию внутри `/api` можно было бы только вместе со всем деревом маршрутов арендатора.",
-        "tags": [
-          "Служебное"
-        ],
-        "operationId": "openapiSpec",
-        "responses": {
-          "200": {
-            "description": "Документ OpenAPI 3.1",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object"
-                }
-              }
-            }
-          }
-        },
-        "security": []
       }
     }
   },

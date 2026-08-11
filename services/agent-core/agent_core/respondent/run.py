@@ -109,6 +109,29 @@ class QwenRespondentClient:
 # ─── Сборка среза ────────────────────────────────────────────────────────────
 
 
+def _segment_of(persona: dict[str, Any]) -> dict[str, str]:
+    """
+    Три поля DNA, по которым отчёт режет аудиторию на группы.
+
+    Копия, а не ссылка на персону: карточка ответа переживает прогон и уезжает в
+    Mongo, а состав аудитории — нет. Считать разрез задним числом по сохранённым
+    ответам было бы нечем, если бы срез не лёг рядом с ответом сразу.
+
+    Дублирование трёх полей — сознательная плата. Альтернатива, соединять ответы
+    с персонами при чтении отчёта, ломается ровно там, где нужна: персону
+    отредактировали или удалили, а отчёт обязан показывать ту аудиторию, на
+    которой его посчитали.
+    """
+    from ..analytics.aggregate import SEGMENT_DIMENSIONS
+
+    demographics = (persona.get("dna") or {}).get("demographics") or {}
+    return {
+        field: str(demographics[field])
+        for field in SEGMENT_DIMENSIONS
+        if demographics.get(field)
+    }
+
+
 def build_slice(
     persona: dict[str, Any],
     pack: dict[str, Any],
@@ -252,6 +275,7 @@ def run_survey(
                 "persona_id": persona.get("id"),
                 "persona_name": persona.get("name"),
                 "replication": rep,
+                "segment": _segment_of(persona),
                 "answer": answer,
             })
 

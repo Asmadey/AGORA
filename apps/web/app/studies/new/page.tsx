@@ -10,7 +10,6 @@ import { SurveyBuilder, BASE_QUESTIONS } from "@/components/agora/SurveyBuilder"
 import { AudienceStep } from "@/components/agora/AudienceStep";
 import { DEFAULT_CRITERIA, type AudienceCriteria } from "@/lib/audience";
 import type { SurveyQuestion } from "@/lib/agora-types";
-import { MOCK_PERSONAS } from "@/lib/mock-data";
 
 /**
  * Визард запуска исследования (задачи #7–#11).
@@ -23,6 +22,13 @@ import { MOCK_PERSONAS } from "@/lib/mock-data";
 const STEPS = ["Контент", "Аудитория", "Опрос", "Резюме"] as const;
 
 const AGE_GROUPS = ["14-17", "18-24", "25-34", "35-44", "45-59", "60+"] as const;
+
+/**
+ * Обращения к модели помимо ответов персон: разбор кадров, склейка, QA,
+ * аналитика. Порядок величины, а не точное число, — оно зависит от длины ролика
+ * и числа сцен. Показано как «≈» именно поэтому.
+ */
+const PIPELINE_CALLS = 40;
 const GEOS = ["столицы", "центры субъектов", "иные НП"] as const;
 
 export default function NewStudyPage() {
@@ -87,10 +93,20 @@ export default function NewStudyPage() {
   }
 
   const [personaSetId, setPersonaSetId] = useState<string | null>(null);
+  // Размер выбранного набора приходит с шагом «Аудитория»: список наборов
+  // загружает он, и только он знает, сколько там персон. Резюме считает по
+  // этому числу оценку вызовов модели — приблизительное значение здесь
+  // означало бы названную наугад стоимость прогона.
+  const [personaSetSize, setPersonaSetSize] = useState<number | null>(null);
   const [contextFile, setContextFile] = useState<string | null>(null);
   const [videoRef, setVideoRef] = useState<string | null>(null);
   const [videoName, setVideoName] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
+
+  // Сколько персон реально пойдёт в прогон: размер выбранного набора либо
+  // заказанный размер генерации. null — набор выбран, а его размер ещё не
+  // приехал; оценка в резюме тогда честно показывает прочерк.
+  const audienceSize = personaSetId ? personaSetSize : criteria.size;
 
   // Загрузка идёт по маршрутам #8, уже подтверждённым на стенде: presign → PUT
   // байтов прямо в S3 → complete с ffprobe-валидацией. Веб файл не проксирует:
@@ -224,7 +240,10 @@ export default function NewStudyPage() {
             criteria={criteria}
             onCriteriaChange={setCriteria}
             personaSetId={personaSetId}
-            onPersonaSetChange={setPersonaSetId}
+            onPersonaSetChange={(id, size) => {
+              setPersonaSetId(id);
+              setPersonaSetSize(size ?? null);
+            }}
             contextFile={contextFile}
             onContextFileChange={setContextFile}
           />
@@ -269,7 +288,14 @@ export default function NewStudyPage() {
             <dl className="space-y-2 rounded-md border border-border p-4 text-sm">
               {[
                 ["Режим", mode === "short" ? "Короткое видео" : "Длинное видео"],
-                ["Аудитория", personaSetId ? "выбранный набор персон" : `${criteria.size} персон`],
+                [
+                  "Аудитория",
+                  personaSetId
+                    ? personaSetSize !== null
+                      ? `выбранный набор, ${personaSetSize} персон`
+                      : "выбранный набор персон"
+                    : `${criteria.size} персон`,
+                ],
                 ["Возраст", personaSetId ? "—" : criteria.ageGroups.join(", ") || "не выбран"],
                 ["География", personaSetId ? "—" : criteria.geos.join(", ") || "не выбрана"],
                 ["Доп. контекст", contextFile ?? "не приложен"],
@@ -281,7 +307,14 @@ export default function NewStudyPage() {
                       : ""),
                 ],
                 ["Перекрытие", `×${replication}`],
-                ["Вызовов модели", `≈ ${(personaSetId ? MOCK_PERSONAS.length : criteria.size) * replication + 40}`],
+                [
+                  "Вызовов модели",
+                  // Прочерк, а не оценка по чужому числу: раньше здесь стояла
+                  // длина MOCK_PERSONAS, то есть выдуманная стоимость прогона.
+                  audienceSize === null
+                    ? "—"
+                    : `≈ ${audienceSize * replication + PIPELINE_CALLS}`,
+                ],
               ].map(([k, v]) => (
                 <div key={k} className="flex justify-between gap-4">
                   <dt className="text-muted-foreground">{k}</dt>

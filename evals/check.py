@@ -361,18 +361,44 @@ def _artifact_pass(name, path, checker):
     return _res(name, "pass" if ok else "fail", actual=detail, detail=detail)
 
 
+def _golden_ok(a):
+    """Golden-сет: доверяем результату, только если прошли ВСЕ повторы.
+
+    «3/3 = trust» из acceptance #22. Конвейер, прошедший два раза из трёх, не
+    «в основном работает», а воспроизводится через раз: между прогонами меняются
+    seed и порядок ответов модели, и именно это большинство голосов спрятало бы.
+    Артефакт без счётчиков считается одиночным прогоном — старые артефакты не
+    зеленеют задним числом и не краснеют без причины.
+    """
+    runs = a.get("runs", 1)
+    passed = a.get("passed", 1)
+    return passed == runs, f"{passed}/{runs}"
+
+
 def check_e2e_short():
     def chk(a):
         agg = a.get("aggregate"); pp = a.get("per_persona") or []
-        ok = bool(agg) and len(pp) == a.get("audience_size", len(pp)) and a.get("status") == "REPORT_READY"
-        return ok, f"status={a.get('status')} personas={len(pp)}"
+        golden, tally = _golden_ok(a)
+        ok = (
+            bool(agg)
+            and len(pp) == a.get("audience_size", len(pp))
+            and a.get("status") == "REPORT_READY"
+            and golden
+        )
+        return ok, f"status={a.get('status')} personas={len(pp)} runs={tally}"
     return _artifact_pass("e2e_short", E2E_SHORT, chk)
 
 
 def check_e2e_long():
     def chk(a):
-        ok = a.get("status") == "REPORT_READY" and a.get("mode") == "long" and bool(a.get("stitched"))
-        return ok, f"status={a.get('status')} stitched={a.get('stitched')}"
+        golden, tally = _golden_ok(a)
+        ok = (
+            a.get("status") == "REPORT_READY"
+            and a.get("mode") == "long"
+            and bool(a.get("stitched"))
+            and golden
+        )
+        return ok, f"status={a.get('status')} stitched={a.get('stitched')} runs={tally}"
     return _artifact_pass("e2e_long", E2E_LONG, chk)
 
 

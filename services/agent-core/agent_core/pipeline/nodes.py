@@ -355,6 +355,33 @@ def _load_personas(state: PipelineState) -> list[dict[str, Any]]:
         return [{"id": r[0], "name": r[1], "dna": r[2]} for r in cur.fetchall()]
 
 
+def _personas_for_segments(
+    state: PipelineState, degraded: list[str]
+) -> list[dict[str, Any]]:
+    """
+    Персоны для посегментного разреза — только если срез не пришёл с ответами.
+
+    Ответы нового прогона несут срез в поле `segment`, и тогда база не трогается
+    вовсе: лишний запрос на пятьсот строк ради данных, которые уже под рукой.
+    Чтение нужно старым прогонам, пересчитанным по сохранённым ответам.
+
+    Отказ чтения не роняет отчёт, а дописывается в `degraded`. Без разреза отчёт
+    беднее, но верен; падение здесь стоило бы транскрипции, разбора кадров и всех
+    ответов персон, которые уже оплачены.
+    """
+    answers = state.get("persona_answers") or []
+    if any(isinstance(a.get("segment"), dict) and a["segment"] for a in answers):
+        return []
+    try:
+        return _load_personas(state)
+    except Exception as exc:  # noqa: BLE001
+        degraded.append(
+            f"analytics: персоны не прочитаны ({type(exc).__name__}: {exc}); "
+            f"посегментного разреза в отчёте не будет"
+        )
+        return []
+
+
 # ─── Проверка ответов (#19) ──────────────────────────────────────────────────
 
 
@@ -476,7 +503,33 @@ def analytics(state: PipelineState) -> dict[str, Any]:
         template=template,
         replication_count=int(state.get("replication_count") or 1),
         artifact_path=workdir(state) / "report.json",
+        # Запасной источник среза для посегментного разреза. Ответы нового
+        # прогона несут срез сами, и тогда реестр не читается вовсе.
+        personas=_personas_for_segments(state, degraded),
     )
+
+    # Отчёт обязан покинуть процесс воркера, иначе интерфейсу его читать
+    # неоткуда: состояние графа живёт в чекпоинтере, а report.json — в локальном
+    # каталоге контейнера. Отказ записи не роняет прогон: числа уже посчитаны, и
+    # терять их из-за недоступной Mongo незачем — но и молчать нельзя, иначе
+    # «отчёт не открывается» будет выглядеть как дефект интерфейса.
+    try:
+        from ..analytics.store import save_report
+        from ..mongo import mongo_db
+
+        save_report(
+            mongo_db(),
+            tenant_id=state["tenant_id"],
+            task_id=str(state["task_id"]),
+            report=report,
+            answers=answers,
+            qa_flags=state.get("qa_flags") or [],
+        )
+    except Exception as exc:  # noqa: BLE001
+        degraded.append(
+            f"analytics: отчёт не сохранён ({type(exc).__name__}: {exc}); "
+            f"интерфейс его не покажет"
+        )
 
     # Статус прогона здесь не выставляется: REPORT_READY ставит tasks.py после
     # того, как граф дошёл до конца. Два места, пишущих один статус, рано или

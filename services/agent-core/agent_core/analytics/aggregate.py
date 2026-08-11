@@ -57,6 +57,21 @@ TOP_EMOTIONS = 5
 #: а не измерено. Калибруется на первых прогонах с replication_count = 3.
 STABILITY_ZERO_STDEV = 3.0
 
+#: Измерения посегментного среза. Взяты из `demographics` в Persona DNA — те
+#: три поля, по которым генератор аудитории выравнивает выборку на корпус
+#: (`persona/generator.py`). Разрез по полю, которое не контролируется при
+#: генерации, показывал бы перекос выборки, а не различие групп.
+SEGMENT_DIMENSIONS = ("age_group", "geo", "gender")
+
+#: Сколько персон должно быть в сегменте, чтобы его показывать. Средняя по
+#: четверым выглядит на экране ровно так же, как средняя по сотне, и решение по
+#: ней принимают такое же — а держится она на четырёх ответах.
+#:
+#: Значение ПРЕДВАРИТЕЛЬНОЕ: пять — это не результат расчёта мощности, а нижняя
+#: граница, ниже которой одна персона двигает среднее больше чем на балл.
+#: Калибруется на первых прогонах с настоящей аудиторией.
+MIN_SEGMENT_PERSONAS = 5
+
 _TIMECODE = re.compile(r"(?<![\d:])(\d{1,2}):([0-5]\d)(?::([0-5]\d))?(?![\d:])")
 
 
@@ -120,6 +135,7 @@ def aggregate(
     survey: dict[str, Any] | None = None,
     qa_flags: list[dict[str, Any]] | None = None,
     replication_count: int = 1,
+    personas: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Числовая часть отчёта. Ничего не спрашивает у модели и ничего не меняет во входе."""
     answers = copy.deepcopy(list(answers))
@@ -130,20 +146,145 @@ def aggregate(
         "core_scores_mean": _core_means(bodies),
         "nps": _nps(bodies),
         "retention_rate": _retention_rate(bodies),
+        "watched_share_mean": _watched_share(bodies),
         "emotional_index": _emotional_index(bodies),
         "top_emotions": _top_emotions(bodies),
         "sample_size": len(kept),
         "excluded_by_qa": len(answers) - len(kept),
         "replication_count": replication_count,
         "per_persona": {},
+        "replication_bounds": {},
         "replication_stability": None,
+        "segment_breakdown": _segment_breakdown(kept, personas),
     }
     _ = survey  # разбор ответов анкеты — задача отчёта (#21), не агрегата
 
     if replication_count > 1:
         result["per_persona"] = _per_persona_bounds(kept)
+        result["replication_bounds"] = _replication_bounds(result["per_persona"])
         result["replication_stability"] = _stability(result["per_persona"])
     return result
+
+
+def _replication_bounds(
+    per_persona: dict[str, dict[str, Any]],
+) -> dict[str, dict[str, float]]:
+    """
+    Разброс между повторами, сведённый к критерию — то, что рисует полоса на шкале.
+
+    Усреднение персональных границ, а не их объединение. Объединение (минимум
+    из минимумов, максимум из максимумов) описывало бы самый нестабильный ответ
+    одной персоны, а полоса подписана «разброс между повторами» и читается как
+    типичный. Один выброс растянул бы её на всю шкалу, и график перестал бы
+    различать стабильный прогон от неустойчивого — а именно за этим на него и
+    смотрят.
+
+    Персоны с одним ответом в расчёт не идут: у них разброса нет, и считать его
+    нулевым значит занижать полосу тем сильнее, чем больше ответов потерял QA.
+    """
+    out: dict[str, dict[str, float]] = {}
+    for field in CRITERIA:
+        entries = [
+            e[field] for e in per_persona.values()
+            if isinstance(e.get(field), dict) and int(e.get("replications") or 0) > 1
+        ]
+        if not entries:
+            continue
+        out[field] = {
+            key: round(statistics.fmean([float(e[key]) for e in entries]), 4)
+            for key in ("mean", "min", "max", "stdev")
+        }
+    return out
+
+
+def _segment_of_persona(persona: dict[str, Any]) -> dict[str, str]:
+    """Три поля разреза из DNA персоны. Пустые значения не попадают."""
+    demographics = (persona.get("dna") or {}).get("demographics") or {}
+    return {
+        field: str(demographics[field])
+        for field in SEGMENT_DIMENSIONS
+        if demographics.get(field)
+    }
+
+
+def _segment_breakdown(
+    kept: list[dict[str, Any]],
+    personas: list[dict[str, Any]] | None = None,
+) -> dict[str, Any] | None:
+    """
+    Те же средние, посчитанные отдельно по группам аудитории.
+
+    Ради этого разреза сервис и нужен: «6.4 в среднем» — число, с которым нечего
+    делать, а «8.1 у 18–24 против 4.2 у 45+» — уже вывод о том, на кого ролик
+    работает.
+
+    Основной источник среза — поле `segment` самого ответа: его записывает
+    respondent-агент в момент прогона, и оно уезжает вместе с карточкой в Mongo.
+    `personas` — запасной путь для ответов, где среза нет: прогоны, сохранённые
+    до его появления, и пересчёт отчёта по сохранённым ответам.
+
+    Порядок именно такой, а не наоборот. Карточка описывает ту аудиторию, на
+    которой отчёт посчитан, а реестр — сегодняшнюю: персону могли отредактировать
+    или сгенерировать заново. Дать реестру перебить карточку значило бы задним
+    числом переписать результат исследования, и никакого следа этого в отчёте бы
+    не осталось.
+
+    Возвращает None, если среза нет ни в ответах, ни в персонах. Пустой словарь
+    означал бы «посчитали, групп нет» — на экране это неотличимо от аудитории
+    без сегментов, то есть от результата.
+    """
+    by_persona = {
+        str(p.get("id")): _segment_of_persona(p)
+        for p in (personas or [])
+        if isinstance(p, dict) and p.get("id")
+    }
+
+    def segment_of(item: dict[str, Any]) -> dict[str, str] | None:
+        own = item.get("segment")
+        if isinstance(own, dict) and own:
+            return {k: str(v) for k, v in own.items() if v}
+        fallback = by_persona.get(str(item.get("persona_id")))
+        return fallback or None
+
+    if not any(segment_of(a) for a in kept):
+        return None
+
+    out: dict[str, Any] = {d: {} for d in SEGMENT_DIMENSIONS}
+    suppressed: list[dict[str, Any]] = []
+
+    for dimension in SEGMENT_DIMENSIONS:
+        groups: dict[str, list[dict[str, Any]]] = {}
+        for item in kept:
+            segment = segment_of(item)
+            if segment is None:
+                continue
+            value = segment.get(dimension)
+            if not isinstance(value, str) or not value:
+                continue
+            groups.setdefault(value, []).append(item)
+
+        for value, items in sorted(groups.items()):
+            # Персоны, а не ответы: повтор одной персоны не независим от неё
+            # самой, и считать перекрытие ×3 утроенной выборкой значит выдать
+            # утроенную уверенность за расширенные данные.
+            personas = {str(i.get("persona_id")) for i in items}
+            if len(personas) < MIN_SEGMENT_PERSONAS:
+                suppressed.append({
+                    "dimension": dimension, "value": value, "personas": len(personas),
+                })
+                continue
+            bodies = [_body(i) for i in items]
+            out[dimension][value] = {
+                "core_scores_mean": _core_means(bodies),
+                "nps": _nps(bodies),
+                "retention_rate": _retention_rate(bodies),
+                "personas": len(personas),
+                "answers": len(items),
+            }
+
+    out["suppressed"] = suppressed
+    out["min_personas"] = MIN_SEGMENT_PERSONAS
+    return out
 
 
 def _core_means(bodies: list[dict[str, Any]]) -> dict[str, float | None]:
@@ -187,6 +328,29 @@ def _retention_rate(bodies: list[dict[str, Any]]) -> float | None:
     if not known:
         return None
     return round(sum(1 for s in known if s == "continue") * 100.0 / len(known), 4)
+
+
+def _watched_share(bodies: list[dict[str, Any]]) -> float | None:
+    """
+    Средняя доля просмотренного, в процентах.
+
+    Отдельно от `retention_rate`, а не вместо него: `retention_intent`
+    категориален («скорее досмотреть» / «скорее выключить»), и процент из него
+    не выводится никаким честным способом. Это две разные величины — намерение
+    и поведение, — и одна не заменяет другую.
+
+    Поле необязательное: оно появляется в ответе, только если в анкете есть
+    вопрос типа `watched_share`. Его отсутствие даёт None, а не ноль.
+    """
+    values = [
+        v for v in (_num((b.get("perception") or {}).get("watched_share_pct"))
+                    for b in bodies)
+        # Вне шкалы 0–100 — испорченный ответ, а не крайнее значение: модель
+        # могла отдать долю единицей. Втянутая в среднее единица занижает
+        # досмотр на порядок и выглядит правдоподобно.
+        if v is not None and 0.0 <= v <= 100.0
+    ]
+    return round(statistics.fmean(values), 4) if values else None
 
 
 def _emotional_index(bodies: list[dict[str, Any]]) -> float | None:

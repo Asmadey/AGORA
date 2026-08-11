@@ -151,13 +151,65 @@ export function Field({ label, value }: { label: string; value?: string | string
   );
 }
 
-/** Ссылка на таймкод. Каждое суждение персоны обязано на что-то опираться. */
-export function TimecodeRef({ timecode, note }: { timecode: string; note: string }) {
-  return (
-    <span className="inline-flex items-center gap-1.5 rounded border border-border px-2 py-0.5 text-xs">
+/**
+ * Позиция таймкода в секундах. `null` — строка не таймкод.
+ *
+ * Разбираются M:SS, MM:SS и H:MM:SS. Секунды ограничены 0–59: без этого «10:75»
+ * и любая пара чисел через двоеточие читались бы как время, и ссылка вела бы в
+ * никуда — причём выглядела бы рабочей.
+ */
+export function timecodeSeconds(timecode: string): number | null {
+  const m = /^(\d{1,2}):([0-5]\d)(?::([0-5]\d))?$/.exec(timecode.trim());
+  if (!m) return null;
+  const [, a, b, c] = m;
+  return c ? Number(a) * 3600 + Number(b) * 60 + Number(c) : Number(a) * 60 + Number(b);
+}
+
+/**
+ * Ссылка на таймкод. Каждое суждение персоны обязано на что-то опираться.
+ *
+ * Приёмка задачи #21 требует, чтобы обоснование было кликабельно И вело на
+ * таймкод. Второе — не то же самое, что первое: кнопка без адреса кликается и
+ * не ведёт никуда, а отличить её от рабочей на скриншоте нельзя.
+ *
+ * Адресом служит медиафрагмент `#t=<секунды>` (W3C Media Fragments) — тот же
+ * якорь понимает и HTML-плеер, и прямая ссылка на файл. Поэтому ссылка остаётся
+ * осмысленной и до того, как на экране появится сам плеер: она указывает на
+ * позицию, а не на элемент интерфейса.
+ *
+ * Неразобранный таймкод не превращается в ссылку: якорь `#t=NaN` кликался бы и
+ * не вёл никуда — ровно тот случай, который проверка и должна исключать.
+ */
+export function TimecodeRef({
+  timecode,
+  note,
+  href = "",
+}: {
+  timecode: string;
+  note: string;
+  /** Куда ведёт таймкод. Пусто — текущая страница. */
+  href?: string;
+}) {
+  const seconds = timecodeSeconds(timecode);
+  const body = (
+    <>
       <span className="font-mono tabular-nums text-sky-300">{timecode}</span>
       <span className="text-muted-foreground">{note}</span>
-    </span>
+    </>
+  );
+  const shell = "inline-flex items-center gap-1.5 rounded border border-border px-2 py-0.5 text-xs";
+
+  if (seconds === null) {
+    return <span className={shell}>{body}</span>;
+  }
+  return (
+    <a
+      href={`${href}#t=${seconds}`}
+      title={`Перейти к ${timecode}`}
+      className={`${shell} transition-colors hover:border-sky-400/60 hover:bg-sky-400/5`}
+    >
+      {body}
+    </a>
   );
 }
 

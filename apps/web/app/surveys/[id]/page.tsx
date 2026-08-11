@@ -26,12 +26,8 @@ export default function SurveyBuilderPage() {
     }
   }, [survey]);
 
-  useEffect(() => {
-    if (id) {
-      loadSurvey();
-    }
-  }, [id]);
-
+  // Объявление выше useEffect намеренно: обращение к `const` до строки
+  // объявления работает лишь потому, что эффект выполняется после отрисовки.
   const loadSurvey = async () => {
     const data = await db.surveys.get(id);
     if (data) {
@@ -46,6 +42,12 @@ export default function SurveyBuilderPage() {
       });
     }
   };
+
+  useEffect(() => {
+    if (id) {
+      loadSurvey();
+    }
+  }, [id]);
 
   const performSave = async (currentSurvey: SurveyConfig, isManual = false) => {
     setIsSaving(true);

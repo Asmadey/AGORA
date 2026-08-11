@@ -45,6 +45,12 @@ SCORE_NPS_MAX_GAP = 5
 HIGH_SCORE = 8
 LOW_SCORE = 3
 
+#: Доли просмотра, при которых ответ обязан согласовываться с намерением. Как и
+#: с баллами, середина оставлена свободной: «досмотрел бы, но бросил на
+#: половине» — реальная позиция зрителя, а не дефект.
+HIGH_WATCHED_SHARE = 80
+LOW_WATCHED_SHARE = 20
+
 _SCORE_FIELDS = ("overall_impression", "plot", "acting", "music", "cinematography")
 
 #: Таймкод вида M:SS, MM:SS или H:MM:SS. Секунды ограничены 0–59 намеренно:
@@ -59,6 +65,52 @@ _TIMECODE = re.compile(r"(?<![\d:])(\d{1,2}):([0-5]\d)(?::([0-5]\d))?(?![\d:])")
 #: значило бы ловить не противоречие, а несовпадение формулировки.
 _STOP_MARKERS = ("выключ", "останов", "прекрат", "бросил", "не досм", "не стал смотреть")
 _CONTINUE_MARKERS = ("досмотр", "до конца", "продолж", "не отрыва")
+
+
+def _watched_share_reasons(perception: dict[str, Any], stance: str) -> list[str]:
+    """
+    Доля просмотра против намерения досмотреть.
+
+    Поле необязательное: оно есть только в анкетах с вопросом о доле просмотра,
+    и его отсутствие — законный случай, а не дефект. Зато присутствующее поле
+    обязано согласовываться с `retention_intent`: это две формулировки одного
+    факта, и расхождение между ними означает, что одна из них выдумана.
+
+    Проверка вне шкалы важнее, чем кажется. Промпт требует проценты, но модель
+    охотно отдаёт долю единицей, и 0.9 вместо 90 занижает средний досмотр на
+    порядок — при этом отчёт выглядит совершенно правдоподобно.
+    """
+    raw = perception.get("watched_share_pct")
+    if raw is None:
+        return []
+
+    if isinstance(raw, bool) or not isinstance(raw, (int, float)):
+        return [f"watched_share_pct не число: {raw!r}"]
+
+    # Дробное значение проверяется до приведения к int, а не после. `int(0.9)`
+    # даёт ноль, то есть ровно тот дефект, который тут ловится: доля от единицы
+    # вместо процентов превращается в правдоподобный «не смотрел вообще».
+    if float(raw) != int(raw):
+        return [
+            f"watched_share_pct={raw!r} дробное: ожидаются целые проценты 0–100, "
+            f"а не доля от единицы"
+        ]
+
+    share = int(raw)
+    if not 0 <= share <= 100:
+        return [f"watched_share_pct={share} вне шкалы 0–100 (ожидаются проценты)"]
+
+    if share >= HIGH_WATCHED_SHARE and stance == "stop":
+        return [
+            f"доля просмотра {share}% при намерении прекратить просмотр "
+            f"({perception.get('retention_intent')!r})"
+        ]
+    if share <= LOW_WATCHED_SHARE and stance == "continue":
+        return [
+            f"доля просмотра {share}% при намерении досмотреть "
+            f"({perception.get('retention_intent')!r})"
+        ]
+    return []
 
 
 def timecodes(text: str) -> list[float]:
@@ -137,6 +189,8 @@ def consistency_reasons(answer: dict[str, Any], survey: dict[str, Any] | None = 
             )
         if nps is not None and 1 <= nps <= 10 and abs(overall - nps) >= SCORE_NPS_MAX_GAP:
             reasons.append(f"впечатление {overall}/10 против рекомендации {nps}/10")
+
+    reasons.extend(_watched_share_reasons(perception, stance))
 
     verbatims = answer.get("verbatims") if isinstance(answer.get("verbatims"), dict) else {}
     if not any(str(v).strip() for v in verbatims.values()):

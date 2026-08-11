@@ -238,3 +238,36 @@ def test_diversity_report_handles_flat_answers():
     rep = diversity_report([{"scores": {"overall_impression": 7},
                              "verbatims": {"a": "текст"}}])
     assert rep["samples"] == 1
+
+
+# ─── Срез DNA в карточке ответа ──────────────────────────────────────────────
+
+
+def test_answer_carries_segment_from_dna():
+    """
+    Без записи среза рядом с ответом посегментный разрез в отчёте считать нечем:
+    состав аудитории прогон не переживает, а карточки ответов уезжают в Mongo.
+    """
+    out = run(personas=[persona(0)])
+    assert out.answers[0]["segment"]["age_group"] == "25-34"
+
+
+def test_segment_holds_only_dimensions_the_report_cuts_by():
+    """`age` в срез не идёт: разрез по годам дал бы группы по одной персоне."""
+    out = run(personas=[persona(0)])
+    assert set(out.answers[0]["segment"]) <= {"age_group", "geo", "gender"}
+
+
+def test_missing_dna_field_gives_no_key_not_empty_string():
+    """Пустая строка стала бы полноценным значением сегмента с именем ''."""
+    bare = {"id": "p9", "name": "Без гео", "dna": {"demographics": {"age_group": "60+"}}}
+    out = run(personas=[bare])
+    assert out.answers[0]["segment"] == {"age_group": "60+"}
+
+
+def test_segment_is_a_copy_not_a_reference_into_the_persona():
+    """Правка карточки ответа не должна доставать до входной персоны."""
+    p = persona(0)
+    out = run(personas=[p])
+    out.answers[0]["segment"]["age_group"] = "подменено"
+    assert p["dna"]["demographics"]["age_group"] == "25-34"

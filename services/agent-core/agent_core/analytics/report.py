@@ -107,11 +107,19 @@ def build_report(
     template: str | None = None,
     replication_count: int = 1,
     artifact_path: Path | None = None,
+    personas: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Отчёт: посчитанный агрегат, точки риска и отсеянный по опорам синтез."""
     degraded: list[str] = []
     agg = aggregate(
-        answers, survey=survey, qa_flags=qa_flags, replication_count=replication_count
+        answers,
+        survey=survey,
+        qa_flags=qa_flags,
+        replication_count=replication_count,
+        # Запасной источник посегментного среза для ответов, где его нет.
+        # Записанный в карточку срез главнее: он описывает ту аудиторию, на
+        # которой отчёт посчитан, а реестр персон — сегодняшнюю.
+        personas=personas,
     )
     kept = surviving(list(answers), qa_flags)
 

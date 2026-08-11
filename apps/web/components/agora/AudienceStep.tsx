@@ -58,7 +58,15 @@ export interface AudienceStepProps {
   criteria: AudienceCriteria;
   onCriteriaChange: (next: AudienceCriteria) => void;
   personaSetId: string | null;
-  onPersonaSetChange: (id: string | null) => void;
+  /**
+   * Размер передаётся вместе с идентификатором, а не доискивается вызывающим.
+   *
+   * Список наборов загружает этот шаг, и он единственный знает, сколько персон
+   * в выбранном. Резюме показывает по этому числу оценку вызовов модели, и
+   * подставить туда что-то приблизительное значило бы назвать пользователю
+   * стоимость прогона наугад.
+   */
+  onPersonaSetChange: (id: string | null, size?: number) => void;
   contextFile: string | null;
   onContextFileChange: (name: string | null) => void;
 }
@@ -180,7 +188,7 @@ export function AudienceStep({
       };
       setGenerated(outcome);
       // Набор сохранён — запуск (#11) заберёт его по id.
-      onPersonaSetChange(outcome.personaSetId);
+      onPersonaSetChange(outcome.personaSetId, outcome.size);
     } catch (e) {
       setGenError((e as Error).message);
     } finally {
@@ -201,7 +209,7 @@ export function AudienceStep({
           Создать аудиторию
         </button>
         <button
-          onClick={() => onPersonaSetChange(sets?.[0]?.id ?? null)}
+          onClick={() => onPersonaSetChange(sets?.[0]?.id ?? null, sets?.[0]?.personaCount)}
           disabled={!sets || sets.length === 0}
           className={cn(
             "flex-1 rounded-md border p-3 text-sm transition-colors disabled:opacity-40",
@@ -225,7 +233,7 @@ export function AudienceStep({
           {(sets ?? []).map((s) => (
             <button
               key={s.id}
-              onClick={() => onPersonaSetChange(s.id)}
+              onClick={() => onPersonaSetChange(s.id, s.personaCount)}
               className={cn(
                 "w-full rounded-md border p-4 text-left transition-colors",
                 personaSetId === s.id

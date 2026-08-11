@@ -167,10 +167,14 @@ export function PromptEditor({ promptKey, stage, desc, initialActive, initialHis
     }
   }, [promptKey, previewValues]);
 
-  // Сбрасываем драфт при смене активной версии
+  // Сбрасываем драфт при смене активной версии.
+  //
+  // Зависимость — именно `active?.id`, а не весь `active`: объект приходит
+  // новым на каждой загрузке списка, и по нему эффект затирал бы несохранённую
+  // правку пользователя при любом обновлении данных.
   useEffect(() => {
     if (active) setDraft(active.template);
-  }, [active?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [active?.id]);
 
   return (
     <div className="space-y-6">
