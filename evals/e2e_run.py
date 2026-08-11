@@ -85,15 +85,35 @@ def log(message: str) -> None:
 # ─── Шаги прогона ────────────────────────────────────────────────────────────
 
 
+def _why_unreachable(payload: str, base_url: str) -> str:
+    """
+    Отличает недоступный сервер от недоверенного сертификата.
+
+    Первая редакция на любой отказ советовала «проверьте BASE_URL». На
+    macOS-сборке python.org это неверный совет: адрес правильный, сервер отвечает,
+    а Python не пользуется системной связкой корневых сертификатов и не доверяет
+    валидному Let's Encrypt. Диагностика, уводящая в сторону, стоит дороже, чем
+    её отсутствие: по ней проверяют адрес, находят его верным и остаются без
+    объяснения.
+    """
+    if "CERTIFICATE_VERIFY_FAILED" in payload or "SSL" in payload:
+        return (
+            f"сертификат {base_url} не проверен. Сам адрес при этом рабочий — "
+            f"проверьте curl'ом. Python из python.org на macOS не читает связку "
+            f"корневых сертификатов системы; лечится один раз: "
+            f"'/Applications/Python 3.13/Install Certificates.command' либо "
+            f"pip install --upgrade certifi и "
+            f"export SSL_CERT_FILE=$(python3 -m certifi)"
+        )
+    return f"сервер недоступен ({payload[:160]}). Проверьте BASE_URL={base_url}"
+
+
 def connect(base_url: str) -> ApiClient:
     client = ApiClient(base_url)
 
     code, payload = client.call("/api/health")
     if code != 200:
-        raise RunFailed(
-            f"сервер недоступен: GET /api/health вернул {code} ({payload[:120]}). "
-            f"Проверьте BASE_URL={base_url}"
-        )
+        raise RunFailed(f"GET /api/health вернул {code}: {_why_unreachable(payload, base_url)}")
 
     email, password = creds("owner")
     if not email or not password:
@@ -157,6 +177,30 @@ def upload_video(client: ApiClient, path: Path, mode: str) -> str:
     return str(ref)
 
 
+def listing(payload: dict, key: str, endpoint: str) -> list[dict]:
+    """
+    Массив из ответа-списка. Отсутствие ожидаемого ключа — отказ, а не пустота.
+
+    Первая редакция везде писала `payload.get("items") or []`, а имена ключей
+    угадала: `/api/tasks` отдаёт `tasks`, `/api/surveys` — `surveys`. Прогонщик
+    получал пустой список, не находил в нём собственную задачу и семьсот секунд
+    честно сообщал «последний статус неизвестен», пока та уже упала.
+
+    Отсюда форма проверки. Пустой список законен — прогонов может не быть; но
+    ответ БЕЗ ключа означает, что мы читаем не то, что отдают, и продолжать по
+    нему нельзя.
+    """
+    if isinstance(payload, list):
+        return payload
+    if key not in payload:
+        raise RunFailed(
+            f"{endpoint} вернул ответ без ключа {key!r} (есть: "
+            f"{sorted(payload)[:6]}). Прогонщик и маршрут разошлись в контракте"
+        )
+    value = payload[key]
+    return value if isinstance(value, list) else []
+
+
 def make_audience(client: ApiClient, seed: int) -> str:
     made = api(client, "/api/persona-sets", "POST", {
         "name": f"E2E аудитория {seed}", "size": AUDIENCE_SIZE, "seed": seed,
@@ -175,9 +219,7 @@ def pick_survey(client: ApiClient) -> str | None:
     базовым критериям. Придумывать анкету здесь значило бы проверять конвейер на
     данных, которых в его настоящей работе не бывает.
     """
-    listed = api(client, "/api/surveys")
-    items = listed if isinstance(listed, list) else (listed.get("items") or [])
-    for item in items:
+    for item in listing(api(client, "/api/surveys"), "surveys", "GET /api/surveys"):
         if isinstance(item, dict) and item.get("id"):
             return str(item["id"])
     return None
@@ -212,10 +254,17 @@ def wait_for_report(client: ApiClient, task_id: str, timeout: int) -> tuple[dict
                 f"Это провал гейта, а не повод продлить ожидание"
             )
 
-        listed = api(client, "/api/tasks")
-        items = listed if isinstance(listed, list) else (listed.get("items") or [])
-        row = next((t for t in items if str(t.get("id")) == task_id), None)
-        status = str((row or {}).get("status") or "")
+        rows = listing(api(client, "/api/tasks"), "tasks", "GET /api/tasks")
+        row = next((t for t in rows if str(t.get("id")) == task_id), None)
+        if row is None:
+            # Собственная задача пропала из списка — наблюдать за прогоном
+            # больше нечем. Ждать до таймаута значило бы выдать «не уложился»
+            # вместо настоящей причины, а она в этот момент уже известна.
+            raise RunFailed(
+                f"задача {task_id} не найдена среди {len(rows)} прогонов в "
+                f"GET /api/tasks: следить за ней нечем"
+            )
+        status = str(row.get("status") or "")
 
         if status != last:
             log(f"  [{elapsed:5.0f}с] {status or '—'}")
@@ -245,7 +294,7 @@ def collect_personas(client: ApiClient, task_id: str) -> list[dict]:
     skip = 0
     while True:
         page = api(client, f"/api/tasks/{task_id}/report/personas?limit=200&skip={skip}")
-        items = page.get("items") or []
+        items = listing(page, "items", "GET /api/tasks/{id}/report/personas")
         out.extend(items)
         total = page.get("total")
         if not items or (isinstance(total, int) and len(out) >= total):
