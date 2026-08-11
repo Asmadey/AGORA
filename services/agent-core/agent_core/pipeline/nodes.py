@@ -77,7 +77,13 @@ def _prompt(name: str, state: PipelineState) -> tuple[str, str | None]:
         from ..db import tenant_scope
 
         with psycopg.connect(dsn) as conn, tenant_scope(conn, state["tenant_id"]) as cur:
-            cur.execute("SELECT template FROM prompt_versions WHERE id = %s", (pinned["id"],))
+            # Таблица `prompts`, а не `prompt_versions`: версии хранятся строками
+            # в ней самой, и снимок пиннит `prompts.id` (apps/web tasks.ts,
+            # buildPromptsSnapshot). Таблицы `prompt_versions` не было никогда —
+            # запрос к ней падал UndefinedTable через восемьдесят секунд прогона,
+            # уже после ffmpeg и транскрипции. Ловится это теперь тестом
+            # tests/test_schema_contract.py, а не сквозным прогоном.
+            cur.execute("SELECT template FROM prompts WHERE id = %s", (pinned["id"],))
             row = cur.fetchone()
             if row:
                 return row[0], None
