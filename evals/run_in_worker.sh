@@ -76,9 +76,24 @@ else
   say "тома $CACHE_VOLUME нет — модели будут скачиваться заново"
 fi
 
+# Окружение подгружается ШЕЛЛОМ ВНУТРИ контейнера, а не флагом --env-file.
+#
+# Это не стилистика. `docker --env-file` не разбирает кавычки: строка
+# WHISPER_MODEL="large-v3" доезжает внутрь значением «"large-v3"» вместе с
+# кавычками. Дальше whisper уходит в Hugging Face за репозиторием с кавычкой в
+# имени и получает HFValidationError, а переменная-путь превращается в файл с
+# именем `"`. Оба отказа выглядят как дефекты кода воркера и уводят далеко:
+# первый читается как «неверная модель в конфиге», второй — как испорченный
+# путь. На хосте того же не происходит, потому что там файл читается
+# `set -a; . ./.env.local` — то есть шеллом, который кавычки снимает.
+#
+# Поэтому внутри делается ровно то же самое, тем же шеллом. Своего разбора
+# .env здесь нет намеренно: третья реализация dotenv разошлась бы с двумя
+# первыми, и разошлась бы молча.
 if [ -f "$ENV_FILE" ]; then
-  opts+=(--env-file "$ENV_FILE")
+  ENV_PRELUDE='set -a; . /repo/'"$(basename "$ENV_FILE")"'; set +a; '
 else
+  ENV_PRELUDE=''
   say "нет $ENV_FILE — ключи и строки подключения внутрь не попадут"
 fi
 
@@ -95,15 +110,20 @@ opts+=(-v "$REPO:/repo:ro")
 
 # ─── Что запустить ───────────────────────────────────────────────────────────
 
+quote() { printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"; }
+
 if [ "${1:-}" = "--" ]; then
   shift
-  say "→ в образе $IMAGE: $*"
-  exec docker run "${opts[@]}" "$IMAGE" "$@"
+  cmd=""
+  for a in "$@"; do cmd="$cmd $(quote "$a")"; done
+  say "→ в образе $IMAGE:$cmd"
+  exec docker run "${opts[@]}" "$IMAGE" sh -c "${ENV_PRELUDE}exec$cmd"
 fi
 
 status=0
 for test_file in "$@"; do
   say "→ в образе $IMAGE: $test_file"
-  docker run "${opts[@]}" "$IMAGE" python "$test_file" || status=$?
+  docker run "${opts[@]}" "$IMAGE" \
+    sh -c "${ENV_PRELUDE}exec python $(quote "$test_file")" || status=$?
 done
 exit "$status"
