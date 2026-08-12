@@ -27,6 +27,8 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from ..survey import survey_questions
+
 #: Допуск к длительности ролика. Секунда, а не ноль: таймкод последней сцены
 #: округляется при склейке, и ссылка на 01:40 при длительности 99.6 с — это
 #: округление, а не выдумка. Ноль допуска дал бы флаг на каждом ответе,
@@ -196,8 +198,12 @@ def consistency_reasons(answer: dict[str, Any], survey: dict[str, Any] | None = 
     if not any(str(v).strip() for v in verbatims.values()):
         reasons.append("вербатимы пусты: обоснования оценок нет")
 
-    questions = (survey or {}).get("questions") or []
-    asked = {str(q.get("id")) for q in questions if isinstance(q, dict) and q.get("id")}
+    # Форму анкеты разбирает agent_core.survey — единственное место, где это
+    # знание живёт. Здесь стояло `(survey or {}).get("questions")`, и сквозной
+    # прогон падал на 690-й секунде ровно тем же способом, что до этого в
+    # respondent/run.py: анкета приезжает списком, а не словарём.
+    questions = survey_questions(survey)
+    asked = {str(q.get("id")) for q in questions if q.get("id")}
     if asked:
         given = answer.get("survey_answers")
         given_keys = set(map(str, given)) if isinstance(given, dict) else set()

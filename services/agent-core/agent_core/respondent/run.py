@@ -40,6 +40,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
 
+from ..survey import question_label, survey_questions
 from .diversity import diversity_report
 
 #: Размер пачки (PRD §8). Проверяется тестом задачи: число здесь — контракт.
@@ -173,39 +174,14 @@ def _render_questions(survey: Any) -> str:
     """
     Анкета в текст для промпта респондента.
 
-    ─── Форма приходит списком ────────────────────────────────────────────────
-    `POST /api/tasks` кладёт в очередь то, что лежит в колонке
-    `surveys.questions`, то есть JSON-МАССИВ вопросов. Здесь раньше стоял
-    `survey.get("questions")`, и сквозной прогон падал на пятой минуте с
-    `AttributeError: 'list' object has no attribute 'get'` — уже оплатив
-    расшифровку и разбор кадров.
-
-    Словарь `{"questions": [...]}` принимается тоже: на него опираются фикстуры
-    CDD #18 и ручные прогоны, а расхождения это не создаёт — обе формы ведут к
-    одному списку.
-
-    ─── Формулировка лежит в `label` ──────────────────────────────────────────
-    Вопрос в продукте — `{id, label, type, scaleMin, scaleMax}`: так в
-    `agora-types.ts`, в JSON Schema анкеты и в конструкторе. Здесь читалось
-    `text`, которого в контракте нет, и персона получила бы список пустых
-    формулировок. Это хуже отказа: прогон прошёл бы целиком, стоил бы полную
-    цену и дал бы ответы на вопросы, которых персона не видела.
-
-    `text` оставлен запасным ключом ради старых записей в базе, но первым идёт
-    `label` — контракт, а не догадка.
+    Форму и имя поля разбирает `agent_core.survey` — единственное место, где
+    это знание живёт. Раньше разбор был здесь по месту, и после его починки
+    ровно тот же дефект нашёлся в `qa/checks.py`: заплатка не уменьшает число
+    мест, она только отодвигает встречу со следующим.
     """
-    if isinstance(survey, dict):
-        questions = survey.get("questions") or []
-    elif isinstance(survey, list):
-        questions = survey
-    else:
-        questions = []
-
     lines = []
-    for q in questions:
-        if not isinstance(q, dict):
-            continue
-        label = q.get("label") or q.get("text") or ""
+    for q in survey_questions(survey):
+        label = question_label(q)
         lines.append(f"- [{q.get('id', '?')}] ({q.get('type', 'открытый')}) {label}".rstrip())
     return "\n".join(lines) if lines else "(анкета пуста)"
 
