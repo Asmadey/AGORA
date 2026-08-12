@@ -226,9 +226,9 @@ export default function NewStudyPage() {
               onClick={() => setStep(i)}
               className={cn(
                 "flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-xs font-medium transition-colors",
-                i < step && "bg-emerald-500/20 text-emerald-300",
+                i < step && "bg-emerald-500/20 text-success",
                 i === step && "bg-foreground text-background",
-                i > step && "border border-border text-muted-foreground",
+                i > step && "border border-hairline text-slate",
               )}
             >
               {i < step ? <Check className="h-3.5 w-3.5" /> : i + 1}
@@ -236,7 +236,7 @@ export default function NewStudyPage() {
             <span
               className={cn(
                 "hidden text-sm sm:block",
-                i === step ? "text-foreground" : "text-muted-foreground",
+                i === step ? "text-foreground" : "text-slate",
               )}
             >
               {s}
@@ -246,7 +246,7 @@ export default function NewStudyPage() {
         ))}
       </ol>
 
-      <div className="mt-8 rounded-lg border border-border bg-[hsl(222_47%_7%)] p-6">
+      <div className="mt-8 rounded-lg border border-hairline bg-card p-6">
         {/* Шаг 1 — контент */}
         {step === 0 && (
           <div className="space-y-6">
@@ -303,11 +303,11 @@ export default function NewStudyPage() {
                     onClick={() => setMode(o.v)}
                     className={cn(
                       "rounded-md border p-4 text-left transition-colors",
-                      mode === o.v ? "border-foreground bg-secondary" : "border-border hover:bg-secondary/50",
+                      mode === o.v ? "border-ink bg-secondary" : "border-hairline hover:bg-secondary",
                     )}
                   >
                     <span className="block text-sm font-medium">{o.t}</span>
-                    <span className="mt-1 block text-xs text-muted-foreground">{o.d}</span>
+                    <span className="mt-1 block text-xs text-slate">{o.d}</span>
                   </button>
                 ))}
               </div>
@@ -338,7 +338,7 @@ export default function NewStudyPage() {
           <div className="space-y-6">
             <div>
               <h2 className="text-sm font-semibold">Перекрытие</h2>
-              <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+              <p className="mt-1 text-xs leading-relaxed text-slate">
                 Сколько раз каждая персона проходит анкету. При значении больше 1 в отчёте
                 появляется разброс оценок — видно, насколько результат устойчив. Стоимость
                 прогона растёт пропорционально.
@@ -351,13 +351,13 @@ export default function NewStudyPage() {
                     className={cn(
                       "flex-1 rounded-md border px-3 py-2.5 text-sm transition-colors",
                       replication === n
-                        ? "border-foreground bg-secondary"
-                        : "border-border hover:bg-secondary/50",
+                        ? "border-ink bg-secondary"
+                        : "border-hairline hover:bg-secondary",
                     )}
                   >
                     ×{n}
                     {n === 1 && (
-                      <span className="mt-0.5 block text-xs text-muted-foreground">
+                      <span className="mt-0.5 block text-xs text-slate">
                         без разброса
                       </span>
                     )}
@@ -366,7 +366,7 @@ export default function NewStudyPage() {
               </div>
             </div>
 
-            <dl className="space-y-2 rounded-md border border-border p-4 text-sm">
+            <dl className="space-y-2 rounded-md border border-hairline p-4 text-sm">
               {[
                 ["Режим", mode === "short" ? "Короткое видео" : "Длинное видео"],
                 [
@@ -398,7 +398,7 @@ export default function NewStudyPage() {
                 ],
               ].map(([k, v]) => (
                 <div key={k} className="flex justify-between gap-4">
-                  <dt className="text-muted-foreground">{k}</dt>
+                  <dt className="text-slate">{k}</dt>
                   <dd className="text-right">{v}</dd>
                 </div>
               ))}
@@ -460,7 +460,7 @@ export default function NewStudyPage() {
         <button
           onClick={() => setStep((s) => Math.max(0, s - 1))}
           disabled={step === 0}
-          className="inline-flex items-center gap-1.5 rounded-md border border-border px-4 py-2 text-sm transition-colors hover:bg-secondary disabled:pointer-events-none disabled:opacity-40"
+          className="inline-flex items-center gap-1.5 rounded-md border border-hairline px-4 py-2 text-sm transition-colors hover:bg-secondary disabled:pointer-events-none disabled:opacity-40"
         >
           <ChevronLeft className="h-4 w-4" />
           Назад
@@ -468,7 +468,7 @@ export default function NewStudyPage() {
         <button
           onClick={() => setStep((s) => Math.min(STEPS.length - 1, s + 1))}
           disabled={step === STEPS.length - 1}
-          className="inline-flex items-center gap-1.5 rounded-md border border-border px-4 py-2 text-sm transition-colors hover:bg-secondary disabled:pointer-events-none disabled:opacity-40"
+          className="inline-flex items-center gap-1.5 rounded-md border border-hairline px-4 py-2 text-sm transition-colors hover:bg-secondary disabled:pointer-events-none disabled:opacity-40"
         >
           Далее
           <ChevronRight className="h-4 w-4" />

@@ -186,3 +186,22 @@ export async function createPortrait(
 
   return portrait;
 }
+
+/**
+ * Удаление портрета.
+ *
+ * Версии уходят каскадом (`audience_portrait_versions.portrait_id`). Персоны,
+ * сгенерированные с этим портретом, не трогаются: они уже созданы, их DNA
+ * самодостаточна, и удалять аудиторию из-за уборки в портретах значило бы
+ * терять данные прогонов, которые на ней посчитаны.
+ */
+export async function deletePortrait(
+  client: PoolClient,
+  portraitId: string,
+): Promise<boolean> {
+  const { rowCount } = await client.query(
+    `DELETE FROM audience_portraits WHERE id = $1`,
+    [portraitId],
+  );
+  return (rowCount ?? 0) > 0;
+}

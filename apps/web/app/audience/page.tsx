@@ -68,14 +68,14 @@ export default async function AudiencePage() {
                       «12 из 50» читается как заказанный размер, и прогон на нём
                       выглядит нормальным до самого отчёта. */}
                   {incomplete && (
-                    <p className="mt-3 text-xs leading-relaxed text-amber-200/80">
+                    <p className="mt-3 text-xs leading-relaxed text-warning">
                       Набор заполнен не полностью: генерация оборвалась или была
                       остановлена.
                     </p>
                   )}
 
                   <div className="mt-4 flex items-center justify-between gap-2">
-                    <span className="text-xs text-muted-foreground">
+                    <span className="text-xs text-slate">
                       {new Date(s.createdAt).toLocaleDateString("ru-RU")}
                     </span>
                     <Link

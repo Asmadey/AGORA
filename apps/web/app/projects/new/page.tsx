@@ -46,9 +46,9 @@ export default async function NewProjectPage() {
               maxLength={200}
               autoFocus
               placeholder="Например: «Константинополь», первый сезон"
-              className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-none transition-colors focus:border-muted-foreground/60"
+              className="w-full rounded-md border border-hairline bg-background px-3 py-2 text-sm outline-none transition-colors focus:border-muted-foreground/60"
             />
-            <p className="text-xs text-muted-foreground">
+            <p className="text-xs text-slate">
               По названию проект ищут в списке — оно должно отличать его от соседних.
             </p>
           </div>
@@ -62,7 +62,7 @@ export default async function NewProjectPage() {
             </button>
             <Link
               href="/projects"
-              className="rounded-md border border-border px-4 py-2 text-sm transition-colors hover:bg-secondary"
+              className="rounded-md border border-hairline px-4 py-2 text-sm transition-colors hover:bg-secondary"
             >
               Отмена
             </Link>

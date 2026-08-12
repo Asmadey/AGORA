@@ -88,7 +88,7 @@ function coverageNote(rows: CriterionCoverage[], picked: string[], total: number
   const problems = rows.filter((r) => picked.includes(r.value) && r.level !== "grounded");
   if (problems.length === 0) return null;
   return (
-    <p className="mt-3 flex gap-2 rounded-md border border-amber-500/25 bg-amber-500/5 p-3 text-xs leading-relaxed text-amber-200/80">
+    <p className="mt-3 flex gap-2 rounded-md border border-warning/30 bg-warning-soft/60 p-3 text-xs leading-relaxed text-warning">
       <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" />
       <span>
         {problems.map((r) => (
@@ -204,7 +204,7 @@ export function AudienceStep({
           onClick={() => onPersonaSetChange(null)}
           className={cn(
             "flex-1 rounded-md border p-3 text-sm transition-colors",
-            !reuse ? "border-foreground bg-secondary" : "border-border hover:bg-secondary/50",
+            !reuse ? "border-ink bg-secondary" : "border-hairline hover:bg-secondary",
           )}
         >
           Создать аудиторию
@@ -214,7 +214,7 @@ export function AudienceStep({
           disabled={!sets || sets.length === 0}
           className={cn(
             "flex-1 rounded-md border p-3 text-sm transition-colors disabled:opacity-40",
-            reuse ? "border-foreground bg-secondary" : "border-border hover:bg-secondary/50",
+            reuse ? "border-ink bg-secondary" : "border-hairline hover:bg-secondary",
           )}
         >
           Выбрать существующую
@@ -223,7 +223,7 @@ export function AudienceStep({
       </div>
 
       {loadError && (
-        <p className="rounded-md border border-red-500/25 bg-red-500/5 p-3 text-xs text-red-200/80">
+        <p className="rounded-md border border-danger/30 bg-danger-soft/60 p-3 text-xs text-danger">
           Не удалось загрузить данные о заземлении: {loadError}. Пометки о слабо
           заземлённых сегментах показаны не будут — это не значит, что их нет.
         </p>
@@ -251,7 +251,7 @@ export function AudienceStep({
                   "w-full rounded-lg border p-4 text-left transition-colors",
                   personaSetId === s.id
                     ? "border-ink bg-secondary"
-                    : "border-hairline hover:bg-secondary/60",
+                    : "border-hairline hover:bg-secondary",
                 )}
               >
                 <p className="text-sm font-medium">{s.name}</p>
@@ -289,8 +289,8 @@ export function AudienceStep({
                   className={cn(
                     "rounded-full border px-3 py-1.5 text-sm transition-colors",
                     criteria.ageGroups.includes(g)
-                      ? "border-foreground bg-secondary"
-                      : "border-border text-muted-foreground hover:bg-secondary/50",
+                      ? "border-ink bg-secondary"
+                      : "border-hairline text-slate hover:bg-secondary",
                   )}
                 >
                   {g}
@@ -311,8 +311,8 @@ export function AudienceStep({
                   className={cn(
                     "rounded-full border px-3 py-1.5 text-sm transition-colors",
                     criteria.genders.includes(g)
-                      ? "border-foreground bg-secondary"
-                      : "border-border text-muted-foreground hover:bg-secondary/50",
+                      ? "border-ink bg-secondary"
+                      : "border-hairline text-slate hover:bg-secondary",
                   )}
                 >
                   {g}
@@ -333,8 +333,8 @@ export function AudienceStep({
                   className={cn(
                     "rounded-full border px-3 py-1.5 text-sm transition-colors",
                     criteria.geos.includes(g)
-                      ? "border-foreground bg-secondary"
-                      : "border-border text-muted-foreground hover:bg-secondary/50",
+                      ? "border-ink bg-secondary"
+                      : "border-hairline text-slate hover:bg-secondary",
                   )}
                 >
                   {g}
@@ -368,14 +368,14 @@ export function AudienceStep({
                 {criteria.size}
               </span>
             </div>
-            <p className="mt-2 text-xs text-muted-foreground">
+            <p className="mt-2 text-xs text-slate">
               Рекомендуем 20 — этого хватает на сегментные срезы без лишней стоимости.
             </p>
           </div>
 
           <div>
             <h2 className="text-sm font-semibold">Дополнительный контекст</h2>
-            <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+            <p className="mt-1 text-xs leading-relaxed text-slate">
               Файл с описанием вашей аудитории уточнит персон — лексику, специфику ниши.
               Он не переопределяет распределения и калибровку баллов: заземление на
               корпус остаётся главным.
@@ -406,7 +406,7 @@ export function AudienceStep({
             )}
           </div>
 
-          <div className="border-t border-border pt-6">
+          <div className="border-t border-hairline pt-6">
             <button
               onClick={generate}
               disabled={isGenerating}
@@ -419,13 +419,13 @@ export function AudienceStep({
             </button>
 
             {genError && (
-              <p className="mt-3 rounded-md border border-red-500/25 bg-red-500/5 p-3 text-xs leading-relaxed text-red-200/80">
+              <p className="mt-3 rounded-md border border-danger/30 bg-danger-soft/60 p-3 text-xs leading-relaxed text-danger">
                 {genError}
               </p>
             )}
 
             {generated && (
-              <div className="mt-3 rounded-md border border-emerald-500/25 bg-emerald-500/5 p-3 text-xs leading-relaxed text-emerald-200/80">
+              <div className="mt-3 rounded-md border border-emerald-500/25 bg-success/10 p-3 text-xs leading-relaxed text-emerald-200/80">
                 <p>
                   Готово: {generated.size} персон сохранено. Набор подставлен в запуск —
                   менять критерии больше не нужно.
@@ -435,7 +435,7 @@ export function AudienceStep({
                     но читаются они заметно суше, и пользователь вправе понимать,
                     почему. */}
                 {!generated.enrichment?.enriched && (
-                  <p className="mt-2 text-amber-200/80">
+                  <p className="mt-2 text-warning">
                     Портреты собраны по шаблону: модель не отвечала
                     {generated.enrichment?.degraded_reason
                       ? ` (${generated.enrichment.degraded_reason})`
@@ -450,7 +450,7 @@ export function AudienceStep({
       )}
 
       {!grounding && !loadError && (
-        <p className="flex items-center gap-2 text-xs text-muted-foreground">
+        <p className="flex items-center gap-2 text-xs text-slate">
           <Loader2 className="h-3.5 w-3.5 animate-spin" /> Считаем охват критериев по корпусу…
         </p>
       )}

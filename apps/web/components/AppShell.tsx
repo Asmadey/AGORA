@@ -157,7 +157,7 @@ export function PageHeader({
               размерам — на 28px он уже съедает воздух между буквами. */}
           <h1 className="text-[28px] font-medium leading-[1.25] tracking-tight">{title}</h1>
           {subtitle && (
-            <p className="mt-1 max-w-2xl text-sm text-muted-foreground">{subtitle}</p>
+            <p className="mt-1 max-w-2xl text-sm text-slate">{subtitle}</p>
           )}
         </div>
         {actions && <div className="flex shrink-0 items-center gap-2">{actions}</div>}

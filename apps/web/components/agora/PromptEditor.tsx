@@ -180,12 +180,12 @@ export function PromptEditor({ promptKey, stage, desc, initialActive, initialHis
     <div className="space-y-6">
       {/* Чипы состояния */}
       <div className="flex flex-wrap gap-2">
-        <span className="inline-flex items-center rounded-full border border-border px-2.5 py-0.5 text-xs text-muted-foreground">
+        <span className="inline-flex items-center rounded-full border border-hairline px-2.5 py-0.5 text-xs text-slate">
           стадия: {stage}
         </span>
         {active && (
           <>
-            <span className="inline-flex items-center rounded-full border border-border px-2.5 py-0.5 text-xs text-muted-foreground">
+            <span className="inline-flex items-center rounded-full border border-hairline px-2.5 py-0.5 text-xs text-slate">
               активная версия: {active.version}
             </span>
             {active.is_default ? (
@@ -208,7 +208,7 @@ export function PromptEditor({ promptKey, stage, desc, initialActive, initialHis
         </p>
       )}
       {success && (
-        <p className="flex gap-2 rounded-md border border-emerald-500/25 bg-emerald-500/5 p-3 text-xs leading-relaxed text-emerald-200/80">
+        <p className="flex gap-2 rounded-md border border-emerald-500/25 bg-success/10 p-3 text-xs leading-relaxed text-emerald-200/80">
           <CheckCircle2 className="mt-0.5 h-3.5 w-3.5 shrink-0" />
           {success}
         </p>
@@ -217,12 +217,12 @@ export function PromptEditor({ promptKey, stage, desc, initialActive, initialHis
       {/* Переменные */}
       <section>
         <h2 className="text-sm font-semibold">Переменные в шаблоне</h2>
-        <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+        <p className="mt-1 text-xs leading-relaxed text-slate">
           {desc}. Переменные извлекаются из шаблона автоматически.
         </p>
         <div className="mt-3 flex flex-wrap gap-2">
           {draftVars.length === 0 ? (
-            <span className="text-sm text-muted-foreground">
+            <span className="text-sm text-slate">
               Плейсхолдеров нет — шаблон статический.
             </span>
           ) : (
@@ -246,7 +246,7 @@ export function PromptEditor({ promptKey, stage, desc, initialActive, initialHis
             <button
               onClick={handleSave}
               disabled={saving || !isDirty}
-              className="inline-flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-xs transition-colors hover:bg-secondary disabled:opacity-40"
+              className="inline-flex items-center gap-1.5 rounded-md border border-hairline px-3 py-1.5 text-xs transition-colors hover:bg-secondary disabled:opacity-40"
             >
               <Save className="h-3.5 w-3.5" />
               {saving ? "сохранение…" : "сохранить новую версию"}
@@ -254,7 +254,7 @@ export function PromptEditor({ promptKey, stage, desc, initialActive, initialHis
             {canRestore && (
               <button
                 onClick={handleRestore}
-                className="inline-flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-xs transition-colors hover:bg-secondary"
+                className="inline-flex items-center gap-1.5 rounded-md border border-hairline px-3 py-1.5 text-xs transition-colors hover:bg-secondary"
               >
                 <RotateCcw className="h-3.5 w-3.5" />
                 вернуть дефолт
@@ -265,7 +265,7 @@ export function PromptEditor({ promptKey, stage, desc, initialActive, initialHis
         <textarea
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
-          className="h-96 w-full resize-y rounded-md border border-border bg-[hsl(222_47%_7%)] p-4 font-mono text-[13px] leading-relaxed focus:outline-none focus:ring-1 focus:ring-sky-500/50"
+          className="h-96 w-full resize-y rounded-md border border-hairline bg-card p-4 font-mono text-[13px] leading-relaxed focus:outline-none focus:ring-1 focus:ring-sky-500/50"
           spellCheck={false}
         />
         {isDirty && (
@@ -278,7 +278,7 @@ export function PromptEditor({ promptKey, stage, desc, initialActive, initialHis
       {/* Предпросмотр */}
       <section>
         <h2 className="text-sm font-semibold">Предпросмотр (dry-run)</h2>
-        <p className="mt-1 text-xs text-muted-foreground">
+        <p className="mt-1 text-xs text-slate">
           Подстановка тестовых значений без вызова модели. Заполните все переменные.
         </p>
         <div className="mt-3 space-y-2">
@@ -292,7 +292,7 @@ export function PromptEditor({ promptKey, stage, desc, initialActive, initialHis
                   setPreviewValues((prev) => ({ ...prev, [v]: e.target.value }))
                 }
                 placeholder={`значение для ${v}`}
-                className="flex-1 rounded border border-border bg-[hsl(222_47%_7%)] px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-sky-500/50"
+                className="flex-1 rounded border border-hairline bg-card px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-sky-500/50"
               />
             </div>
           ))}
@@ -300,13 +300,13 @@ export function PromptEditor({ promptKey, stage, desc, initialActive, initialHis
         <button
           onClick={handlePreview}
           disabled={previewing || draftVars.length === 0}
-          className="mt-3 inline-flex items-center gap-1.5 rounded-md border border-border px-3 py-1.5 text-xs transition-colors hover:bg-secondary disabled:opacity-40"
+          className="mt-3 inline-flex items-center gap-1.5 rounded-md border border-hairline px-3 py-1.5 text-xs transition-colors hover:bg-secondary disabled:opacity-40"
         >
           <Eye className="h-3.5 w-3.5" />
           {previewing ? "подстановка…" : "предпросмотр"}
         </button>
         {previewText && (
-          <pre className="mt-3 overflow-x-auto whitespace-pre-wrap rounded-md border border-border bg-[hsl(222_47%_7%)] p-4 font-mono text-[13px] leading-relaxed">
+          <pre className="mt-3 overflow-x-auto whitespace-pre-wrap rounded-md border border-hairline bg-card p-4 font-mono text-[13px] leading-relaxed">
             {previewText}
           </pre>
         )}
@@ -315,16 +315,16 @@ export function PromptEditor({ promptKey, stage, desc, initialActive, initialHis
       {/* История версий */}
       <section>
         <h2 className="text-sm font-semibold">История версий</h2>
-        <div className="mt-2 divide-y divide-border overflow-hidden rounded-lg border border-border">
+        <div className="mt-2 divide-y divide-border overflow-hidden rounded-lg border border-hairline">
           {history.map((v) => (
             <div
               key={v.id}
-              className="flex items-center gap-4 bg-[hsl(222_47%_7%)] px-5 py-3"
+              className="flex items-center gap-4 bg-card px-5 py-3"
             >
-              <Clock className="h-4 w-4 shrink-0 text-muted-foreground" />
+              <Clock className="h-4 w-4 shrink-0 text-slate" />
               <div className="min-w-0 flex-1">
                 <span className="font-mono text-sm">v{v.version}</span>
-                <span className="ml-3 text-xs text-muted-foreground">
+                <span className="ml-3 text-xs text-slate">
                   {new Date(v.created_at).toLocaleString("ru-RU")}
                 </span>
               </div>
@@ -341,7 +341,7 @@ export function PromptEditor({ promptKey, stage, desc, initialActive, initialHis
               {!v.is_active && !v.is_default && (
                 <button
                   onClick={() => handleActivate(v.version)}
-                  className="inline-flex items-center gap-1.5 rounded-md border border-border px-3 py-1 text-xs transition-colors hover:bg-secondary"
+                  className="inline-flex items-center gap-1.5 rounded-md border border-hairline px-3 py-1 text-xs transition-colors hover:bg-secondary"
                 >
                   сделать активной
                 </button>

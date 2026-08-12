@@ -1,6 +1,11 @@
 import { withTenant } from "@/lib/server/db";
 import { requireOwner, requireSession, toResponse } from "@/lib/server/guard";
-import { getPortraitWithHistory, updatePortrait, type Portrait } from "@/lib/server/portraits";
+import {
+  deletePortrait,
+  getPortraitWithHistory,
+  updatePortrait,
+  type Portrait,
+} from "@/lib/server/portraits";
 
 /**
  * API портретов аудитории (задача #24) — детали и правка.
@@ -71,6 +76,27 @@ export async function PUT(
     }
 
     return Response.json({ portrait });
+  } catch (error) {
+    return toResponse(error);
+  }
+}
+
+/**
+ * DELETE /api/portraits/{id}
+ *
+ * 404, а не 403, на чужой портрет: под RLS он не находится, и это тот же ответ,
+ * что на несуществующий идентификатор.
+ */
+export async function DELETE(
+  _request: Request,
+  { params }: { params: Promise<{ id: string }> },
+) {
+  try {
+    const { id } = await params;
+    const { tenantId } = await requireSession();
+    const ok = await withTenant(tenantId, (client) => deletePortrait(client, id));
+    if (!ok) return Response.json({ error: "портрет не найден" }, { status: 404 });
+    return Response.json({ ok: true });
   } catch (error) {
     return toResponse(error);
   }

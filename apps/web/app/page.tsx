@@ -26,10 +26,10 @@ export const dynamic = "force-dynamic";
 type Status = "QUEUED" | "RUNNING" | "REPORT_READY" | "FAILED";
 
 const BADGE: Record<Status, { label: string; icon: React.ElementType; cls: string }> = {
-  QUEUED: { label: "В очереди", icon: Clock, cls: "text-muted-foreground" },
-  RUNNING: { label: "Идёт прогон", icon: Loader2, cls: "text-sky-400" },
-  REPORT_READY: { label: "Отчёт готов", icon: CheckCircle2, cls: "text-emerald-400" },
-  FAILED: { label: "Ошибка", icon: AlertTriangle, cls: "text-rose-400" },
+  QUEUED: { label: "В очереди", icon: Clock, cls: "text-slate" },
+  RUNNING: { label: "Идёт прогон", icon: Loader2, cls: "text-brand-blue" },
+  REPORT_READY: { label: "Отчёт готов", icon: CheckCircle2, cls: "text-success" },
+  FAILED: { label: "Ошибка", icon: AlertTriangle, cls: "text-danger" },
 };
 
 function StatusBadge({ status }: { status: string }) {
@@ -37,7 +37,7 @@ function StatusBadge({ status }: { status: string }) {
   // завести новый, и молча пропавшая подпись выглядела бы как «без статуса».
   const known = BADGE[status as Status];
   if (!known) {
-    return <span className="text-xs text-muted-foreground">{status}</span>;
+    return <span className="text-xs text-slate">{status}</span>;
   }
   const { label, icon: Icon, cls } = known;
   return (

@@ -46,7 +46,7 @@ function LoginForm() {
     <form onSubmit={onSubmit} className="w-full max-w-sm space-y-5">
       <div className="space-y-1">
         <h1 className="text-2xl font-semibold tracking-tight">AGORA</h1>
-        <p className="text-sm text-muted-foreground">Вход в рабочее пространство команды</p>
+        <p className="text-sm text-slate">Вход в рабочее пространство команды</p>
       </div>
 
       <div className="space-y-2">

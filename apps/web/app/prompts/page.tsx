@@ -51,16 +51,16 @@ export default async function PromptsPage() {
             return (
               <section key={stage}>
                 <h2 className="mb-3 text-sm font-semibold">{stage}</h2>
-                <div className="divide-y divide-border overflow-hidden rounded-lg border border-border">
+                <div className="divide-y divide-border overflow-hidden rounded-lg border border-hairline">
                   {prompts.map((p) => (
                     <Link
                       key={p.key}
                       href={`/prompts/${p.key}`}
-                      className="flex items-center gap-4 bg-[hsl(222_47%_7%)] px-5 py-4 transition-colors hover:bg-secondary/40"
+                      className="flex items-center gap-4 bg-card px-5 py-4 transition-colors hover:bg-secondary/40"
                     >
                       <div className="min-w-0 flex-1">
                         <p className="truncate font-mono text-sm">{p.key}</p>
-                        <p className="mt-0.5 truncate text-xs text-muted-foreground">
+                        <p className="mt-0.5 truncate text-xs text-slate">
                           {PROMPT_REGISTRY.find((r) => r.key === p.key)?.desc ?? p.stage}
                         </p>
                       </div>
@@ -70,7 +70,7 @@ export default async function PromptsPage() {
                       <Chip>
                         {p.is_default ? "дефолт" : `v${p.version}`}
                       </Chip>
-                      <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" />
+                      <ChevronRight className="h-4 w-4 shrink-0 text-slate" />
                     </Link>
                   ))}
                 </div>
@@ -92,7 +92,7 @@ export default async function PromptsPage() {
       />
       <div className="space-y-8 p-8">
         {missing.length > 0 && (
-          <p className="flex gap-2 rounded-md border border-amber-500/25 bg-amber-500/5 p-3 text-xs leading-relaxed text-amber-200/80">
+          <p className="flex gap-2 rounded-md border border-warning/30 bg-warning-soft/60 p-3 text-xs leading-relaxed text-warning">
             <FileWarning className="mt-0.5 h-3.5 w-3.5 shrink-0" />
             База недоступна — показывается реестр без версий и правки.
           </p>
@@ -100,20 +100,20 @@ export default async function PromptsPage() {
         {stages.map((stage) => (
           <section key={stage}>
             <h2 className="mb-3 text-sm font-semibold">{stage}</h2>
-            <div className="divide-y divide-border overflow-hidden rounded-lg border border-border">
+            <div className="divide-y divide-border overflow-hidden rounded-lg border border-hairline">
               {PROMPT_REGISTRY.filter((p) => p.stage === stage).map((p) => (
                 <Link
                   key={p.key}
                   href={`/prompts/${p.key}`}
-                  className="flex items-center gap-4 bg-[hsl(222_47%_7%)] px-5 py-4 transition-colors hover:bg-secondary/40"
+                  className="flex items-center gap-4 bg-card px-5 py-4 transition-colors hover:bg-secondary/40"
                 >
                   <div className="min-w-0 flex-1">
                     <p className="truncate font-mono text-sm">{p.key}</p>
-                    <p className="mt-0.5 truncate text-xs text-muted-foreground">{p.desc}</p>
+                    <p className="mt-0.5 truncate text-xs text-slate">{p.desc}</p>
                   </div>
                   <Chip tone="outline">реестр</Chip>
                   <Chip>дефолт</Chip>
-                  <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" />
+                  <ChevronRight className="h-4 w-4 shrink-0 text-slate" />
                 </Link>
               ))}
             </div>

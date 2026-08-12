@@ -31,7 +31,7 @@ import {
  */
 
 const SELECT_CLASS =
-  "w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-none transition-colors focus:border-muted-foreground/60";
+  "w-full rounded-md border border-hairline bg-background px-3 py-2 text-sm outline-none transition-colors focus:border-muted-foreground/60";
 
 export function AudienceBuilder() {
   const router = useRouter();
@@ -96,16 +96,16 @@ export function AudienceBuilder() {
   }
 
   return (
-    <div className="w-full max-w-xl rounded-lg border border-border bg-[hsl(222_47%_7%)] p-6">
+    <div className="w-full max-w-xl rounded-lg border border-hairline bg-card p-6">
       <h2 className="text-sm font-semibold">Новый набор персон</h2>
-      <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+      <p className="mt-1 text-xs leading-relaxed text-slate">
         Персоны собираются по реальным долям исследовательского корпуса из 165
         респондентов. Чем уже критерии, тем меньше записей их подпирает.
       </p>
 
       <div className="mt-5 grid gap-4 sm:grid-cols-2">
         <div className="space-y-1.5">
-          <label htmlFor="a-size" className="block text-xs text-muted-foreground">
+          <label htmlFor="a-size" className="block text-xs text-slate">
             Размер
           </label>
           <input
@@ -120,7 +120,7 @@ export function AudienceBuilder() {
         </div>
 
         <div className="space-y-1.5">
-          <label htmlFor="a-age" className="block text-xs text-muted-foreground">
+          <label htmlFor="a-age" className="block text-xs text-slate">
             Возраст
           </label>
           {/* Группы берутся из контракта, а не переписываются здесь: список,
@@ -135,7 +135,7 @@ export function AudienceBuilder() {
         </div>
 
         <div className="space-y-1.5">
-          <label htmlFor="a-gender" className="block text-xs text-muted-foreground">
+          <label htmlFor="a-gender" className="block text-xs text-slate">
             Пол
           </label>
           <select id="a-gender" value={gender} onChange={(e) => setGender(e.target.value)} className={SELECT_CLASS}>
@@ -149,7 +149,7 @@ export function AudienceBuilder() {
         </div>
 
         <div className="space-y-1.5">
-          <label htmlFor="a-geo" className="block text-xs text-muted-foreground">
+          <label htmlFor="a-geo" className="block text-xs text-slate">
             Гео
           </label>
           <select id="a-geo" value={geo} onChange={(e) => setGeo(e.target.value)} className={SELECT_CLASS}>
@@ -162,7 +162,7 @@ export function AudienceBuilder() {
       </div>
 
       {geo === "иные НП" && (
-        <p className="mt-4 rounded-md border border-amber-500/20 bg-amber-500/5 px-3 py-2 text-xs leading-relaxed text-amber-200/90">
+        <p className="mt-4 rounded-md border border-warning/30 bg-warning-soft/60 px-3 py-2 text-xs leading-relaxed text-warning">
           «Иные НП» в корпусе не представлены — 0 записей из 165. Генерация по
           этому критерию заземлить персон не на чем и будет отвергнута.
         </p>
@@ -188,7 +188,7 @@ export function AudienceBuilder() {
           type="button"
           onClick={() => setOpen(false)}
           disabled={busy}
-          className="rounded-md border border-border px-4 py-2 text-sm transition-colors hover:bg-secondary disabled:opacity-40"
+          className="rounded-md border border-hairline px-4 py-2 text-sm transition-colors hover:bg-secondary disabled:opacity-40"
         >
           Отмена
         </button>

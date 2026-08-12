@@ -202,12 +202,40 @@ def listing(payload: dict, key: str, endpoint: str) -> list[dict]:
 
 
 def make_audience(client: ApiClient, seed: int) -> str:
-    made = api(client, "/api/persona-sets", "POST", {
-        "name": f"E2E аудитория {seed}", "size": AUDIENCE_SIZE, "seed": seed,
+    """
+    Набор персон, В КОТОРОМ ЕСТЬ ПЕРСОНЫ.
+
+    Раньше здесь стоял POST /api/persona-sets. Он заводит ЗАПИСЬ о наборе и
+    ничего не генерирует, поэтому прогон уходил в работу с пустой аудиторией:
+    скачивал ролик, нормализовал, расшифровывал речь, разбирал кадры моделью со
+    зрением — и падал на узле опроса с «персоны не загружены». На 363-й секунде,
+    уже потратив всё оплаченное.
+
+    Генерация идёт тем же маршрутом, что и шаг визарда: POST /api/audience —
+    заземлённый на корпус генератор. Прогонщик обязан ходить теми же дорогами,
+    что пользователь, иначе он проверяет не тот путь, которым пойдут люди.
+
+    Пустой ответ — отказ здесь, а не в конвейере: ноль персон в наборе делает
+    прогон заведомо провальным, и узнавать об этом через шесть минут незачем.
+    """
+    made = api(client, "/api/audience", "POST", {
+        "size": AUDIENCE_SIZE,
+        # Весь диапазон по каждому критерию: контракт отвергает пустой список
+        # как незаполненный критерий, а сужать выборку прогонщику незачем.
+        "ageGroups": ["14-17", "18-24", "25-34", "35-44", "45-59", "60+"],
+        "geos": ["столицы", "центры субъектов"],
+        "genders": ["муж", "жен"],
     })
-    set_id = made.get("id") or (made.get("personaSet") or {}).get("id")
+    set_id = made.get("personaSetId") or (made.get("personaSet") or {}).get("id")
+    generated = int(made.get("size") or 0)
     if not set_id:
-        raise RunFailed(f"набор персон не создан: {json.dumps(made)[:200]}")
+        raise RunFailed(f"набор персон не создан: {json.dumps(made, ensure_ascii=False)[:200]}")
+    if generated == 0:
+        raise RunFailed(
+            f"набор {set_id} создан, но персон в нём ноль — прогон дошёл бы до "
+            f"опроса и упал там. Ответ: {json.dumps(made, ensure_ascii=False)[:200]}"
+        )
+    log(f"  аудитория {set_id}: {generated} персон")
     return str(set_id)
 
 

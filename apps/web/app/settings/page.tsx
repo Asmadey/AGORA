@@ -101,9 +101,9 @@ export default function SettingsPage() {
       />
 
       <div className="max-w-2xl space-y-4 p-8 pb-32">
-        <section className="rounded-lg border border-border bg-[hsl(222_47%_7%)] p-6">
+        <section className="rounded-lg border border-hairline bg-card p-6">
           <h2 className="text-sm font-semibold">Лимит вызовов модели</h2>
-          <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+          <p className="mt-1 text-xs leading-relaxed text-slate">
             Разбор кадров — самая дорогая стадия. Жёсткий лимит обрывает прогон при
             превышении: отчёт будет неполным, но счёт предсказуемым.
           </p>
@@ -119,11 +119,11 @@ export default function SettingsPage() {
                 onClick={() => patch({ costCap: o.v })}
                 className={cn(
                   "flex-1 rounded-md border p-3 text-left transition-colors",
-                  draft.costCap === o.v ? "border-foreground bg-secondary" : "border-border hover:bg-secondary/50",
+                  draft.costCap === o.v ? "border-ink bg-secondary" : "border-hairline hover:bg-secondary",
                 )}
               >
                 <span className="block text-sm font-medium">{o.t}</span>
-                <span className="mt-0.5 block text-xs text-muted-foreground">{o.d}</span>
+                <span className="mt-0.5 block text-xs text-slate">{o.d}</span>
               </button>
             ))}
           </div>
@@ -143,9 +143,9 @@ export default function SettingsPage() {
           )}
         </section>
 
-        <section className="rounded-lg border border-border bg-[hsl(222_47%_7%)] p-6">
+        <section className="rounded-lg border border-hairline bg-card p-6">
           <h2 className="text-sm font-semibold">Модель транскрипции</h2>
-          <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+          <p className="mt-1 text-xs leading-relaxed text-slate">
             Транскрипция идёт на CPU. На длинных материалах large-v3 существенно
             медленнее, turbo быстрее при небольшой потере точности распознавания.
           </p>
@@ -161,24 +161,24 @@ export default function SettingsPage() {
                 onClick={() => patch({ whisperModel: o.v })}
                 className={cn(
                   "flex-1 rounded-md border p-3 text-left transition-colors",
-                  draft.whisperModel === o.v ? "border-foreground bg-secondary" : "border-border hover:bg-secondary/50",
+                  draft.whisperModel === o.v ? "border-ink bg-secondary" : "border-hairline hover:bg-secondary",
                 )}
               >
                 <span className="block font-mono text-sm">{o.t}</span>
-                <span className="mt-0.5 block text-xs text-muted-foreground">{o.d}</span>
+                <span className="mt-0.5 block text-xs text-slate">{o.d}</span>
               </button>
             ))}
           </div>
-          <p className="mt-3 text-xs leading-relaxed text-muted-foreground">
+          <p className="mt-3 text-xs leading-relaxed text-slate">
             Выбор фиксируется в задаче на момент её создания и не меняется на лету:
             иначе прогон, начатый на одной модели, досчитался бы на другой, и отличить
             влияние модели от влияния материала стало бы невозможно.
           </p>
         </section>
 
-        <section className="rounded-lg border border-border bg-[hsl(222_47%_7%)] p-6">
+        <section className="rounded-lg border border-hairline bg-card p-6">
           <h2 className="text-sm font-semibold">Перекрытие по умолчанию</h2>
-          <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+          <p className="mt-1 text-xs leading-relaxed text-slate">
             Сколько раз каждая персона проходит анкету. Больше повторов — виден разброс
             и понятна устойчивость результата, но стоимость растёт пропорционально.
           </p>
@@ -190,8 +190,8 @@ export default function SettingsPage() {
                 className={cn(
                   "flex-1 rounded-md border py-2.5 text-sm transition-colors",
                   draft.defaultReplication === n
-                    ? "border-foreground bg-secondary"
-                    : "border-border hover:bg-secondary/50",
+                    ? "border-ink bg-secondary"
+                    : "border-hairline hover:bg-secondary",
                 )}
               >
                 ×{n}
@@ -200,23 +200,23 @@ export default function SettingsPage() {
           </div>
         </section>
 
-        <section className="rounded-lg border border-border bg-[hsl(222_47%_7%)] p-6">
+        <section className="rounded-lg border border-hairline bg-card p-6">
           <h2 className="text-sm font-semibold">Провайдер моделей</h2>
           <dl className="mt-4 space-y-2 text-sm">
             <div className="flex justify-between gap-4">
-              <dt className="text-muted-foreground">Модель</dt>
+              <dt className="text-slate">Модель</dt>
               <dd className="font-mono">qwen3.6</dd>
             </div>
             <div className="flex justify-between gap-4">
-              <dt className="text-muted-foreground">Endpoint</dt>
+              <dt className="text-slate">Endpoint</dt>
               <dd className="font-mono text-xs">api.timeweb.cloud/v1</dd>
             </div>
             <div className="flex justify-between gap-4">
-              <dt className="text-muted-foreground">Ключ</dt>
-              <dd className="text-muted-foreground">задан в окружении сервера</dd>
+              <dt className="text-slate">Ключ</dt>
+              <dd className="text-slate">задан в окружении сервера</dd>
             </div>
           </dl>
-          <p className="mt-4 text-xs text-muted-foreground">
+          <p className="mt-4 text-xs text-slate">
             Ключи не хранятся в базе и не редактируются из интерфейса — только через
             переменные окружения.
           </p>
@@ -225,7 +225,7 @@ export default function SettingsPage() {
 
       {/* Панель сохранения. Прижата к низу рабочей области, чтобы кнопка не уезжала
           за пределы экрана на длинной странице. */}
-      <div className="sticky bottom-0 border-t border-border bg-background/95 px-8 py-4 backdrop-blur">
+      <div className="sticky bottom-0 border-t border-hairline bg-background/95 px-8 py-4 backdrop-blur">
         <div className="flex max-w-2xl items-center gap-4">
           <button
             onClick={submit}
@@ -242,17 +242,17 @@ export default function SettingsPage() {
                 setDraft(saved);
                 setSave({ kind: "idle" });
               }}
-              className="rounded-md border border-border px-4 py-2.5 text-sm transition-colors hover:bg-secondary"
+              className="rounded-md border border-hairline px-4 py-2.5 text-sm transition-colors hover:bg-secondary"
             >
               Отменить
             </button>
           )}
 
-          <span className="text-xs text-muted-foreground">
+          <span className="text-xs text-slate">
             {loading && "Загрузка…"}
             {!loading && dirty && "Есть несохранённые изменения"}
             {!loading && !dirty && save.kind === "saved" && (
-              <span className="inline-flex items-center gap-1.5 text-emerald-400">
+              <span className="inline-flex items-center gap-1.5 text-success">
                 <Check className="h-3.5 w-3.5" />
                 Сохранено
               </span>
@@ -261,7 +261,7 @@ export default function SettingsPage() {
           </span>
 
           {save.kind === "error" && (
-            <span className="inline-flex items-center gap-1.5 text-xs text-rose-300">
+            <span className="inline-flex items-center gap-1.5 text-xs text-danger">
               <AlertCircle className="h-3.5 w-3.5" />
               {save.message}
             </span>
