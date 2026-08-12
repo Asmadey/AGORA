@@ -104,7 +104,7 @@ class QwenRespondentClient:
             ],
             temperature=self.temperature,
             # Размышление выключено: см. ModelConfig.thinking — замер и причина.
-            extra_body=self.config.extra_body(),
+            extra_body=self.config.extra_body("respondent"),
         )
         return (response.choices[0].message.content or "").strip()
 

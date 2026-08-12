@@ -306,7 +306,7 @@ class QwenVlmClient:
             }],
             # Размышление выключено — здесь особенно очевидно: разбор кадра это
             # описание увиденного, а не вывод. См. ModelConfig.thinking.
-            extra_body=self.config.extra_body(),
+            extra_body=self.config.extra_body("frames"),
         )
         return _parse_json(response.choices[0].message.content or "")
 

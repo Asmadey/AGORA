@@ -85,6 +85,61 @@ def test_every_model_call_disables_reasoning():
     )
 
 
+def test_reasoning_is_per_role_not_global():
+    """
+    Размышление включается по РОЛИ, а не одним рубильником на всё.
+
+    Замер тремя прогонами golden-сета: с размышлением выключенным везде QA
+    браковал 4, 5 и 7 ответов из двенадцати по qa.grounding — персоны
+    выдумывали таймкоды и приписывали сцены не тем моментам. С включённым —
+    ноль отбраковок из двенадцати.
+
+    Но платить за это везде незачем. У ролей разная работа:
+
+      · респондент строит ответ ПО МАТЕРИАЛУ и обязан не промахнуться мимо
+        таймкода — размышление здесь покупает заземление;
+      · разбор кадра описывает увиденное, выводить нечего;
+      · судья QA сверяет ответ с материалом по правилам, и без размышления
+        он ловил галлюцинации ничуть не хуже — отказов судьи ноль;
+      · судей и разборов кадров в прогоне БОЛЬШЕ, чем персон, поэтому
+        выключение именно там даёт основную экономию времени.
+    """
+    from agent_core.config import ModelConfig
+
+    config = ModelConfig(
+        api_key="k", base_url="u", vlm_base_url="u",
+        text_model="m", vlm_model="m", proxy_source="s",
+    )
+    assert config.extra_body("respondent") == {}, (
+        "респонденту размышление нужно: без него треть ответов не заземлена"
+    )
+    for role in ("frames", "qa", "analytics", "persona", "portrait"):
+        body = config.extra_body(role)
+        assert body.get("chat_template_kwargs", {}).get("enable_thinking") is False, (
+            f"роль {role} обязана идти без размышления: {body}"
+        )
+
+
+def test_unknown_role_is_a_mistake_not_a_default():
+    """
+    Незнакомая роль — ошибка, а не тихое умолчание.
+
+    Опечатка в имени роли не должна молча выбирать быстрый режим там, где
+    нужен заземлённый: это ровно тот отказ, который не виден нигде, кроме
+    доли отбракованных ответов через десять минут прогона.
+    """
+    import pytest
+
+    from agent_core.config import ModelConfig
+
+    config = ModelConfig(
+        api_key="k", base_url="u", vlm_base_url="u",
+        text_model="m", vlm_model="m", proxy_source="s",
+    )
+    with pytest.raises(ValueError):
+        config.extra_body("респондент")
+
+
 def test_switch_uses_the_key_provider_understands():
     """
     Ключ именно `enable_thinking`.
@@ -99,7 +154,7 @@ def test_switch_uses_the_key_provider_understands():
         api_key="k", base_url="u", vlm_base_url="u",
         text_model="m", vlm_model="m", proxy_source="s",
     )
-    body = config.extra_body()
+    body = config.extra_body("frames")
     assert body["chat_template_kwargs"]["enable_thinking"] is False, body
 
 
@@ -116,6 +171,6 @@ def test_reasoning_can_be_turned_back_on():
 
     config = ModelConfig(
         api_key="k", base_url="u", vlm_base_url="u",
-        text_model="m", vlm_model="m", proxy_source="s", thinking=True,
+        text_model="m", vlm_model="m", proxy_source="s", thinking_roles=frozenset({"frames"}),
     )
-    assert config.extra_body() == {}, config.extra_body()
+    assert config.extra_body("frames") == {}, config.extra_body("frames")

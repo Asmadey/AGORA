@@ -184,7 +184,7 @@ class QwenTextClient:
             # эшелоном стоит кэш.
             temperature=0,
             # Размышление выключено: см. ModelConfig.thinking — замер и причина.
-            extra_body=self.config.extra_body(),
+            extra_body=self.config.extra_body("persona"),
         )
         return (response.choices[0].message.content or "").strip()
 
