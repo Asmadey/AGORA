@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { Check, ChevronLeft, ChevronRight, Upload, FileText, Info } from "lucide-react";
+import { FileChip } from "@/components/agora/FileChip";
 import { cn } from "@/lib/utils";
 import { Chip } from "@/components/agora/Primitives";
 import { SurveyBuilder, BASE_QUESTIONS } from "@/components/agora/SurveyBuilder";
@@ -65,6 +66,16 @@ export default function NewStudyPage() {
   }, []);
 
   async function launch() {
+    // Проверка перед отправкой называет ШАГ, а не поле. Маршрут отвечает
+    // «videoRef: строка либо отсутствует» — это верно и бесполезно: по такому
+    // тексту непонятно, куда возвращаться. Поэтому недостающее перечисляется
+    // здесь, на языке визарда, и каждая строка ведёт на свой шаг.
+    if (missing.length > 0) {
+      setLaunchError(null);
+      setStep(missing[0].step);
+      return;
+    }
+
     setLaunching(true);
     setLaunchError(null);
     try {
@@ -81,10 +92,19 @@ export default function NewStudyPage() {
       });
       const data = await res.json();
       if (!res.ok) {
-        setLaunchError(data?.error ?? `запуск не удался (код ${res.status})`);
+        // `details` — список конкретных претензий маршрута. Раньше он
+        // отбрасывался, и на экран попадало только «некорректные параметры»:
+        // причина приезжала и не читалась. Тот же дефект, что был у судьи QA.
+        const details: string[] = Array.isArray(data?.details) ? data.details : [];
+        setLaunchError(
+          [data?.error ?? `запуск не удался (код ${res.status})`, ...details].join("\n"),
+        );
         return;
       }
-      router.push(`/runs/${data.id}/progress`);
+      // В общий список прогонов, а не на экран прогресса конкретного прогона.
+      // Прогон идёт десятки минут, всё это время смотреть не на что, а из
+      // списка видно и его, и соседние — включая тот, что запускали до этого.
+      router.push("/");
     } catch (e) {
       setLaunchError((e as Error).message);
     } finally {
@@ -98,9 +118,12 @@ export default function NewStudyPage() {
   // этому числу оценку вызовов модели — приблизительное значение здесь
   // означало бы названную наугад стоимость прогона.
   const [personaSetSize, setPersonaSetSize] = useState<number | null>(null);
-  const [contextFile, setContextFile] = useState<string | null>(null);
+  const [contextFile, setContextFile] = useState<{ name: string; size: number } | null>(null);
   const [videoRef, setVideoRef] = useState<string | null>(null);
   const [videoName, setVideoName] = useState<string | null>(null);
+  // Размер держим отдельно от File: сам объект File живёт только до
+  // перерисовки, а плашке нужно показывать вес и после неё.
+  const [videoSize, setVideoSize] = useState<number | null>(null);
   const [uploading, setUploading] = useState(false);
 
   // Сколько персон реально пойдёт в прогон: размер выбранного набора либо
@@ -114,6 +137,11 @@ export default function NewStudyPage() {
   async function uploadVideo(file: File) {
     setUploading(true);
     setLaunchError(null);
+    // Плашка появляется сразу, до первого запроса: заливка 700 МБ идёт
+    // минуты, и всё это время экран не должен выглядеть так, будто файл
+    // не приняли.
+    setVideoName(file.name);
+    setVideoSize(file.size);
     try {
       const pres = await fetch("/api/upload/presign", {
         method: "POST",
@@ -140,6 +168,7 @@ export default function NewStudyPage() {
 
       setVideoRef(d.key);
       setVideoName(file.name);
+      setVideoSize(file.size);
     } catch (e) {
       setLaunchError(`загрузка не удалась: ${(e as Error).message}`);
     } finally {
@@ -148,6 +177,39 @@ export default function NewStudyPage() {
   }
 
   const [questions, setQuestions] = useState<SurveyQuestion[]>(BASE_QUESTIONS);
+
+  /**
+   * Чего не хватает для запуска — на языке визарда, а не контракта маршрута.
+   *
+   * Считается на каждом рендере, поэтому список исчезает по мере заполнения:
+   * пользователь видит, что действие засчитано, не нажимая «Запустить» ещё раз.
+   */
+  const missing: { step: number; what: string; how: string }[] = [];
+  if (!videoRef) {
+    missing.push({
+      step: 0,
+      what: "Не приложен материал",
+      how: uploading
+        ? "Ролик ещё загружается — дождитесь окончания"
+        : videoName
+          ? "Загрузка не завершилась: приложите файл заново"
+          : "Шаг «Контент»: выберите видео",
+    });
+  }
+  if (!personaSetId) {
+    missing.push({
+      step: 1,
+      what: "Не выбрана аудитория",
+      how: "Шаг «Аудитория»: сгенерируйте набор персон или выберите существующий",
+    });
+  }
+  if (questions.length === 0) {
+    missing.push({
+      step: 2,
+      what: "Пустая анкета",
+      how: "Шаг «Опрос»: нужны хотя бы пять базовых критериев",
+    });
+  }
 
   const toggle = (arr: string[], set: (v: string[]) => void, v: string) =>
     set(arr.includes(v) ? arr.filter((x) => x !== v) : [...arr, v]);
@@ -190,22 +252,41 @@ export default function NewStudyPage() {
           <div className="space-y-6">
             <div>
               <h2 className="text-sm font-semibold">Материал</h2>
-              <label className="mt-3 flex cursor-pointer flex-col items-center justify-center rounded-lg border border-dashed border-border py-10 transition-colors hover:border-muted-foreground/50">
-                <Upload className="h-6 w-6 text-muted-foreground" />
-                <span className="mt-3 text-sm">Перетащите видео или выберите файл</span>
-                <span className="mt-1 text-xs text-muted-foreground">
-                  mp4, mov, avi · до 700 МБ
-                </span>
-                <input
-                  type="file"
-                  className="hidden"
-                  accept="video/mp4,video/quicktime,video/x-msvideo"
-                  onChange={(e) => {
-                    const f = e.target.files?.[0];
-                    if (f) void uploadVideo(f);
+
+              {/* Пока файла нет — зона выбора. Как только он выбран, на её месте
+                  встаёт плашка: две зоны одновременно означали бы, что можно
+                  приложить второй ролик, а прогон идёт по одному. */}
+              {videoName ? (
+                <FileChip
+                  className="mt-3"
+                  kind="video"
+                  name={videoName}
+                  size={videoSize}
+                  busy={uploading}
+                  hint={videoRef ? undefined : "загрузка не завершена"}
+                  onRemove={() => {
+                    setVideoRef(null);
+                    setVideoName(null);
+                    setVideoSize(null);
+                    setLaunchError(null);
                   }}
                 />
-              </label>
+              ) : (
+                <label className="mt-3 flex cursor-pointer flex-col items-center justify-center rounded-xl border border-dashed border-hairline-strong py-10 transition-colors hover:border-ink/40 hover:bg-surface">
+                  <Upload className="h-6 w-6 text-slate" />
+                  <span className="mt-3 text-sm">Перетащите видео или выберите файл</span>
+                  <span className="mt-1 text-xs text-slate">mp4, mov, avi · до 700 МБ</span>
+                  <input
+                    type="file"
+                    className="hidden"
+                    accept="video/mp4,video/quicktime,video/x-msvideo"
+                    onChange={(e) => {
+                      const f = e.target.files?.[0];
+                      if (f) void uploadVideo(f);
+                    }}
+                  />
+                </label>
+              )}
             </div>
 
             <div>
@@ -298,7 +379,7 @@ export default function NewStudyPage() {
                 ],
                 ["Возраст", personaSetId ? "—" : criteria.ageGroups.join(", ") || "не выбран"],
                 ["География", personaSetId ? "—" : criteria.geos.join(", ") || "не выбрана"],
-                ["Доп. контекст", contextFile ?? "не приложен"],
+                ["Доп. контекст", contextFile?.name ?? "не приложен"],
                 [
                   "Анкета",
                   `${questions.length} вопросов` +
@@ -328,18 +409,47 @@ export default function NewStudyPage() {
               <Chip tone="outline">Лимит стоимости: авто</Chip>
             </div>
 
+            {/* Чего не хватает — до нажатия, а не после. Каждая строка ведёт
+                на свой шаг: сказать «не заполнено» и оставить пользователя
+                искать где — половина сообщения. */}
+            {missing.length > 0 && (
+              <div className="rounded-lg border border-warning/30 bg-warning-soft/60 p-4">
+                <p className="text-sm font-medium">Чтобы запустить, не хватает:</p>
+                <ul className="mt-2 space-y-2">
+                  {missing.map((m) => (
+                    <li key={m.what} className="text-sm">
+                      <button
+                        onClick={() => setStep(m.step)}
+                        className="text-left underline decoration-dotted underline-offset-4 hover:no-underline"
+                      >
+                        {m.what}
+                      </button>
+                      <span className="block text-xs text-slate">{m.how}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
             {launchError && (
-              <p className="rounded-md border border-red-500/25 bg-red-500/5 p-3 text-xs text-red-200/80">
-                {launchError}
-              </p>
+              <div className="rounded-lg border border-danger/30 bg-danger-soft/60 p-4">
+                <p className="text-sm font-medium">Запуск не состоялся</p>
+                {/* Переносы сохраняются: маршрут возвращает список претензий, и
+                    склеенные в строку они читаются как одна длинная фраза. */}
+                <p className="mt-1 whitespace-pre-line text-xs leading-relaxed">{launchError}</p>
+              </div>
             )}
 
             <button
               onClick={launch}
               disabled={launching}
-              className="block w-full rounded-md bg-foreground py-3 text-center text-sm font-medium text-background transition-opacity hover:opacity-90 disabled:opacity-50"
+              className="block w-full rounded-full bg-primary py-3 text-center text-sm font-medium text-primary-foreground transition-colors hover:bg-ink/90 disabled:opacity-50"
             >
-              {launching ? "Запускаем…" : "Запустить исследование"}
+              {launching
+                ? "Запускаем…"
+                : missing.length > 0
+                  ? "Показать, чего не хватает"
+                  : "Запустить исследование"}
             </button>
           </div>
         )}

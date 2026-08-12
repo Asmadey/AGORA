@@ -74,15 +74,20 @@ export default async function PersonasPage() {
         {sets.length > 0 && (
           <div className="mb-6 space-y-1.5">
             <p className="text-xs uppercase tracking-wide text-muted-foreground">Наборы</p>
+            {/* Наборы кликабельны: «на ком я буду проверять ролик» — вопрос,
+                который задают перед запуском, а реестр показывает всех персон
+                арендатора вперемешку и ответа не даёт. Раньше это были
+                неинтерактивные подписи. */}
             <div className="flex flex-wrap gap-2">
               {sets.map((s) => (
-                <span
+                <Link
                   key={s.id}
-                  className="rounded-md border border-border px-3 py-1.5 text-sm text-muted-foreground"
+                  href={`/personas/sets/${s.id}`}
+                  className="rounded-full border border-hairline px-3.5 py-1.5 text-sm text-slate transition-colors hover:border-hairline-strong hover:bg-surface hover:text-ink"
                 >
                   {s.name} · {s.personaCount} из {s.size}
                   {s.seed !== null && ` · seed ${s.seed}`}
-                </span>
+                </Link>
               ))}
             </div>
           </div>

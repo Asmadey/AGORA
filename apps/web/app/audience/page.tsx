@@ -53,7 +53,7 @@ export default async function AudiencePage() {
               return (
                 <div
                   key={s.id}
-                  className="rounded-lg border border-border bg-[hsl(222_47%_7%)] p-5"
+                  className="rounded-xl border border-hairline bg-card p-5"
                 >
                   <h2 className="truncate font-medium">{s.name}</h2>
 
@@ -79,8 +79,8 @@ export default async function AudiencePage() {
                       {new Date(s.createdAt).toLocaleDateString("ru-RU")}
                     </span>
                     <Link
-                      href="/personas"
-                      className="text-xs text-muted-foreground underline underline-offset-4 transition-colors hover:text-foreground"
+                      href={`/personas/sets/${s.id}`}
+                      className="text-xs text-slate underline underline-offset-4 transition-colors hover:text-ink"
                     >
                       Посмотреть персон
                     </Link>
