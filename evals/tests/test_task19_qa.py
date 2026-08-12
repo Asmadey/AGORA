@@ -595,8 +595,19 @@ LIVE_CASES = [
     "живой судья не бракует чистый набор целиком",
 ]
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _harness import worker_deps_missing  # noqa: E402
+
+# Среда проверяется раньше ключа — см. пояснение в test_task18_respondents.py.
+# У судьи нехватка `openai` выглядит ещё безобиднее и оттого хуже: клиент не
+# отвечает, вердикты остаются пустыми, и проверка печатает «судья не увидел
+# противоречия» — то есть обвиняет модель в том, чего она не делала.
+deps = worker_deps_missing("openai")
 live_key = os.environ.get("OPENAI_API_KEY")
-if not live_key:
+if deps:
+    for n in LIVE_CASES:
+        skip(n, deps)
+elif not live_key:
     for n in LIVE_CASES:
         skip(n, "OPENAI_API_KEY не задан — на поддельном судье проверяется обвязка, "
                 "а не суждение модели")

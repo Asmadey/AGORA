@@ -106,12 +106,24 @@ check(
 
 print("\n== Поведенческий уровень ==")
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _harness import worker_deps_missing  # noqa: E402
+
 ffmpeg = shutil.which("ffmpeg")
 espeak = shutil.which("espeak-ng") or shutil.which("espeak")
+
+# `faster_whisper` и `pyannote.audio` подтягиваются внутри transcribe() и
+# diarize(), а не при импорте `agent_core.asr`. Гейт ниже проверял импорт
+# обёртки и потому пропускал вперёд — падало содержимое, уже как FAIL с
+# ModuleNotFoundError. Пять красных на сервере, ни одна не про код.
+_deps = worker_deps_missing("faster_whisper", "pyannote.audio")
 
 if not (ASR_DIR / "transcribe.py").exists():
     for n in BEHAVIOURAL:
         skip(n, "модуль agent_core.asr ещё не реализован")
+elif _deps:
+    for n in BEHAVIOURAL:
+        skip(n, _deps)
 elif not ffmpeg:
     for n in BEHAVIOURAL:
         skip(n, "ffmpeg не установлен")
