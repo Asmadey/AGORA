@@ -38,6 +38,24 @@ __all__ = [
 # ─── Зависимости воркера ─────────────────────────────────────────────────────
 
 
+def _importable(module: str) -> bool:
+    """
+    Есть ли модуль, включая составные имена вроде `pyannote.audio`.
+
+    `find_spec` на составном имени не возвращает None, когда нет родительского
+    пакета, — он его импортирует и падает с ModuleNotFoundError. То есть
+    проверка «есть ли зависимость» сама роняет тест ровно тем исключением, от
+    которого написана. Поймано на `pyannote.audio` в первом же прогоне #15.
+    """
+    try:
+        return importlib.util.find_spec(module) is not None
+    except (ImportError, AttributeError, ValueError):
+        # ImportError — нет родительского пакета; AttributeError и ValueError
+        # приходят от пакетов со сломанным __spec__. Все три означают одно:
+        # положиться на этот модуль нельзя.
+        return False
+
+
 def worker_deps_missing(*modules: str) -> str | None:
     """
     `None`, если модули есть. Иначе — причина, готовая к печати в SKIP.
@@ -56,7 +74,7 @@ def worker_deps_missing(*modules: str) -> str | None:
     Текст причины — действие, а не диагноз. «Нет модуля openai» отправляет
     ставить openai на хост, то есть делать ровно то, чего делать нельзя.
     """
-    absent = [m for m in modules if importlib.util.find_spec(m) is None]
+    absent = [m for m in modules if not _importable(m)]
     if not absent:
         return None
     return (

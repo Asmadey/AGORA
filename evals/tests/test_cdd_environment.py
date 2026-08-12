@@ -69,6 +69,27 @@ check(
 absent = worker_deps_missing("модуля_с_таким_именем_нет")
 check("отсутствующий модуль даёт причину, а не None", absent is not None)
 
+# Составное имя — не частный случай, а тот самый, на котором помощник упал в
+# первом же прогоне. `find_spec("pyannote.audio")` при отсутствии пакета
+# `pyannote` не возвращает None: он импортирует родителя и бросает
+# ModuleNotFoundError. Проверка «есть ли зависимость» роняла тест ровно тем
+# исключением, ради которого написана.
+try:
+    dotted = worker_deps_missing("нет_такого_пакета.и_подмодуля")
+    dotted_ok = dotted is not None
+    dotted_why = f"вернулось {dotted!r}"
+except Exception as exc:  # noqa: BLE001
+    dotted_ok = False
+    dotted_why = f"упал с {type(exc).__name__}: {exc}"
+check("составное имя отсутствующего пакета не роняет проверку", dotted_ok, dotted_why)
+
+# И обратное: составное имя существующего пакета опознаётся как имеющееся.
+check(
+    "составное имя имеющегося пакета опознаётся",
+    worker_deps_missing("importlib.util", "json") is None,
+    f"вернулось {worker_deps_missing('importlib.util', 'json')!r}",
+)
+
 check(
     "причина называет сам модуль",
     bool(absent) and "модуля_с_таким_именем_нет" in absent,
