@@ -1,117 +1,116 @@
-"use client"
+import Link from "next/link";
+import { FolderKanban } from "lucide-react";
 
-import React, { useEffect, useState } from 'react';
-import Link from 'next/link';
-import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
-import { db, Project } from '@/lib/db';
-import { Plus, Film, Calendar, Trash2 } from 'lucide-react';
+import { PageHeader } from "@/components/AppShell";
+import { Chip } from "@/components/agora/Primitives";
+import { EmptyState } from "@/components/agora/States";
+import { withTenant } from "@/lib/server/db";
+import { requireSession } from "@/lib/server/guard";
+import { listProjects, type ProjectRun } from "@/lib/server/projects";
 
-export default function ProjectsPage() {
-  const [projects, setProjects] = useState<Project[]>([]);
-  const [projectToDelete, setProjectToDelete] = useState<string | null>(null);
+/**
+ * Список проектов.
+ *
+ * До этой правки экран читал `db.projects.getAll()` — обёртку над localforage,
+ * то есть IndexedDB одной вкладки. На скриншоте разницы не было никакой:
+ * карточки рисовались, счётчик эпизодов считался, удаление удаляло. Разница
+ * обнаруживалась у второго человека, открывшего тот же адрес, — он видел пустой
+ * список и не имел способа понять, почему.
+ *
+ * Прототипный проект хранил в себе эпизоды, выбранную аудиторию, анкету и
+ * статус. В схеме ничего этого нет: `projects` — это имя и время создания, а
+ * всё остальное принадлежит прогону (`tasks`). Поэтому карточка проекта —
+ * имя и его прогоны, а статус не хранится, а выводится: хранимый разошёлся бы
+ * с прогонами при первом отказе воркера, и разошёлся бы молча.
+ */
 
-  const loadProjects = async () => {
-    const data = await db.projects.getAll();
-    setProjects(data.sort((a, b) => b.createdAt - a.createdAt));
-  };
+export const dynamic = "force-dynamic";
 
-  useEffect(() => {
-    document.title = "Проекты | Agora";
-    loadProjects();
-  }, []);
+/**
+ * Состояние проекта по его прогонам.
+ *
+ * Считается на экране, и это не нарушение правила «интерфейс не считает»:
+ * правило про величины отчёта, которые обязаны совпадать с воркером. Здесь
+ * никакой величины нет — есть подпись над списком статусов, лежащих рядом.
+ */
+function projectState(runs: ProjectRun[]): { label: string; tone: "muted" | "outline" | "solid" } {
+  if (runs.length === 0) return { label: "Черновик", tone: "outline" };
+  if (runs.some((r) => r.status === "RUNNING" || r.status === "QUEUED")) {
+    return { label: "Идёт прогон", tone: "solid" };
+  }
+  if (runs.some((r) => r.status === "REPORT_READY")) return { label: "Есть отчёт", tone: "muted" };
+  return { label: "Прогон не удался", tone: "outline" };
+}
 
-  const deleteProject = (id: string, e: React.MouseEvent) => {
-    e.preventDefault();
-    setProjectToDelete(id);
-  };
-
-  const confirmDelete = async () => {
-    if (projectToDelete) {
-      await db.projects.delete(projectToDelete);
-      setProjectToDelete(null);
-      loadProjects();
-    }
-  };
+export default async function ProjectsPage() {
+  const { tenantId } = await requireSession();
+  const projects = await withTenant(tenantId, (client) => listProjects(client));
 
   return (
-    <main className="flex-1 container mx-auto max-w-6xl p-4 md:p-6 lg:p-8">
-      <div className="flex justify-between items-center mb-8">
-        <div>
-          <h2 className="text-3xl font-bold tracking-tight">Проекты</h2>
-          <p className="text-muted-foreground">Управление исследованиями видеоконтента</p>
-        </div>
-        <Link href="/projects/new">
-          <Button>
-            <Plus className="mr-2 h-4 w-4" /> Новый проект
-          </Button>
-        </Link>
-      </div>
-
-      {projects.length === 0 ? (
-        <div className="text-center py-20 border rounded-lg border-dashed">
-          <Film className="mx-auto h-12 w-12 text-muted-foreground mb-4 opacity-50" />
-          <h3 className="text-lg font-medium">Нет проектов</h3>
-          <p className="text-muted-foreground mt-1 mb-4">Создайте свой первый проект для исследования.</p>
-          <Link href="/projects/new">
-            <Button variant="outline">Создать проект</Button>
+    <>
+      <PageHeader
+        title="Проекты"
+        subtitle="Проект группирует прогоны по одному материалу: разные аудитории, разные анкеты, разные версии ролика — в одном месте."
+        actions={
+          <Link
+            href="/projects/new"
+            className="rounded-md bg-foreground px-4 py-2 text-sm font-medium text-background transition-opacity hover:opacity-90"
+          >
+            Новый проект
           </Link>
-        </div>
-      ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {projects.map(project => (
-            <Link key={project.id} href={`/projects/${project.id}`}>
-              <Card className="h-full hover:border-primary transition-colors cursor-pointer flex flex-col">
-                <CardHeader>
-                  <div className="flex justify-between items-start">
-                    <CardTitle className="line-clamp-1">{project.title}</CardTitle>
-                    <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-destructive -mt-2 -mr-2" onClick={(e) => deleteProject(project.id, e)}>
-                      <Trash2 className="h-4 w-4" />
-                    </Button>
-                  </div>
-                  <CardDescription className="line-clamp-2">{project.description || 'Нет описания'}</CardDescription>
-                </CardHeader>
-                <CardContent className="mt-auto">
-                  <div className="flex items-center justify-between text-sm text-muted-foreground">
-                    <span className="flex items-center gap-1">
-                      <Film className="h-4 w-4" /> {project.episodes.length} эпизодов
-                    </span>
-                    <span className="flex items-center gap-1">
-                      <Calendar className="h-4 w-4" /> {new Date(project.createdAt).toLocaleDateString('ru-RU')}
-                    </span>
-                  </div>
-                  <div className="mt-4 pt-4 border-t flex justify-between items-center">
-                    <span className={`text-xs px-2 py-1 rounded-full ${
-                      project.status === 'completed' ? 'bg-green-500/20 text-green-500' :
-                      project.status === 'in_progress' ? 'bg-blue-500/20 text-blue-500' :
-                      'bg-muted text-muted-foreground'
-                    }`}>
-                      {project.status === 'completed' ? 'Завершено' :
-                       project.status === 'in_progress' ? 'В процессе' : 'Черновик'}
-                    </span>
-                  </div>
-                </CardContent>
-              </Card>
-            </Link>
-          ))}
-        </div>
-      )}
+        }
+      />
 
-      <Dialog open={!!projectToDelete} onOpenChange={(open) => !open && setProjectToDelete(null)}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Удалить проект?</DialogTitle>
-            <DialogDescription>
-              Вы уверены, что хотите удалить этот проект? Это действие нельзя отменить, и все связанные данные будут потеряны.
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setProjectToDelete(null)}>Отмена</Button>
-            <Button variant="destructive" onClick={confirmDelete}>Удалить</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-    </main>
+      <div className="p-8">
+        {projects.length === 0 ? (
+          <EmptyState
+            icon={<FolderKanban className="h-5 w-5" />}
+            title="Проектов пока нет"
+            description="Проект — это папка для прогонов по одному материалу. Создайте первый, чтобы запускать исследования и сравнивать их между собой."
+            action={{ href: "/projects/new", label: "Создать проект" }}
+          />
+        ) : (
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+            {projects.map((p) => {
+              const state = projectState(p.runs);
+              const ready = p.runs.filter((r) => r.status === "REPORT_READY").length;
+              return (
+                <Link
+                  key={p.id}
+                  href={`/projects/${p.id}`}
+                  className="flex flex-col rounded-lg border border-border bg-[hsl(222_47%_7%)] p-5 transition-colors hover:border-muted-foreground/40"
+                >
+                  <h2 className="truncate font-medium">{p.name}</h2>
+
+                  <div className="mt-4 flex flex-wrap items-center gap-1.5">
+                    <Chip tone={state.tone}>{state.label}</Chip>
+                    <Chip tone="outline">
+                      {p.runs.length === 0
+                        ? "без прогонов"
+                        : `${p.runs.length} ${plural(p.runs.length, "прогон", "прогона", "прогонов")}`}
+                    </Chip>
+                    {ready > 0 && <Chip tone="outline">{ready} с отчётом</Chip>}
+                  </div>
+
+                  <p className="mt-4 text-xs text-muted-foreground">
+                    Создан {new Date(p.createdAt).toLocaleDateString("ru-RU")}
+                  </p>
+                </Link>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    </>
   );
+}
+
+/** Русское склонение по числу: «1 прогон», «2 прогона», «5 прогонов». */
+function plural(n: number, one: string, few: string, many: string): string {
+  const mod100 = n % 100;
+  if (mod100 >= 11 && mod100 <= 14) return many;
+  const mod10 = n % 10;
+  if (mod10 === 1) return one;
+  if (mod10 >= 2 && mod10 <= 4) return few;
+  return many;
 }

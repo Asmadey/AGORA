@@ -5,8 +5,12 @@ import { usePathname } from "next/navigation";
 import { useSession, signOut } from "next-auth/react";
 import {
   FolderKanban,
+  ListChecks,
+  ClipboardList,
   Users,
+  UsersRound,
   BookUser,
+  Plus,
   SlidersHorizontal,
   Settings,
   LogOut,
@@ -22,10 +26,25 @@ import { cn } from "@/lib/utils";
  * Скролл принадлежит только рабочей области. Корневой контейнер держит высоту
  * ровно в экран (h-screen + overflow-hidden), меню не прокручивается вместе с
  * содержимым, а <main> получает собственный overflow-y-auto.
+ *
+ * ─── Почему меню — это находка, а не оформление ────────────────────────────
+ * Прежний состав перечислял пять пунктов и называл `/` «Проектами», хотя по
+ * этому адресу список прогонов. Проектов, аудиторий и анкет в меню не было
+ * вовсе: три готовых экрана существовали в сборке, отвечали по своим адресам —
+ * и не были достижимы ни одним кликом. Единственное, что на них ссылалось, —
+ * `NavBar.tsx`, который ни в один layout не подключён.
+ *
+ * Это тот же класс дефекта, что и данные во вкладке: сборка зелёная, маршруты
+ * отвечают, экраны отрисовываются, а продукта у пользователя нет. Меню —
+ * единственное место, где видно, из чего продукт состоит, поэтому список
+ * разделов здесь обязан совпадать с деревом `app/`.
  */
 
 const NAV = [
-  { href: "/", label: "Проекты", icon: FolderKanban },
+  { href: "/", label: "Прогоны", icon: ListChecks },
+  { href: "/projects", label: "Проекты", icon: FolderKanban },
+  { href: "/audience", label: "Аудитории", icon: UsersRound },
+  { href: "/surveys", label: "Анкеты", icon: ClipboardList },
   { href: "/personas", label: "Персоны", icon: Users },
   { href: "/portraits", label: "Портреты аудиторий", icon: BookUser },
   { href: "/prompts", label: "Промпт-студия", icon: SlidersHorizontal },
@@ -47,6 +66,20 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               A
             </div>
             <span className="text-[15px] font-semibold tracking-tight">AGORA</span>
+          </div>
+
+          {/* Запуск исследования — главное действие продукта, и он стоит над
+              разделами, а не среди них: визард это не место, куда ходят
+              смотреть, а то, ради чего сюда пришли. Раньше попасть в него можно
+              было только из карточки персоны или по прямой ссылке. */}
+          <div className="px-3 pt-3">
+            <Link
+              href="/studies/new"
+              className="flex items-center justify-center gap-2 rounded-md bg-foreground px-3 py-2 text-sm font-medium text-background transition-opacity hover:opacity-90"
+            >
+              <Plus className="h-4 w-4 shrink-0" />
+              Новое исследование
+            </Link>
           </div>
 
           <nav className="flex-1 space-y-0.5 overflow-y-auto p-3">
