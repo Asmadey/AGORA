@@ -1,112 +1,88 @@
-"use client"
+import Link from "next/link";
+import { ClipboardList } from "lucide-react";
 
-import React, { useEffect, useState } from 'react';
-import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { db, SurveyConfig } from '@/lib/db';
-import { FileText, Plus, Trash2, Edit } from 'lucide-react';
+import { PageHeader } from "@/components/AppShell";
+import { Chip } from "@/components/agora/Primitives";
+import { EmptyState } from "@/components/agora/States";
+import { withTenant } from "@/lib/server/db";
+import { requireSession } from "@/lib/server/guard";
+import { listSurveys } from "@/lib/server/surveys";
 
-export default function SurveysPage() {
-  const [surveys, setSurveys] = useState<SurveyConfig[]>([]);
+/**
+ * Список анкет.
+ *
+ * До этой правки экран читал localforage и умел заводить «стандартную анкету
+ * Агора» из девяти вопросов типов `rating`, `emotions`, `values`, `nps`, `open`.
+ * Валидатор не принимает ни `rating`, ни `values`, ни `nps` — то есть ни одна
+ * анкета, созданная на этом экране, не могла быть сохранена в базу и не могла
+ * участвовать в прогоне. Экран при этом показывал её в списке и открывал в
+ * редакторе.
+ *
+ * Теперь список читается из таблицы `surveys`, а редактор — тот же
+ * `SurveyBuilder`, что стоит в визарде: один конструктор, один набор типов,
+ * одна валидация.
+ */
 
-  const loadSurveys = async () => {
-    const data = await db.surveys.getAll();
-    setSurveys(data.sort((a, b) => b.createdAt - a.createdAt));
-  };
+export const dynamic = "force-dynamic";
 
-  useEffect(() => {
-    document.title = "Анкеты | Agora";
-    loadSurveys();
-  }, []);
-
-  const handleCreateDefault = async () => {
-    const newId = crypto.randomUUID();
-    const newSurvey: SurveyConfig = {
-      id: newId,
-      name: `Стандартная анкета Агора`,
-      questions: [
-        { id: crypto.randomUUID(), type: 'rating', text: 'Общее впечатление', scale: 10 },
-        { id: crypto.randomUUID(), type: 'rating', text: 'Оценка сюжета', scale: 10 },
-        { id: crypto.randomUUID(), type: 'rating', text: 'Оценка игры актеров', scale: 10 },
-        { id: crypto.randomUUID(), type: 'rating', text: 'Оценка музыки', scale: 10 },
-        { id: crypto.randomUUID(), type: 'rating', text: 'Оценка качества съемок', scale: 10 },
-        { id: crypto.randomUUID(), type: 'emotions', text: 'Испытанные эмоции', max: 3 },
-        { id: crypto.randomUUID(), type: 'values', text: 'Считанные ценности', max: 3 },
-        { id: crypto.randomUUID(), type: 'nps', text: 'Готовность рекомендовать (NPS)', scale: 10 },
-        { id: crypto.randomUUID(), type: 'open', text: 'Развернутый комментарий' }
-      ],
-      createdAt: Date.now()
-    };
-    
-    await db.surveys.save(newSurvey);
-    window.location.href = `/surveys/${newId}`;
-  };
-
-  const handleCreateEmpty = () => {
-    window.location.href = `/surveys/${crypto.randomUUID()}`;
-  };
-
-  const deleteSurvey = async (id: string, e: React.MouseEvent) => {
-    e.preventDefault();
-    if (confirm('Удалить анкету?')) {
-      await db.surveys.delete(id);
-      loadSurveys();
-    }
-  };
+export default async function SurveysPage() {
+  const { tenantId } = await requireSession();
+  const surveys = await withTenant(tenantId, (client) => listSurveys(client));
 
   return (
-    <main className="flex-1 container mx-auto max-w-6xl p-4 md:p-6 lg:p-8">
-      <div className="flex justify-between items-center mb-8">
-        <div>
-          <h2 className="text-3xl font-bold tracking-tight">Анкеты</h2>
-          <p className="text-muted-foreground">Конструктор опросников для исследований</p>
-        </div>
-        <div className="flex gap-2">
-          <Button variant="outline" onClick={handleCreateDefault}>
-            Стандартная анкета
-          </Button>
-          <Button onClick={handleCreateEmpty}>
-            <Plus className="mr-2 h-4 w-4" /> Создать анкету
-          </Button>
-        </div>
-      </div>
+    <>
+      <PageHeader
+        title="Анкеты"
+        subtitle="Что спрашивают у персон после просмотра. Пять базовых критериев обязательны — по ним посчитаны средние в корпусе, и без них результат не с чем сравнивать."
+        actions={
+          <Link
+            href="/surveys/new"
+            className="rounded-md bg-foreground px-4 py-2 text-sm font-medium text-background transition-opacity hover:opacity-90"
+          >
+            Новая анкета
+          </Link>
+        }
+      />
 
-      {surveys.length === 0 ? (
-        <div className="text-center py-20 border rounded-lg border-dashed">
-          <FileText className="mx-auto h-12 w-12 text-muted-foreground mb-4 opacity-50" />
-          <h3 className="text-lg font-medium">Нет анкет</h3>
-          <p className="text-muted-foreground mt-1 mb-4">Создайте первую анкету для тестирования контента.</p>
-          <Button variant="outline" onClick={handleCreateDefault}>
-            Создать стандартную анкету
-          </Button>
-        </div>
-      ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {surveys.map(survey => (
-            <Card key={survey.id} className="h-full flex flex-col">
-              <CardHeader>
-                <div className="flex justify-between items-start">
-                  <CardTitle className="line-clamp-1 text-lg">{survey.name}</CardTitle>
-                  <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-destructive -mt-2 -mr-2" onClick={(e) => deleteSurvey(survey.id, e)}>
-                    <Trash2 className="h-4 w-4" />
-                  </Button>
-                </div>
-                <CardDescription>{new Date(survey.createdAt).toLocaleString('ru-RU')}</CardDescription>
-              </CardHeader>
-              <CardContent className="mt-auto">
-                <div className="flex items-center justify-between text-sm">
-                  <span className="flex items-center gap-1 text-muted-foreground">
-                    <FileText className="h-4 w-4" /> {survey.questions.length} вопросов
+      <div className="p-8">
+        {surveys.length === 0 ? (
+          <EmptyState
+            icon={<ClipboardList className="h-5 w-5" />}
+            title="Анкет пока нет"
+            description="Новая анкета заводится сразу с пятью базовыми критериями и вопросом о доле просмотра — остальное добавляется поверх."
+            action={{ href: "/surveys/new", label: "Создать анкету" }}
+          />
+        ) : (
+          <div className="space-y-2">
+            {surveys.map((s) => {
+              const custom = s.questions.filter((q) => !q.baseKey).length;
+              const hasWatchedShare = s.questions.some((q) => q.type === "watched_share");
+              return (
+                <Link
+                  key={s.id}
+                  href={`/surveys/${s.id}`}
+                  className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-lg border border-border bg-[hsl(222_47%_7%)] p-5 transition-colors hover:border-muted-foreground/40"
+                >
+                  <span className="min-w-0 flex-1 truncate font-medium">{s.name}</span>
+
+                  <Chip tone="outline">{s.questions.length} вопросов</Chip>
+                  {custom > 0 && <Chip tone="outline">{custom} своих</Chip>}
+                  {/* Отсутствие вопроса о доле просмотра — не ошибка, но
+                      последствие видно только в отчёте, где секция «Досмотрено»
+                      останется пустой. Поэтому оно названо здесь, а не там. */}
+                  {!hasWatchedShare && (
+                    <Chip tone="outline">без доли просмотра</Chip>
+                  )}
+
+                  <span className="text-xs text-muted-foreground">
+                    {new Date(s.createdAt).toLocaleDateString("ru-RU")}
                   </span>
-                  <Button variant="secondary" size="sm" onClick={() => window.location.href = `/surveys/${survey.id}`}>
-                    <Edit className="mr-2 h-4 w-4" /> Редактировать
-                  </Button>
-                </div>
-              </CardContent>
-            </Card>
-          ))}
-        </div>
-      )}
-    </main>
+                </Link>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    </>
   );
 }

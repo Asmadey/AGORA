@@ -237,7 +237,15 @@ BASE_QUESTIONS_VALID = [
 ]
 
 REQUIRED_BASE_KEYS = {"overall_impression", "plot", "acting", "music", "cinematography"}
-ALLOWED_TYPES = {"scale", "emotions", "retention", "recommendation", "open"}
+
+#: Берётся из QUESTION_TYPES выше, а не переписывается вторым литералом.
+#:
+#: Отдельный список здесь уже разошёлся: `watched_share` завели в JSON Schema,
+#: в TS-типы, в конструктор и в TS-валидатор — а сюда не добавили. Реплика
+#: валидатора отвергала бы анкету, которую настоящий валидатор принимает, и
+#: заметить это было нечем: обе стороны зелёные, потому что каждая сверяется
+#: сама с собой. Контракт в тесте обязан жить в одном месте.
+ALLOWED_TYPES = set(QUESTION_TYPES)
 
 
 def validate_survey_python(doc):

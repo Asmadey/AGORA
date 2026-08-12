@@ -595,8 +595,19 @@ LIVE_CASES = [
     "живой судья не бракует чистый набор целиком",
 ]
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _harness import worker_deps_missing  # noqa: E402
+
+# Среда проверяется раньше ключа — см. пояснение в test_task18_respondents.py.
+# У судьи нехватка `openai` выглядит ещё безобиднее и оттого хуже: клиент не
+# отвечает, вердикты остаются пустыми, и проверка печатает «судья не увидел
+# противоречия» — то есть обвиняет модель в том, чего она не делала.
+deps = worker_deps_missing("openai")
 live_key = os.environ.get("OPENAI_API_KEY")
-if not live_key:
+if deps:
+    for n in LIVE_CASES:
+        skip(n, deps)
+elif not live_key:
     for n in LIVE_CASES:
         skip(n, "OPENAI_API_KEY не задан — на поддельном судье проверяется обвязка, "
                 "а не суждение модели")
@@ -628,9 +639,23 @@ else:
             answers=[violent], personas=[pacifist], pack=PACK, survey=SURVEY,
             judge=QwenJudgeClient(), artifact_path=None,
         )
-        check(LIVE_CASES[0], bool(flags_of(live, pacifist["id"], "consistency")),
-              f"судья не увидел противоречия с профилем; вердикты: "
-              f"{[(v.get('kind'), v.get('verdict')) for v in live.verdicts]}")
+
+        # Сначала — дошёл ли вопрос до судьи, и только потом — что он ответил.
+        #
+        # `run_qa` не роняет прогон, когда судья недоступен: правила отрабатывают,
+        # причина уходит в failure_reasons, а вердикта от модели просто нет. Это
+        # верное поведение — терять оплаченные ответы персон из-за таймаута
+        # проверяющего нельзя. Но проверка читала только вердикты и печатала
+        # «судья не увидел противоречия», то есть обвиняла модель в том, чего она
+        # не делала: при мёртвом ключе в failure_reasons лежал прямой ответ —
+        # AuthenticationError 401. Причина была записана и не прочитана.
+        if live.failure_reasons:
+            check(LIVE_CASES[0], False,
+                  f"судья не ответил: {live.failure_reasons[:2]}")
+        else:
+            check(LIVE_CASES[0], bool(flags_of(live, pacifist["id"], "consistency")),
+                  f"судья не увидел противоречия с профилем; вердикты: "
+                  f"{[(v.get('kind'), v.get('verdict')) for v in live.verdicts]}")
 
         live_clean = run_qa(
             answers=CLEAN, personas=PEOPLE, pack=PACK, survey=SURVEY,

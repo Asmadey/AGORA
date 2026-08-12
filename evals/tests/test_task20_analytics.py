@@ -490,7 +490,15 @@ print("== Живая модель ==")
 
 LIVE_CASES = ["живая модель даёт нарратив, переживающий отсев по ссылкам"]
 
-if not os.environ.get("OPENAI_API_KEY"):
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _harness import worker_deps_missing  # noqa: E402
+
+# Среда проверяется раньше ключа — см. пояснение в test_task18_respondents.py.
+_deps = worker_deps_missing("openai")
+if _deps:
+    for n in LIVE_CASES:
+        skip(n, _deps)
+elif not os.environ.get("OPENAI_API_KEY"):
     for n in LIVE_CASES:
         skip(n, "OPENAI_API_KEY не задан — на поддельной модели проверяется отсев, "
                 "а не качество синтеза")

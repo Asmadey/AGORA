@@ -261,52 +261,6 @@
         "security": []
       }
     },
-    "/api/chat": {
-      "post": {
-        "summary": "Чат прототипа",
-        "description": "Прототипный контур на Gemini (допрос аудитории), параллельный продуктовому: настоящий прогон идёт через `POST /api/tasks` в воркер.\n\nОставлен намеренно до задач #20 (аналитика) и #21 (отчёт). Удалить сейчас значило бы убрать работающую демонстрацию, не дав замены — страница проекта осталась бы без единственного способа что-то показать.\n\nТенант-контекст в обработчике не ставится: маршрут закрыт только middleware, то есть проверкой «есть ли токен», без ограничения арендатором.",
-        "tags": [
-          "Наследие прототипа"
-        ],
-        "operationId": "chatLegacy",
-        "responses": {
-          "200": {
-            "description": "Ответ прототипа"
-          },
-          "401": {
-            "description": "Нет действующей сессии",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "500": {
-            "description": "Ошибка",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          }
-        },
-        "requestBody": {
-          "required": false,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object"
-              }
-            }
-          }
-        },
-        "deprecated": true
-      }
-    },
     "/api/health": {
       "get": {
         "summary": "Проверка живости",
@@ -863,6 +817,248 @@
         }
       }
     },
+    "/api/projects": {
+      "get": {
+        "summary": "Проекты команды",
+        "description": "Проекты арендатора вместе с их прогонами. Отбор по арендатору делает RLS, а не параметр запроса.",
+        "tags": [
+          "Проекты"
+        ],
+        "operationId": "listProjects",
+        "responses": {
+          "200": {
+            "description": "Список проектов"
+          },
+          "401": {
+            "description": "Нет действующей сессии",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "summary": "Создать проект",
+        "description": "Проект — это имя и его прогоны. Ролик, аудиторию и анкету выбирает визард запуска: они относятся к прогону, а не к проекту.",
+        "tags": [
+          "Проекты"
+        ],
+        "operationId": "createProject",
+        "responses": {
+          "201": {
+            "description": "Проект создан"
+          },
+          "400": {
+            "description": "Некорректное тело запроса",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Нет действующей сессии",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "name"
+                ],
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{id}": {
+      "get": {
+        "summary": "Проект",
+        "description": "404, а не 403, на чужой проект: под RLS он не находится, и подтверждать его существование ответом нельзя.",
+        "tags": [
+          "Проекты"
+        ],
+        "operationId": "getProject",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Проект с его прогонами"
+          },
+          "401": {
+            "description": "Нет действующей сессии",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Проект не существует или принадлежит другой команде",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "summary": "Переименовать проект",
+        "description": "",
+        "tags": [
+          "Проекты"
+        ],
+        "operationId": "renameProject",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Переименован"
+          },
+          "400": {
+            "description": "Некорректное тело запроса",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Нет действующей сессии",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Проект не существует или принадлежит другой команде",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "name"
+                ],
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "summary": "Удалить проект",
+        "description": "Прогоны проекта уходят каскадом: прогон без проекта — строка, на которую нельзя сослаться ни с одного экрана.",
+        "tags": [
+          "Проекты"
+        ],
+        "operationId": "deleteProject",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Удалён"
+          },
+          "401": {
+            "description": "Нет действующей сессии",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Проект не существует или принадлежит другой команде",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/prompts": {
       "get": {
         "summary": "Реестр промптов по стадиям",
@@ -1178,52 +1374,6 @@
         }
       }
     },
-    "/api/report": {
-      "post": {
-        "summary": "Отчёт прототипа",
-        "description": "Прототипный контур на Gemini (сборка отчёта), параллельный продуктовому: настоящий прогон идёт через `POST /api/tasks` в воркер.\n\nОставлен намеренно до задач #20 (аналитика) и #21 (отчёт). Удалить сейчас значило бы убрать работающую демонстрацию, не дав замены — страница проекта осталась бы без единственного способа что-то показать.\n\nТенант-контекст в обработчике не ставится: маршрут закрыт только middleware, то есть проверкой «есть ли токен», без ограничения арендатором.",
-        "tags": [
-          "Наследие прототипа"
-        ],
-        "operationId": "reportLegacy",
-        "responses": {
-          "200": {
-            "description": "Ответ прототипа"
-          },
-          "401": {
-            "description": "Нет действующей сессии",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "500": {
-            "description": "Ошибка",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          }
-        },
-        "requestBody": {
-          "required": false,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object"
-              }
-            }
-          }
-        },
-        "deprecated": true
-      }
-    },
     "/api/settings": {
       "get": {
         "summary": "Настройки арендатора",
@@ -1304,52 +1454,6 @@
             }
           }
         }
-      }
-    },
-    "/api/simulate": {
-      "post": {
-        "summary": "Симуляция прототипа",
-        "description": "Прототипный контур на Gemini (прогон анкеты), параллельный продуктовому: настоящий прогон идёт через `POST /api/tasks` в воркер.\n\nОставлен намеренно до задач #20 (аналитика) и #21 (отчёт). Удалить сейчас значило бы убрать работающую демонстрацию, не дав замены — страница проекта осталась бы без единственного способа что-то показать.\n\nТенант-контекст в обработчике не ставится: маршрут закрыт только middleware, то есть проверкой «есть ли токен», без ограничения арендатором.",
-        "tags": [
-          "Наследие прототипа"
-        ],
-        "operationId": "simulateLegacy",
-        "responses": {
-          "200": {
-            "description": "Ответ прототипа"
-          },
-          "401": {
-            "description": "Нет действующей сессии",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          },
-          "500": {
-            "description": "Ошибка",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Error"
-                }
-              }
-            }
-          }
-        },
-        "requestBody": {
-          "required": false,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object"
-              }
-            }
-          }
-        },
-        "deprecated": true
       }
     },
     "/api/surveys": {

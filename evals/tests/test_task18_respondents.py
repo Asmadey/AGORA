@@ -330,8 +330,19 @@ LIVE_CASES = [
     "дисперсия баллов живой модели выше порога",
 ]
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _harness import worker_deps_missing  # noqa: E402
+
+# Среда проверяется раньше ключа. `openai` подтягивается внутри клиента, а не
+# при импорте модуля, поэтому его нехватка доезжает не отказом импорта, а
+# пустым ответом модели — и печатается как «модель не дала ни одного ответа»,
+# то есть как дефект прогона. На сервере это давало два красных на ровном месте.
+deps = worker_deps_missing("openai")
 live_key = os.environ.get("OPENAI_API_KEY")
-if not live_key:
+if deps:
+    for n in LIVE_CASES:
+        skip(n, deps)
+elif not live_key:
     for n in LIVE_CASES:
         skip(n, "OPENAI_API_KEY не задан — на поддельном клиенте метрика меряет "
                 "фикстуру, а не модель")
