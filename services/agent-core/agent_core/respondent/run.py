@@ -169,13 +169,44 @@ def build_slice(
     return system, user
 
 
-def _render_questions(survey: dict[str, Any]) -> str:
-    questions = survey.get("questions") or []
+def _render_questions(survey: Any) -> str:
+    """
+    Анкета в текст для промпта респондента.
+
+    ─── Форма приходит списком ────────────────────────────────────────────────
+    `POST /api/tasks` кладёт в очередь то, что лежит в колонке
+    `surveys.questions`, то есть JSON-МАССИВ вопросов. Здесь раньше стоял
+    `survey.get("questions")`, и сквозной прогон падал на пятой минуте с
+    `AttributeError: 'list' object has no attribute 'get'` — уже оплатив
+    расшифровку и разбор кадров.
+
+    Словарь `{"questions": [...]}` принимается тоже: на него опираются фикстуры
+    CDD #18 и ручные прогоны, а расхождения это не создаёт — обе формы ведут к
+    одному списку.
+
+    ─── Формулировка лежит в `label` ──────────────────────────────────────────
+    Вопрос в продукте — `{id, label, type, scaleMin, scaleMax}`: так в
+    `agora-types.ts`, в JSON Schema анкеты и в конструкторе. Здесь читалось
+    `text`, которого в контракте нет, и персона получила бы список пустых
+    формулировок. Это хуже отказа: прогон прошёл бы целиком, стоил бы полную
+    цену и дал бы ответы на вопросы, которых персона не видела.
+
+    `text` оставлен запасным ключом ради старых записей в базе, но первым идёт
+    `label` — контракт, а не догадка.
+    """
+    if isinstance(survey, dict):
+        questions = survey.get("questions") or []
+    elif isinstance(survey, list):
+        questions = survey
+    else:
+        questions = []
+
     lines = []
     for q in questions:
         if not isinstance(q, dict):
             continue
-        lines.append(f"- [{q.get('id', '?')}] ({q.get('type', 'открытый')}) {q.get('text', '')}")
+        label = q.get("label") or q.get("text") or ""
+        lines.append(f"- [{q.get('id', '?')}] ({q.get('type', 'открытый')}) {label}".rstrip())
     return "\n".join(lines) if lines else "(анкета пуста)"
 
 
