@@ -69,10 +69,28 @@ def skip(name: str, why: str) -> None:
     print(f"  SKIP  {name}  →  {why}")
 
 
+#: Единственный файл, которому разрешено хранилище браузера.
+#:
+#: Исключение перечислено поимённо и потому остаётся исключением. Тема — не
+#: данные продукта: она не принадлежит арендатору, её незачем видеть коллеге,
+#: и её потеря ничего не стоит. Разрешение «где-нибудь в lib/» вместо
+#: конкретного файла превратило бы правило в рекомендацию: следующий модуль
+#: сложил бы туда черновик визарда, и никто бы не заметил.
+STORAGE_ALLOWED = {"lib/theme.ts"}
+
+
 def sources() -> list[Path]:
-    """Все .ts/.tsx под app/ и components/ — то, из чего собран интерфейс."""
+    """
+    Все .ts/.tsx интерфейса.
+
+    `lib/` включён вместе с `app/` и `components/`. Раньше его здесь не было, и
+    это была дыра ровно того размера, что и сам запрет: достаточно вынести
+    обращение к localStorage в модуль `lib/`, и проверка молчит. Обнаружилось
+    при добавлении переключателя темы — то есть первым же случаем, когда
+    хранилище понадобилось по делу.
+    """
     out: list[Path] = []
-    for root in ("app", "components"):
+    for root in ("app", "components", "lib"):
         for ext in ("*.ts", "*.tsx"):
             out += sorted((WEB / root).rglob(ext))
     return out
@@ -124,16 +142,26 @@ check(
 
 offenders: dict[str, list[str]] = {}
 for path in sources():
+    rel = str(path.relative_to(WEB))
+    if rel in STORAGE_ALLOWED:
+        continue
     text = path.read_text("utf-8")
     hits = sorted({name for groups in _BROWSER_STORAGE.findall(text) for name in groups if name})
     if hits:
-        offenders[str(path.relative_to(WEB))] = hits
+        offenders[rel] = hits
 
 check(
     "ни один экран не пишет данные продукта в хранилище браузера",
     not offenders,
     "; ".join(f"{f}: {', '.join(h)}" for f, h in sorted(offenders.items())),
+    note=f"исключение одно: {', '.join(sorted(STORAGE_ALLOWED))}",
 )
+
+# Разрешение не должно пережить того, ради чего выдано. Файл удалили или
+# переименовали — исключение обязано уйти вместе с ним, иначе в списке копится
+# разрешение на несуществующий путь, а потом кто-то создаёт файл с этим именем.
+stale = sorted(rel for rel in STORAGE_ALLOWED if not (WEB / rel).exists())
+check("в списке исключений нет несуществующих файлов", not stale, ", ".join(stale))
 
 # ─── 2. Прототипные модули ───────────────────────────────────────────────────
 
