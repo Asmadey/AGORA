@@ -639,9 +639,23 @@ else:
             answers=[violent], personas=[pacifist], pack=PACK, survey=SURVEY,
             judge=QwenJudgeClient(), artifact_path=None,
         )
-        check(LIVE_CASES[0], bool(flags_of(live, pacifist["id"], "consistency")),
-              f"судья не увидел противоречия с профилем; вердикты: "
-              f"{[(v.get('kind'), v.get('verdict')) for v in live.verdicts]}")
+
+        # Сначала — дошёл ли вопрос до судьи, и только потом — что он ответил.
+        #
+        # `run_qa` не роняет прогон, когда судья недоступен: правила отрабатывают,
+        # причина уходит в failure_reasons, а вердикта от модели просто нет. Это
+        # верное поведение — терять оплаченные ответы персон из-за таймаута
+        # проверяющего нельзя. Но проверка читала только вердикты и печатала
+        # «судья не увидел противоречия», то есть обвиняла модель в том, чего она
+        # не делала: при мёртвом ключе в failure_reasons лежал прямой ответ —
+        # AuthenticationError 401. Причина была записана и не прочитана.
+        if live.failure_reasons:
+            check(LIVE_CASES[0], False,
+                  f"судья не ответил: {live.failure_reasons[:2]}")
+        else:
+            check(LIVE_CASES[0], bool(flags_of(live, pacifist["id"], "consistency")),
+                  f"судья не увидел противоречия с профилем; вердикты: "
+                  f"{[(v.get('kind'), v.get('verdict')) for v in live.verdicts]}")
 
         live_clean = run_qa(
             answers=CLEAN, personas=PEOPLE, pack=PACK, survey=SURVEY,
