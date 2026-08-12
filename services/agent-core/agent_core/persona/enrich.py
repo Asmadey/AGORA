@@ -183,6 +183,8 @@ class QwenTextClient:
             # CDD #5. Провайдер вправе его не соблюсти полностью, поэтому вторым
             # эшелоном стоит кэш.
             temperature=0,
+            # Размышление выключено: см. ModelConfig.thinking — замер и причина.
+            extra_body=self.config.extra_body(),
         )
         return (response.choices[0].message.content or "").strip()
 

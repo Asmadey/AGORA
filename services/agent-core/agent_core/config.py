@@ -57,10 +57,41 @@ class ModelConfig:
     vlm_model: str
     proxy_source: str
 
+    #: Оставлять ли модели режим размышления.
+    #:
+    #: По умолчанию выключен, и это замер, а не вкус. На одном и том же запросе
+    #: «верни JSON с оценкой»: с размышлением — 6.5 с и 600 токенов, упёршихся
+    #: в лимит, с пустым `content`; без него — 0.4 с и 16 токенов с готовым
+    #: ответом. Двенадцать персон, судья по каждой и аналитика превращали это в
+    #: 23-минутный прогон против десяти минут по критерию приёмки #22.
+    #:
+    #: Рассуждение здесь не улучшает ответ: персона отвечает впечатлением, а не
+    #: выводом, разбор кадра — описание увиденного. Модель тратит сотни токенов,
+    #: проговаривая задачу самой себе.
+    #:
+    #: Включается обратно переменной MODEL_THINKING=1 — например если просядет
+    #: `qa_catches_injected`: судья и синтез аналитики выносят суждение, и там
+    #: размышление может стоить своих денег.
+    thinking: bool = False
+
     @property
     def default_headers(self) -> dict[str, str]:
         """Передаётся в OpenAI(..., default_headers=...) — иначе запрос отклонят."""
         return {"x-proxy-source": self.proxy_source}
+
+    def extra_body(self) -> dict[str, object]:
+        """
+        Дополнительные поля запроса. Пустой словарь — ничего не добавляем.
+
+        Ключ именно `enable_thinking`, соглашение vLLM/Qwen. `thinking: false`
+        из документации провайдера этот шлюз ИГНОРИРУЕТ: замер дал те же 600
+        токенов рассуждения и пустой content. Опечатка в имени ничего не
+        сломает — просто вернёт двадцатитрёхминутные прогоны, поэтому имя
+        закреплено тестом.
+        """
+        if self.thinking:
+            return {}
+        return {"chat_template_kwargs": {"enable_thinking": False}}
 
     @property
     def vlm_shares_agent(self) -> bool:
@@ -77,6 +108,8 @@ class ModelConfig:
             text_model=_optional("AI_MODEL", "qwen3.6"),
             vlm_model=_optional("VLM_MODEL", "qwen3.6"),
             proxy_source=_optional("MODEL_PROXY_SOURCE", "agora"),
+            thinking=_optional("MODEL_THINKING", "0").strip().lower()
+            in ("1", "true", "yes", "on"),
         )
 
 

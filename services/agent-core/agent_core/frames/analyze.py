@@ -304,6 +304,9 @@ class QwenVlmClient:
                     {"type": "image_url", "image_url": {"url": data_url}},
                 ],
             }],
+            # Размышление выключено — здесь особенно очевидно: разбор кадра это
+            # описание увиденного, а не вывод. См. ModelConfig.thinking.
+            extra_body=self.config.extra_body(),
         )
         return _parse_json(response.choices[0].message.content or "")
 
