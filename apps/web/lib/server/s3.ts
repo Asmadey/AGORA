@@ -156,10 +156,21 @@ export function publicObjectUrl(key: string): string {
 }
 
 /**
- * Генерирует presigned GET URL — для приватной отдачи объекта воркеру
- * или ffmpeg/ffprobe, которым нужен прямой доступ к файлу.
+ * Подписанный по SigV4 URL для одной операции над объектом.
+ *
+ * ─── Почему одна функция на все методы ─────────────────────────────────────
+ * PUT, GET и DELETE отличаются здесь ровно одной строкой — именем метода в
+ * каноническом запросе. До этого подписант был скопирован дважды, и дефект в
+ * нём тоже пришлось чинить дважды: обе копии подписывали путь `/{key}`, тогда
+ * как запрос уходит на `/{bucket}/{key}` (path-style адресация), и S3 отвечал
+ * SignatureDoesNotMatch. Комментарии об этом стоят в обеих копиях — верный
+ * признак того, что копий быть не должно.
+ *
+ * Заголовки подписываются только `host`: `Content-Type` в подпись не входит,
+ * поэтому один и тот же код годится и для загрузки, и для чтения, и для
+ * удаления.
  */
-export function createPresignedGetUrl(key: string): string {
+function presignObjectUrl(method: "PUT" | "GET" | "DELETE", key: string): string {
   const cfg = getConfig();
   const { protocol, host } = parseEndpoint(cfg.endpoint);
 
@@ -180,21 +191,14 @@ export function createPresignedGetUrl(key: string): string {
     .map((k) => `${encodeURIComponent(k)}=${encodeURIComponent(params[k])}`)
     .join("&");
 
-  const canonicalHeaders = `host:${host}\n`;
-  const signedHeaders = "host";
-  const payloadHash = "UNSIGNED-PAYLOAD";
-
-  // Тот же дефект, что в createPresignedPutUrl: подписывался путь без бакета,
-  // а запрос уходит на /{bucket}/{key}. Для GET это ломало ffprobe-валидацию —
-  // она ходит по presigned GET URL и получала SignatureDoesNotMatch вместо
-  // заголовков файла.
   const canonicalRequest = [
-    "GET",
+    method,
+    // С бакетом — см. докстринг. Именно здесь дважды жил один и тот же дефект.
     `/${cfg.bucket}/${key}`,
     canonicalQueryString,
-    canonicalHeaders,
-    signedHeaders,
-    payloadHash,
+    `host:${host}\n`,
+    "host",
+    "UNSIGNED-PAYLOAD",
   ].join("\n");
 
   const credentialScope = `${dateStamp}/${cfg.region}/s3/aws4_request`;
@@ -212,6 +216,37 @@ export function createPresignedGetUrl(key: string): string {
   const signature = hmac(kSigning, stringToSign).toString("hex");
 
   return `${protocol}://${host}/${cfg.bucket}/${key}?${canonicalQueryString}&X-Amz-Signature=${signature}`;
+}
+
+/**
+ * Генерирует presigned GET URL — для приватной отдачи объекта воркеру
+ * или ffmpeg/ffprobe, которым нужен прямой доступ к файлу.
+ */
+export function createPresignedGetUrl(key: string): string {
+  return presignObjectUrl("GET", key);
+}
+
+/**
+ * Удаляет объект из бакета. Идемпотентно: отсутствующий объект — не ошибка.
+ *
+ * ─── Почему подписанный запрос, а не HEAD-подобный анонимный ───────────────
+ * Чтение из бакета настроено анонимным (см. headObjectSize), но удаление
+ * анонимным быть не может и не должно: иначе любой, кто знает ключ, стирает
+ * чужой ролик.
+ *
+ * ─── Почему 404 считается успехом ──────────────────────────────────────────
+ * Удаление вызывается при удалении исследования. Объекта может уже не быть:
+ * прошлая попытка удаления оборвалась после S3, но до Postgres, либо ролик
+ * подчистили руками. Считать это отказом значило бы навсегда запретить удалять
+ * такое исследование — строка в базе осталась бы из-за отсутствующего файла.
+ */
+export async function deleteObject(key: string): Promise<void> {
+  const resp = await fetch(presignObjectUrl("DELETE", key), { method: "DELETE" });
+  // 204 — удалено, 404 — уже нет. S3 на DELETE несуществующего обычно тоже
+  // отвечает 204, но у совместимых реализаций встречается и 404.
+  if (!resp.ok && resp.status !== 404) {
+    throw new Error(`S3 DELETE вернул ${resp.status} ${resp.statusText} для ${key}`);
+  }
 }
 
 // ─── ffprobe: валидация загруженного видео ───────────────────────────────

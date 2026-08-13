@@ -35,6 +35,11 @@ STATUS_RUNNING = "RUNNING"
 STATUS_REPORT_READY = "REPORT_READY"
 STATUS_FAILED = "FAILED"
 
+#: Прогон остановлен пользователем. Отдельно от FAILED: отмена — не отказ
+#: системы, и складывать их в одну корзину значит терять способность отличить
+#: «сломалось» от «остановили».
+STATUS_CANCELLED = "CANCELLED"
+
 
 class PipelineState(TypedDict, total=False):
     """Состояние прогона по PRD §8. `total=False` — узлы обновляют его частями."""

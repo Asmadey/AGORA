@@ -10,6 +10,7 @@ import {
   Users,
   UsersRound,
   BookUser,
+  BookOpen,
   Plus,
   SlidersHorizontal,
   Settings,
@@ -42,7 +43,7 @@ import { ThemeToggle } from "@/components/ThemeToggle";
  */
 
 const NAV = [
-  { href: "/", label: "Прогоны", icon: ListChecks },
+  { href: "/", label: "Исследования", icon: ListChecks },
   { href: "/projects", label: "Проекты", icon: FolderKanban },
   { href: "/audience", label: "Аудитории", icon: UsersRound },
   { href: "/surveys", label: "Анкеты", icon: ClipboardList },
@@ -50,6 +51,9 @@ const NAV = [
   { href: "/portraits", label: "Портреты аудиторий", icon: BookUser },
   { href: "/prompts", label: "Промпт-студия", icon: SlidersHorizontal },
   { href: "/settings", label: "Настройки", icon: Settings },
+  // Страница /api-docs существовала с задачи #26, но попасть на неё можно
+  // было только по прямой ссылке: пункта меню не было.
+  { href: "/api-docs", label: "API-документация", icon: BookOpen },
 ] as const;
 
 export function AppShell({ children }: { children: React.ReactNode }) {
