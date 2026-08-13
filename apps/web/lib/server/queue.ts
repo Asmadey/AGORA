@@ -44,10 +44,10 @@ export interface PipelinePayload {
  * сообщение без `task` и `id`, а без `argsrepr`/`kwargsrepr` теряет читаемость
  * в мониторинге.
  */
-function headers(taskId: string, args: unknown[]) {
+function headers(taskId: string, args: unknown[], taskName: string) {
   return {
     lang: "py",
-    task: "agora.run_pipeline",
+    task: taskName,
     id: taskId,
     shadow: null,
     eta: null,
@@ -68,7 +68,11 @@ function headers(taskId: string, args: unknown[]) {
   };
 }
 
-export function buildMessage(payload: PipelinePayload, taskId: string): string {
+export function buildMessage(
+  payload: unknown,
+  taskId: string,
+  taskName = "agora.run_pipeline",
+): string {
   const args: unknown[] = [payload];
   // Тело протокола 2: [args, kwargs, embed]. Третий элемент обязателен даже
   // пустым — воркер разбирает кортеж по позиции и на двух элементах падает.
@@ -83,7 +87,7 @@ export function buildMessage(payload: PipelinePayload, taskId: string): string {
     body: Buffer.from(body, "utf-8").toString("base64"),
     "content-encoding": "utf-8",
     "content-type": "application/json",
-    headers: headers(taskId, args),
+    headers: headers(taskId, args, taskName),
     properties: {
       correlation_id: taskId,
       reply_to: "",
@@ -112,5 +116,37 @@ export async function enqueuePipeline(payload: PipelinePayload): Promise<string>
   // продолжает прогон, а не начинает чистый.
   const taskId = payload.task_id;
   await client.lPush(QUEUE, buildMessage(payload, taskId));
+  return taskId;
+}
+
+/** Параметры фоновой генерации аудитории. */
+export interface AudiencePayload {
+  persona_set_id: string;
+  tenant_id: string;
+  config: Record<string, unknown>;
+}
+
+/**
+ * Ставит генерацию аудитории в ту же очередь, что и прогоны.
+ *
+ * ─── Почему в воркер, а не подпроцессом из веба ────────────────────────────
+ * Маршрут запускал `python3 -m agent_core.persona.generate_cli` и ждал с
+ * таймаутом 120 секунд, а обогащение — последовательный цикл с таймаутом 60
+ * секунд на персону. Шестьдесят персон в такой бюджет не помещаются никак:
+ * пользователь видел спиннер, превращавшийся в ошибку, и всё написанное к
+ * этому моменту выбрасывалось.
+ *
+ * Вторая, менее заметная причина: в образе веба нет `openai`. Обогащение
+ * оттуда всегда падало на ModuleNotFoundError и честно сообщало
+ * `enriched: false` — то есть самая дорогая часть генерации не работала вовсе,
+ * а выглядело это как привычная «деградация».
+ *
+ * Идентификатор задачи совпадает с идентификатором набора: по нему воркер
+ * находит строку, которую наполняет, и повтор Celery не создаёт второй набор.
+ */
+export async function enqueueAudience(payload: AudiencePayload): Promise<string> {
+  const client = await valkey();
+  const taskId = payload.persona_set_id;
+  await client.lPush(QUEUE, buildMessage(payload, taskId, "agora.generate_audience"));
   return taskId;
 }

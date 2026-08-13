@@ -22,7 +22,9 @@ app = Celery(
     # разберёт, а на agora.run_pipeline ответит «Received unregistered task» —
     # то есть отказ будет выглядеть как проблема очереди, а не как незагруженный
     # модуль. Импорт здесь дешёвый: граф и langgraph подтягиваются внутри задачи.
-    include=["agent_core.pipeline.tasks"],
+    # Модули с задачами перечисляются явно: автообнаружение прошло бы по всему
+    # пакету и импортировало бы тяжёлые зависимости там, где они не нужны.
+    include=["agent_core.pipeline.tasks", "agent_core.persona.tasks"],
 )
 
 app.conf.update(

@@ -179,11 +179,14 @@ function QuestionEditor({
 
 function QuestionRow({
   q,
+  index,
   onEdit,
   onDelete,
   onRestore,
 }: {
   q: SurveyQuestion;
+  /** Сквозной номер по всей анкете. */
+  index: number;
   onEdit: () => void;
   onDelete: () => void;
   onRestore: () => void;
@@ -192,8 +195,14 @@ function QuestionRow({
 
   return (
     <div className="flex items-center gap-3 rounded-md border border-hairline px-4 py-2.5">
+      {/* Номер, а не маркер списка: по нему видно, сколько вопросов задаётся
+          персоне, и на него ссылаются, обсуждая анкету. Галочка базового
+          критерия переехала правее — она про происхождение вопроса, а не про
+          его место. */}
+      <span className="w-6 shrink-0 text-right text-xs tabular-nums text-stone">{index}</span>
+
       {q.baseKey ? (
-        <Check className={cn("h-4 w-4 shrink-0", modified ? "text-amber-400" : "text-success")} />
+        <Check className={cn("h-4 w-4 shrink-0", modified ? "text-warning" : "text-success")} />
       ) : (
         <span className="h-4 w-4 shrink-0" />
       )}
@@ -311,6 +320,15 @@ export function SurveyBuilder({
     cancel();
   };
 
+  /**
+   * Номер вопроса — сквозной по всей анкете, а не внутри группы.
+   *
+   * Пользователь считает вопросы, а не разделы: «сколько всего спросят» —
+   * это длина списка, который увидит персона. Нумерация внутри групп дала бы
+   * две единицы и две двойки в одной анкете.
+   */
+  const numberOf = (q: SurveyQuestion) => questions.findIndex((x) => x.id === q.id) + 1;
+
   const renderList = (list: SurveyQuestion[]) =>
     list.map((q) =>
       editingId === q.id && draft ? (
@@ -325,6 +343,7 @@ export function SurveyBuilder({
         <QuestionRow
           key={q.id}
           q={q}
+          index={numberOf(q)}
           onEdit={() => startEdit(q)}
           onDelete={() => remove(q.id)}
           onRestore={() => restore(q)}
@@ -406,12 +425,14 @@ export function SurveyBuilder({
 
       <div className="flex flex-wrap items-center gap-2 border-t border-hairline pt-4">
         <Chip tone="outline">Всего вопросов: {questions.length}</Chip>
-        {groundingBroken ? (
+        {/* Предупреждение осталось, подтверждение снято: «заземление активно» —
+            это состояние по умолчанию, и сообщать о нём значит приучать не
+            читать эту строку. Красный флаг, который горит всегда, перестаёт
+            быть флагом. */}
+        {groundingBroken && (
           <Chip tone="outline">
             <span className="text-warning">заземление частично отключено</span>
           </Chip>
-        ) : (
-          <Chip tone="outline">заземление на корпус активно</Chip>
         )}
       </div>
     </div>

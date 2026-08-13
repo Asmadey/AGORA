@@ -52,6 +52,9 @@ interface PersonaSetSummary {
   seed: number | null;
   createdAt: string;
   personaCount: number;
+  status: "generating" | "ready" | "failed";
+  generatedCount: number;
+  error: string | null;
 }
 
 export interface AudienceStepProps {
@@ -121,6 +124,13 @@ export function AudienceStep({
 
   const reuse = personaSetId !== null;
 
+  const refreshSets = async () => {
+    const r = await fetch("/api/persona-sets");
+    if (!r.ok) return;
+    const data = (await r.json()) as { personaSets: PersonaSetSummary[] };
+    setSets(data.personaSets);
+  };
+
   useEffect(() => {
     let alive = true;
     void (async () => {
@@ -143,6 +153,21 @@ export function AudienceStep({
       alive = false;
     };
   }, []);
+
+  /**
+   * Пока хоть один набор наполняется — опрашиваем список.
+   *
+   * Опрос, а не SSE: канал прогресса привязан к строке `tasks` (и проверка
+   * владения там же), а набор персон — не прогон. Заводить второй транспорт
+   * ради одного числа дороже, чем спросить список раз в две секунды: генерация
+   * идёт минуты, и запрос на этом фоне ничего не стоит.
+   */
+  const generating = (sets ?? []).some((s) => s.status === "generating");
+  useEffect(() => {
+    if (!generating) return;
+    const timer = setInterval(() => void refreshSets(), 2000);
+    return () => clearInterval(timer);
+  }, [generating]);
 
   const set = (patch: Partial<AudienceCriteria>) => {
     // Правка критериев обесценивает ранее созданный набор: показывать «готово
@@ -182,14 +207,14 @@ export function AudienceStep({
       if (!res.ok) {
         throw new Error((data.error as string) ?? `генерация не удалась (${res.status})`);
       }
-      const outcome: GenerationOutcome = {
-        personaSetId: data.personaSetId as string,
-        size: data.size as number,
-        enrichment: data.enrichment as GenerationOutcome["enrichment"],
-      };
-      setGenerated(outcome);
-      // Набор сохранён — запуск (#11) заберёт его по id.
-      onPersonaSetChange(outcome.personaSetId, outcome.size);
+
+      // Набор заведён, персон в нём ещё нет: их пишет воркер. Переключаемся на
+      // вкладку с существующими наборами — там видно, как он наполняется.
+      // Раньше здесь ждали конца генерации, и на шестидесяти персонах маршрут
+      // просто отваливался по таймауту, теряя всё написанное.
+      const newId = data.personaSetId as string;
+      onPersonaSetChange(newId, 0);
+      await refreshSets();
     } catch (e) {
       setGenError((e as Error).message);
     } finally {
@@ -247,19 +272,43 @@ export function AudienceStep({
               <button
                 key={s.id}
                 onClick={() => onPersonaSetChange(s.id, s.personaCount)}
+                // Набор в работе выбрать нельзя: запуск на неполной аудитории
+                // дал бы отчёт по случайной её части, и понять это было бы
+                // неоткуда — размер в резюме показал бы заказанное число.
+                disabled={s.status === "generating"}
                 className={cn(
-                  "w-full rounded-lg border p-4 text-left transition-colors",
+                  "flex w-full items-center gap-3 rounded-lg border p-4 text-left transition-colors",
                   personaSetId === s.id
                     ? "border-ink bg-secondary"
                     : "border-hairline hover:bg-secondary",
+                  s.status === "generating" && "cursor-wait",
+                  s.status === "failed" && "border-danger/40",
                 )}
               >
-                <p className="text-sm font-medium">{s.name}</p>
-                <p className="mt-1 text-xs text-slate">
-                  {s.personaCount} персон
-                  {s.seed !== null && ` · seed ${s.seed}`} ·{" "}
-                  {new Date(s.createdAt).toLocaleDateString("ru-RU")}
-                </p>
+                <span className="min-w-0 flex-1">
+                  <span className="block text-sm font-medium">{s.name}</span>
+                  <span className="mt-1 block text-xs text-slate">
+                    {s.status === "generating" ? (
+                      // Числами, а не долей: «60%» одинаково выглядит на пяти
+                      // персонах и на пятистах, а ждать их надо по-разному.
+                      <>Создаётся: {s.generatedCount} из {s.size}</>
+                    ) : s.status === "failed" ? (
+                      <span className="text-danger">
+                        Генерация не удалась{s.error ? `: ${s.error}` : ""}
+                      </span>
+                    ) : (
+                      <>
+                        {s.personaCount} персон
+                        {s.seed !== null && ` · seed ${s.seed}`} ·{" "}
+                        {new Date(s.createdAt).toLocaleDateString("ru-RU")}
+                      </>
+                    )}
+                  </span>
+                </span>
+
+                {s.status === "generating" && (
+                  <Loader2 className="h-4 w-4 shrink-0 animate-spin text-slate" />
+                )}
               </button>
             ))}
           </div>

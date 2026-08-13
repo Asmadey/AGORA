@@ -4,10 +4,10 @@ import { withTenant } from "@/lib/server/db";
 import { requireSession, toResponse } from "@/lib/server/guard";
 import {
   createPersonaSet,
-  insertPersonas,
   listPersonaSets,
   listPersonas,
 } from "@/lib/server/personas";
+import { enqueueAudience } from "@/lib/server/queue";
 
 /**
  * Шаг «Аудитория» визарда (задача #9).
@@ -121,82 +121,68 @@ export async function POST(request: Request) {
     const useLlm = (body as { useLlm?: unknown }).useLlm !== false;
     const config = { ...toGenerationConfig(criteria, seed), use_llm: useLlm };
 
-    const { execFile } = await import("node:child_process");
-    const { promisify } = await import("node:util");
-    const execFileAsync = promisify(execFile);
+    // ── Набор создаётся СРАЗУ, наполняется в фоне ──────────────────────────
+    //
+    // Раньше здесь запускался подпроцесс `generate_cli` и маршрут ждал его с
+    // таймаутом 120 секунд. Обогащение — последовательный цикл с таймаутом 60
+    // секунд на персону: шестьдесят персон в такой бюджет не помещаются никак.
+    // Пользователь видел спиннер, превращавшийся в ошибку, а всё написанное к
+    // этому моменту выбрасывалось.
+    //
+    // Вторая причина переезда в воркер: в образе веба нет `openai`. Обогащение
+    // отсюда всегда падало на ModuleNotFoundError и честно сообщало
+    // `enriched: false` — то есть самая дорогая часть генерации не работала
+    // вовсе, а выглядело это как привычная «деградация».
+    //
+    // Теперь строка набора появляется в списке немедленно, со статусом
+    // `generating` и счётчиком «сделано из заказанного».
+    const set = await withTenant(tenantId, (client) =>
+      createPersonaSet(
+        client,
+        ((body as { name?: unknown }).name as string) ||
+          `Аудитория от ${new Date().toLocaleDateString("ru-RU")}`,
+        criteria.size,
+        config,
+        seed,
+        "generating",
+      ),
+    );
 
-    // AGORA_REPO_ROOT обязателен: у standalone-сервера Next process.cwd() равен
-    // /app/apps/web, а не корню монорепо. Тот же дефект уже ловили в #24.
-    const repoRoot = process.env.AGORA_REPO_ROOT || `${process.cwd()}/../..`;
-    const core = `${repoRoot}/services/agent-core`;
-
-    let result: GenerationResult;
     try {
-      const { stdout } = await execFileAsync(
-        "python3",
-        ["-m", "agent_core.persona.generate_cli", "--config", JSON.stringify(config)],
-        {
-          cwd: core,
-          timeout: 120_000,
-          maxBuffer: 32 * 1024 * 1024,
-          env: { ...process.env, PYTHONPATH: core },
-        },
+      await enqueueAudience({
+        persona_set_id: set.id,
+        tenant_id: tenantId,
+        config: config as Record<string, unknown>,
+      });
+    } catch (e) {
+      // Набор создан, но воркер о нём не знает. Молчать нельзя: строка висела
+      // бы в «generating» вечно, и это выглядело бы как медленная генерация,
+      // а не как недоехавшая задача.
+      await withTenant(tenantId, (client) =>
+        client.query(
+          "UPDATE persona_sets SET status='failed', error=$2, finished_at=now() WHERE id=$1",
+          [set.id, `очередь недоступна: ${(e as Error).message}`],
+        ),
       );
-      result = JSON.parse(stdout) as GenerationResult;
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      // Отказ по невозможным критериям — 400, а не 500: виноват выбор
-      // пользователя, и ему надо показать, какой именно критерий пуст.
-      const criteriaError = /отсутствуют в корпусе/.test(msg);
       return Response.json(
-        { error: `генерация не удалась: ${msg.slice(-300)}`, warnings },
-        { status: criteriaError ? 400 : 500 },
+        { error: `не удалось поставить генерацию в очередь: ${(e as Error).message}`, warnings },
+        { status: 503 },
       );
     }
 
-    // ── Сохранение набора ──────────────────────────────────────────────────
-    // Без него результат генерации существует только в теле ответа: запуск
-    // (#11) принимает personaSetId, и передать ему было бы нечего. Раньше здесь
-    // возвращался personaSetId: null — то есть ветка «создать аудиторию»
-    // обрывалась ровно на этом месте, и заметить это по зелёному CDD #9 было
-    // невозможно: тот прогоняет генератор напрямую, минуя маршрут.
-    const names = result.names ?? [];
-    const saved = await withTenant(tenantId, async (client) => {
-      const set = await createPersonaSet(
-        client,
-        (body as { name?: unknown }).name as string ||
-          `Аудитория от ${new Date().toLocaleDateString("ru-RU")}`,
-        result.personas.length,
-        config,
-        seed,
-      );
-      const inserted = await insertPersonas(
-        client,
-        set.id,
-        result.personas.map((dna, i) => ({
-          // Имя приходит списком рядом с DNA. Запасной вариант нужен не для
-          // красоты: колонка NOT NULL, и персона без имени обрушила бы вставку
-          // целиком, потеряв весь набор из-за одного пропуска.
-          name: names[i] || `Персона ${i + 1}`,
-          dna,
-          narrative: (dna.narrative as string) ?? null,
-          seed: (dna.seed as number) ?? seed,
-        })),
-      );
-      return { set, inserted };
-    });
-
-    return Response.json({
-      generated: true,
-      personaSetId: saved.set.id,
-      size: saved.inserted,
-      personas: result.personas,
-      config,
-      warnings,
-      // Видно, поработала ли модель. Без этого «живой портрет» и «шаблон из
-      // полей» различимы только на глаз, а причина деградации не видна вовсе.
-      enrichment: result.meta ?? { enriched: false, llm_calls: 0, cache_hits: 0 },
-    });
+    // 202: набор заведён, персон в нём ещё нет. Отвечать 200 значило бы
+    // сказать «готово» про то, что只 началось.
+    return Response.json(
+      {
+        generated: true,
+        personaSetId: set.id,
+        status: "generating",
+        size: criteria.size,
+        generatedCount: 0,
+        warnings,
+      },
+      { status: 202 },
+    );
   } catch (error) {
     return toResponse(error);
   }

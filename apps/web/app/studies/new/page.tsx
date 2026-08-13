@@ -5,6 +5,8 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { Check, ChevronLeft, ChevronRight, Upload, FileText, Info } from "lucide-react";
 import { FileChip } from "@/components/agora/FileChip";
+import { UploadProgress } from "@/components/agora/UploadProgress";
+import { putWithProgress, uploadPercent, type UploadState } from "@/lib/upload";
 import { cn } from "@/lib/utils";
 import { Chip } from "@/components/agora/Primitives";
 import { SurveyBuilder, BASE_QUESTIONS } from "@/components/agora/SurveyBuilder";
@@ -39,6 +41,10 @@ export default function NewStudyPage() {
   const [replication, setReplication] = useState(1);
   const [launching, setLaunching] = useState(false);
   const [launchError, setLaunchError] = useState<string | null>(null);
+  // Идентификатор созданного исследования. Показывается до перехода в список:
+  // по нему ищут прогон в логах и в поддержке, и увидеть его надо один раз, а
+  // не выкапывать из адреса.
+  const [launchedId, setLaunchedId] = useState<string | null>(null);
   const router = useRouter();
 
   // Seed фиксируется ОДИН раз на сессию визарда, а не на каждый клик. Это и есть
@@ -101,10 +107,9 @@ export default function NewStudyPage() {
         );
         return;
       }
-      // В общий список прогонов, а не на экран прогресса конкретного прогона.
-      // Прогон идёт десятки минут, всё это время смотреть не на что, а из
-      // списка видно и его, и соседние — включая тот, что запускали до этого.
-      router.push("/");
+      // Сначала показываем идентификатор, потом уводим в список: переход
+      // сразу же прятал бы номер, ради которого его и спрашивали.
+      setLaunchedId(String(data.id));
     } catch (e) {
       setLaunchError((e as Error).message);
     } finally {
@@ -124,7 +129,11 @@ export default function NewStudyPage() {
   // Размер держим отдельно от File: сам объект File живёт только до
   // перерисовки, а плашке нужно показывать вес и после неё.
   const [videoSize, setVideoSize] = useState<number | null>(null);
-  const [uploading, setUploading] = useState(false);
+  // Полное состояние загрузки, а не булево «идёт/не идёт». Спиннер не отличим
+  // от повисшего запроса, а ролик грузится минутами.
+  const [upload, setUpload] = useState<UploadState>({ phase: "idle", sent: 0, total: 0 });
+  const uploading = upload.phase === "presigning" || upload.phase === "uploading" ||
+    upload.phase === "checking";
 
   // Сколько персон реально пойдёт в прогон: размер выбранного набора либо
   // заказанный размер генерации. null — набор выбран, а его размер ещё не
@@ -135,13 +144,13 @@ export default function NewStudyPage() {
   // байтов прямо в S3 → complete с ffprobe-валидацией. Веб файл не проксирует:
   // 700 МБ через Next-роут упёрлись бы в лимит тела запроса.
   async function uploadVideo(file: File) {
-    setUploading(true);
     setLaunchError(null);
-    // Плашка появляется сразу, до первого запроса: заливка 700 МБ идёт
-    // минуты, и всё это время экран не должен выглядеть так, будто файл
-    // не приняли.
+    // Плашка появляется до первого запроса: заливка 700 МБ идёт минуты, и всё
+    // это время экран не должен выглядеть так, будто файл не приняли.
     setVideoName(file.name);
     setVideoSize(file.size);
+    setUpload({ phase: "presigning", sent: 0, total: file.size });
+
     try {
       const pres = await fetch("/api/upload/presign", {
         method: "POST",
@@ -151,13 +160,16 @@ export default function NewStudyPage() {
       const p = await pres.json();
       if (!pres.ok) throw new Error(p?.error ?? `presign вернул ${pres.status}`);
 
-      const put = await fetch(p.uploadUrl, {
-        method: "PUT",
-        headers: { "Content-Type": file.type },
-        body: file,
-      });
-      if (!put.ok) throw new Error(`заливка в S3 вернула ${put.status}`);
+      // XMLHttpRequest, а не fetch: у fetch нет события на выгруженные байты,
+      // то есть прогресс отправки недоступен принципиально. См. lib/upload.ts.
+      setUpload({ phase: "uploading", sent: 0, total: file.size });
+      await putWithProgress(p.uploadUrl, file, (sent, total) =>
+        setUpload({ phase: "uploading", sent, total: total || file.size }),
+      );
 
+      // Последний байт ушёл — но материал ещё не принят: ffprobe проверяет
+      // контейнер, кодеки и длительность и может файл отвергнуть.
+      setUpload({ phase: "checking", sent: file.size, total: file.size });
       const done = await fetch("/api/upload/complete", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -167,16 +179,26 @@ export default function NewStudyPage() {
       if (!done.ok) throw new Error(d?.error ?? `complete вернул ${done.status}`);
 
       setVideoRef(d.key);
-      setVideoName(file.name);
-      setVideoSize(file.size);
+      setUpload({ phase: "done", sent: file.size, total: file.size });
     } catch (e) {
-      setLaunchError(`загрузка не удалась: ${(e as Error).message}`);
-    } finally {
-      setUploading(false);
+      setUpload({
+        phase: "failed",
+        sent: 0,
+        total: file.size,
+        error: (e as Error).message,
+      });
     }
   }
 
   const [questions, setQuestions] = useState<SurveyQuestion[]>(BASE_QUESTIONS);
+
+  const clearVideo = () => {
+    setVideoRef(null);
+    setVideoName(null);
+    setVideoSize(null);
+    setUpload({ phase: "idle", sent: 0, total: 0 });
+    setLaunchError(null);
+  };
 
   /**
    * Чего не хватает для запуска — на языке визарда, а не контракта маршрута.
@@ -190,9 +212,14 @@ export default function NewStudyPage() {
       step: 0,
       what: "Не приложен материал",
       how: uploading
-        ? "Ролик ещё загружается — дождитесь окончания"
-        : videoName
-          ? "Загрузка не завершилась: приложите файл заново"
+        ? (() => {
+            const pct = uploadPercent(upload);
+            return pct === null
+              ? "Ролик ещё загружается — дождитесь окончания"
+              : `Ролик загружается: ${pct}% — дождитесь окончания`;
+          })()
+        : upload.phase === "failed"
+          ? `Загрузка не удалась: ${upload.error ?? "причина неизвестна"}. Приложите файл заново`
           : "Шаг «Контент»: выберите видео",
     });
   }
@@ -256,20 +283,20 @@ export default function NewStudyPage() {
               {/* Пока файла нет — зона выбора. Как только он выбран, на её месте
                   встаёт плашка: две зоны одновременно означали бы, что можно
                   приложить второй ролик, а прогон идёт по одному. */}
-              {videoName ? (
+              {videoName && (uploading || upload.phase === "failed") ? (
+                <UploadProgress
+                  className="mt-3"
+                  name={videoName}
+                  state={upload}
+                  onCancel={clearVideo}
+                />
+              ) : videoName ? (
                 <FileChip
                   className="mt-3"
                   kind="video"
                   name={videoName}
                   size={videoSize}
-                  busy={uploading}
-                  hint={videoRef ? undefined : "загрузка не завершена"}
-                  onRemove={() => {
-                    setVideoRef(null);
-                    setVideoName(null);
-                    setVideoSize(null);
-                    setLaunchError(null);
-                  }}
+                  onRemove={clearVideo}
                 />
               ) : (
                 <label className="mt-3 flex cursor-pointer flex-col items-center justify-center rounded-xl border border-dashed border-hairline-strong py-10 transition-colors hover:border-ink/40 hover:bg-surface">
@@ -409,6 +436,13 @@ export default function NewStudyPage() {
               <Chip tone="outline">Лимит стоимости: авто</Chip>
             </div>
 
+            {/* Ход загрузки виден и на «Резюме»: пользователь дошёл сюда,
+                пока ролик заливается, и уходить на первый шаг ради полосы
+                прогресса ему незачем. */}
+            {videoName && (uploading || upload.phase === "failed") && (
+              <UploadProgress name={videoName} state={upload} />
+            )}
+
             {/* Чего не хватает — до нажатия, а не после. Каждая строка ведёт
                 на свой шаг: сказать «не заполнено» и оставить пользователя
                 искать где — половина сообщения. */}
@@ -440,16 +474,45 @@ export default function NewStudyPage() {
               </div>
             )}
 
+            {/* Исследование создано: показываем присвоенный номер и уводим
+                дальше по кнопке, а не автоматически. */}
+            {launchedId && (
+              <div className="rounded-lg border border-success/30 bg-success/10 p-4">
+                <p className="text-sm font-medium">Исследование создано</p>
+                <p className="mt-1 font-mono text-sm break-all">{launchedId}</p>
+                <p className="mt-1 text-xs leading-relaxed text-slate">
+                  Разбор идёт десятки минут. По этому номеру исследование ищется в
+                  списке, в логах воркера и в обращении в поддержку.
+                </p>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <Link
+                    href="/"
+                    className="rounded-full bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-ink/90"
+                  >
+                    К списку исследований
+                  </Link>
+                  <Link
+                    href={`/runs/${launchedId}/progress`}
+                    className="rounded-full border border-hairline px-4 py-2 text-sm transition-colors hover:bg-surface"
+                  >
+                    Следить за ходом
+                  </Link>
+                </div>
+              </div>
+            )}
+
             <button
               onClick={launch}
-              disabled={launching}
+              disabled={launching || launchedId !== null}
               className="block w-full rounded-full bg-primary py-3 text-center text-sm font-medium text-primary-foreground transition-colors hover:bg-ink/90 disabled:opacity-50"
             >
               {launching
                 ? "Запускаем…"
-                : missing.length > 0
-                  ? "Показать, чего не хватает"
-                  : "Запустить исследование"}
+                : launchedId
+                  ? "Запущено"
+                  : missing.length > 0
+                    ? "Показать, чего не хватает"
+                    : "Запустить исследование"}
             </button>
           </div>
         )}

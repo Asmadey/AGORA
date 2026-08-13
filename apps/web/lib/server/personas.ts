@@ -35,6 +35,15 @@ export interface PersonaSet {
   createdAt: string;
   /** Сколько персон реально сохранено в наборе. Ноль — набор создан, но не заполнен. */
   personaCount: number;
+  /** `generating` — воркер ещё пишет персон в этот набор. */
+  status: "generating" | "ready" | "failed";
+  /**
+   * Сколько персон обработано на текущий момент. Обновляется воркером по ходу
+   * генерации — из этого числа и заказанного размера складывается «40 из 60».
+   */
+  generatedCount: number;
+  /** Причина отказа генерации. Без неё «failed» не подсказывает следующий шаг. */
+  error: string | null;
 }
 
 export interface Persona {
@@ -55,6 +64,9 @@ interface PersonaSetRow {
   seed: string | number | null;
   created_at: Date;
   persona_count: string;
+  status: string;
+  generated_count: number;
+  error: string | null;
 }
 
 interface PersonaRow {
@@ -82,6 +94,9 @@ function toSet(row: PersonaSetRow): PersonaSet {
     seed: toNumber(row.seed),
     createdAt: row.created_at.toISOString(),
     personaCount: Number(row.persona_count ?? 0),
+    status: (row.status as PersonaSet["status"]) ?? "ready",
+    generatedCount: Number(row.generated_count ?? 0),
+    error: row.error ?? null,
   };
 }
 
@@ -107,7 +122,7 @@ export async function listPersonaSets(
   // обязан попасть в список. При JOIN он бы пропал, и преселект «Выбрать
   // существующую» не показывал бы только что созданный набор.
   const { rows } = await client.query<PersonaSetRow>(
-    `SELECT ps.id, ps.name, ps.size, ps.generation_config, ps.seed, ps.created_at,
+    `SELECT ps.id, ps.name, ps.size, ps.generation_config, ps.seed, ps.created_at, status, generated_count, error,
             (SELECT count(*) FROM personas p WHERE p.persona_set_id = ps.id) AS persona_count
        FROM persona_sets ps
       WHERE ($1::uuid IS NULL OR ps.id = $1::uuid)
@@ -123,12 +138,18 @@ export async function createPersonaSet(
   size: number,
   generationConfig: Record<string, unknown>,
   seed: number | null,
+  /**
+   * `generating` — набор заведён, персон в нём ещё нет: их пишет воркер.
+   * По умолчанию `ready`, потому что так набор создаётся вручную и из тестов.
+   */
+  status: "generating" | "ready" = "ready",
 ): Promise<PersonaSet> {
   const { rows } = await client.query<PersonaSetRow>(
-    `INSERT INTO persona_sets (tenant_id, name, size, generation_config, seed)
-     VALUES (app.current_tenant(), $1, $2, $3::jsonb, $4)
-     RETURNING id, name, size, generation_config, seed, created_at, 0::bigint AS persona_count`,
-    [name, size, JSON.stringify(generationConfig), seed],
+    `INSERT INTO persona_sets (tenant_id, name, size, generation_config, seed, status)
+     VALUES (app.current_tenant(), $1, $2, $3::jsonb, $4, $5)
+     RETURNING id, name, size, generation_config, seed, created_at, status,
+               generated_count, error, 0::bigint AS persona_count`,
+    [name, size, JSON.stringify(generationConfig), seed, status],
   );
   return toSet(rows[0]);
 }

@@ -46,6 +46,7 @@ import copy
 import hashlib
 import json
 import os
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
@@ -260,6 +261,7 @@ def enrich_personas(
     prompt: str | None = None,
     cache: Cache | None = None,
     model: str | None = None,
+    on_progress: Callable[[int, int], None] | None = None,
 ) -> EnrichResult:
     """
     Переписывает narrative каждой персоны моделью, оставляя скелет нетронутым.
@@ -272,6 +274,14 @@ def enrich_personas(
     MIN_NARRATIVE_LEN отбрасывается и заменяется шаблонным: canonical JSON Schema
     (#4) такую персону всё равно не примет, и лучше это увидеть здесь, чем при
     сохранении в базу.
+
+    ─── on_progress ───────────────────────────────────────────────────────────
+    Зовётся после КАЖДОЙ персоны, включая взятые из кэша и оставшиеся с
+    шаблонным narrative: пользователь считает обработанных, а не оплаченных.
+
+    Отказ обратного вызова не роняет генерацию. Прогресс — служебная информация,
+    и уронить из-за неё аудиторию, наполовину написанную моделью, значит
+    поменять оплаченный результат на аккуратную отчётность.
     """
     model_name = model or os.environ.get("AI_MODEL") or DEFAULT_MODEL
 
@@ -292,8 +302,18 @@ def enrich_personas(
                 degraded_reason=f"модель недоступна: {type(exc).__name__}: {exc}",
             )
 
+    total = len(personas)
+
+    def report(done: int) -> None:
+        if on_progress is None:
+            return
+        try:
+            on_progress(done, total)
+        except Exception:  # noqa: BLE001 — см. докстринг: прогресс не роняет работу
+            pass
+
     result = EnrichResult()
-    for persona in personas:
+    for index, persona in enumerate(personas, start=1):
         enriched = copy.deepcopy(persona)
         key = cache_key(_skeleton(persona), prompt, model_name)
 
@@ -303,6 +323,7 @@ def enrich_personas(
             result.personas.append(enriched)
             result.sources.append("model")
             result.cache_hits += 1
+            report(index)
             continue
 
         try:
@@ -315,12 +336,14 @@ def enrich_personas(
             result.degraded_reason = f"вызов модели не удался: {type(exc).__name__}: {exc}"
             result.personas.append(enriched)
             result.sources.append("template")
+            report(index)
             continue
 
         result.calls_made += 1
         if len(text) < MIN_NARRATIVE_LEN:
             result.personas.append(enriched)
             result.sources.append("template")
+            report(index)
             continue
 
         if cache:
@@ -328,5 +351,6 @@ def enrich_personas(
         enriched["narrative"] = text
         result.personas.append(enriched)
         result.sources.append("model")
+        report(index)
 
     return result
