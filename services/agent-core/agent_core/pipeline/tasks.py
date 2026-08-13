@@ -26,7 +26,7 @@ import os
 from typing import Any
 
 from ..celery_app import app
-from .state import STATUS_FAILED, STATUS_REPORT_READY, STATUS_RUNNING
+from .state import STATUS_CANCELLED, STATUS_FAILED, STATUS_REPORT_READY, STATUS_RUNNING
 
 
 def _valkey():
@@ -36,7 +36,13 @@ def _valkey():
 
 
 def _set_task_status(task_id: str, tenant_id: str, status: str, error: str | None = None) -> None:
-    """Статус прогона в Postgres. Отсутствие DSN — не повод ронять прогон."""
+    """
+    Статус прогона в Postgres. Отсутствие DSN — не повод ронять прогон.
+
+    `started_at` ставится один раз, при первом переходе в RUNNING: возобновление
+    с чекпоинта не должно обнулять отсчёт, иначе «время обработки» покажет
+    длительность последней попытки вместо всего прогона.
+    """
     dsn = os.environ.get("DATABASE_URL")
     if not dsn:
         return
@@ -48,10 +54,46 @@ def _set_task_status(task_id: str, tenant_id: str, status: str, error: str | Non
     with psycopg.connect(dsn) as conn, tenant_scope(conn, tenant_id) as cur:
         cur.execute(
             "UPDATE tasks SET status = %s, error = %s, "
-            "finished_at = CASE WHEN %s IN ('REPORT_READY','FAILED') THEN now() ELSE NULL END "
+            "started_at = CASE WHEN %s = 'RUNNING' THEN COALESCE(started_at, now()) "
+            "                  ELSE started_at END, "
+            "finished_at = CASE WHEN %s IN ('REPORT_READY','FAILED','CANCELLED') "
+            "                   THEN now() ELSE NULL END "
             "WHERE id = %s::uuid",
-            (status, error, status, task_id),
+            (status, error, status, status, task_id),
         )
+
+
+def _cancel_requested(task_id: str, tenant_id: str) -> bool:
+    """
+    Просили ли отменить этот прогон.
+
+    Читается из Postgres, а не из Valkey, намеренно: отмену запрашивает веб, и
+    единственное место, где это состояние переживёт перезапуск чего угодно, —
+    строка задачи. Valkey держит прогресс с суточным TTL и чекпоинты; класть
+    туда решение пользователя значило бы, что отмена может истечь.
+
+    Отказ базы не считается отменой. Иначе потеря связи с Postgres на секунду
+    останавливала бы прогон, за который уже заплачено, и выглядело бы это как
+    самопроизвольная отмена.
+    """
+    dsn = os.environ.get("DATABASE_URL")
+    if not dsn:
+        return False
+
+    import psycopg
+
+    from ..db import tenant_scope
+
+    try:
+        with psycopg.connect(dsn) as conn, tenant_scope(conn, tenant_id) as cur:
+            cur.execute(
+                "SELECT cancel_requested_at IS NOT NULL FROM tasks WHERE id = %s::uuid",
+                (task_id,),
+            )
+            row = cur.fetchone()
+            return bool(row and row[0])
+    except Exception:  # noqa: BLE001 — см. докстринг: отказ базы не отмена
+        return False
 
 
 @app.task(name="agora.run_pipeline", bind=True)
@@ -68,7 +110,7 @@ def run_pipeline(self: Any, payload: dict[str, Any]) -> dict[str, Any]:
     иначе начальное состояние затёрло бы накопленное.
     """
     from .checkpoint import ValkeyCheckpointSaver
-    from .graph import build_graph
+    from .graph import RunCancelled, build_graph
     from .progress import ProgressWriter
     from .state import new_state
 
@@ -78,7 +120,11 @@ def run_pipeline(self: Any, payload: dict[str, Any]) -> dict[str, Any]:
     valkey = _valkey()
     progress = ProgressWriter(valkey, task_id)
     checkpointer = ValkeyCheckpointSaver(valkey)
-    graph = build_graph(checkpointer=checkpointer, progress=progress)
+    graph = build_graph(
+        checkpointer=checkpointer,
+        progress=progress,
+        is_cancelled=lambda: _cancel_requested(task_id, tenant_id),
+    )
     config = {"configurable": {"thread_id": task_id}}
 
     resuming = checkpointer.get_tuple(config) is not None
@@ -98,6 +144,12 @@ def run_pipeline(self: Any, payload: dict[str, Any]) -> dict[str, Any]:
 
     try:
         final = graph.invoke(initial, config)
+    except RunCancelled as e:
+        # Отмена — не отказ. Отдельный статус, чтобы в списке было видно, что
+        # прогон остановили, а не что он сломался.
+        _set_task_status(task_id, tenant_id, STATUS_CANCELLED, str(e))
+        progress.emit("pipeline", STATUS_CANCELLED, detail=str(e))
+        return {"task_id": task_id, "status": STATUS_CANCELLED, "degraded": []}
     except Exception as e:  # noqa: BLE001 — статус и причина обязаны дойти до пользователя
         reason = f"{type(e).__name__}: {e}"
         _set_task_status(task_id, tenant_id, STATUS_FAILED, reason)

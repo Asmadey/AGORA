@@ -33,6 +33,9 @@ export function DeleteRunButton({
   const [asking, setAsking] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Отмена запрошена, но воркер ещё не остановился. Отдельно от ошибки: это
+  // нормальный ход событий, а не отказ.
+  const [notice, setNotice] = useState<string | null>(null);
 
   // Кнопка живёт внутри ссылки на прогон: без остановки всплытия любой клик
   // по ней открывал бы отчёт вместо удаления.
@@ -41,17 +44,37 @@ export function DeleteRunButton({
     e.stopPropagation();
   };
 
-  async function remove(e: React.MouseEvent) {
+  async function remove(e: React.MouseEvent, force = false) {
     swallow(e);
     setBusy(true);
     setError(null);
+    setNotice(null);
     try {
-      const res = await fetch(`/api/tasks/${runId}`, { method: "DELETE" });
+      const res = await fetch(`/api/tasks/${runId}${force ? "?force=1" : ""}`, {
+        method: "DELETE",
+      });
+      const payload = await res.json().catch(() => ({}));
+
+      // 202 — воркер ведёт этот прогон, отмена запрошена и сработает между
+      // этапами. Показываем это как состояние, а не как ошибку: пользователь
+      // сделал ровно то, что хотел, просто результат придёт не сразу.
+      if (res.status === 202) {
+        setNotice(payload.message ?? "Отмена запрошена");
+        setAsking(false);
+        router.refresh();
+        return;
+      }
+
       if (!res.ok) {
-        const payload = await res.json().catch(() => ({}));
         setError(payload.error ?? `сервер ответил ${res.status}`);
         setAsking(false);
         return;
+      }
+
+      // Мусор, оставшийся в хранилищах, называется вслух: молчание про
+      // неудалённый ролик означало бы, что за место платят неизвестно за что.
+      if (Array.isArray(payload.leftovers) && payload.leftovers.length > 0) {
+        setNotice(`Удалено. Осталось убрать: ${payload.leftovers.join("; ")}`);
       }
       router.refresh();
     } catch (err) {
@@ -60,6 +83,20 @@ export function DeleteRunButton({
     } finally {
       setBusy(false);
     }
+  }
+
+  if (notice) {
+    return (
+      <span
+        onClick={swallow}
+        className={cn(
+          "max-w-[18rem] rounded-md bg-surface px-2 py-1 text-[11px] leading-snug text-slate",
+          className,
+        )}
+      >
+        {notice}
+      </span>
+    );
   }
 
   if (error) {
@@ -81,7 +118,7 @@ export function DeleteRunButton({
       <span onClick={swallow} className={cn("flex items-center gap-1", className)}>
         <button
           type="button"
-          onClick={remove}
+          onClick={(e) => remove(e)}
           disabled={busy}
           className="rounded-full bg-danger px-2.5 py-1 text-[11px] font-medium text-white disabled:opacity-50"
         >

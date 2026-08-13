@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { ArrowRight, Loader2, CheckCircle2, Clock, AlertTriangle, Film } from "lucide-react";
+import { ArrowRight, Loader2, CheckCircle2, Clock, AlertTriangle, Ban, Film } from "lucide-react";
 import { PageHeader } from "@/components/AppShell";
 import { Chip } from "@/components/agora/Primitives";
 import { EmptyState } from "@/components/agora/States";
@@ -23,13 +23,16 @@ import { listTasks } from "@/lib/server/tasks";
 
 export const dynamic = "force-dynamic";
 
-type Status = "QUEUED" | "RUNNING" | "REPORT_READY" | "FAILED";
+type Status = "QUEUED" | "RUNNING" | "REPORT_READY" | "FAILED" | "CANCELLED";
 
 const BADGE: Record<Status, { label: string; icon: React.ElementType; cls: string }> = {
   QUEUED: { label: "В очереди", icon: Clock, cls: "text-slate" },
   RUNNING: { label: "Идёт прогон", icon: Loader2, cls: "text-brand-blue" },
   REPORT_READY: { label: "Отчёт готов", icon: CheckCircle2, cls: "text-success" },
   FAILED: { label: "Ошибка", icon: AlertTriangle, cls: "text-danger" },
+  // Отдельно от «Ошибки»: отменённый прогон — не отказ системы, и в
+  // списке они не должны выглядеть одинаково.
+  CANCELLED: { label: "Отменён", icon: Ban, cls: "text-stone" },
 };
 
 function StatusBadge({ status }: { status: string }) {
@@ -67,23 +70,15 @@ export default async function RunsPage() {
   return (
     <>
       <PageHeader
-        title="Прогоны"
+        title="Исследования"
         subtitle="Исследования по вашим материалам. Отчёт появляется через несколько минут после запуска."
-        actions={
-          <Link
-            href="/studies/new"
-            className="rounded-full bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-ink/90"
-          >
-            Новое исследование
-          </Link>
-        }
       />
 
       <div className="p-8">
         {tasks.length === 0 ? (
           <EmptyState
             icon={<Film className="h-5 w-5" />}
-            title="Прогонов пока нет"
+            title="Исследований пока нет"
             description="Исследование начинается с ролика: загрузите видео, соберите аудиторию персон и запустите прогон. Первый отчёт по минутному ролику готов за несколько минут."
             action={{ href: "/studies/new", label: "Запустить первое исследование" }}
           />
@@ -115,6 +110,10 @@ export default async function RunsPage() {
                       {task.replicationCount > 1 && (
                         <Chip tone="outline">Перекрытие ×{task.replicationCount}</Chip>
                       )}
+                      {/* Автор писался в базу с самого начала и не читался ни
+                          одним SELECT: в команде из нескольких человек понять,
+                          чей это прогон, было нельзя. */}
+                      {task.author && <Chip tone="outline">Автор: {task.author}</Chip>}
                     </div>
                   </div>
 

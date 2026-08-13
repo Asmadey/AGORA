@@ -91,18 +91,54 @@ def route(state: PipelineState) -> str:
     return LONG_ONLY if state.get("mode") == "long" else "sample_frames"
 
 
+class RunCancelled(Exception):
+    """
+    Прогон остановлен по требованию пользователя.
+
+    Отдельный тип, а не общий отказ. `_traced` превращает любое исключение узла
+    в FAILED с причиной; если бы отмена шла тем же путём, пользователь увидел
+    бы «прогон упал» на то, что сам же и остановил, а в задаче осталась бы
+    ложная ошибка.
+    """
+
+
 def _traced(
     name: str,
     fn: Callable[[PipelineState], dict[str, Any]],
     progress: ProgressWriter | None,
+    is_cancelled: Callable[[], bool] | None = None,
 ) -> Callable[[PipelineState], dict[str, Any]]:
-    """Узел с прогрессом и превращением исключения в FAILED с причиной."""
+    """
+    Узел с прогрессом, отменой и превращением исключения в FAILED с причиной.
+
+    ─── Почему отмена проверяется здесь ───────────────────────────────────────
+    Между узлами, а не внутри. Узел — это один вызов модели или один запуск
+    ffmpeg; прерывать его на середине означало бы бросать уже оплаченную работу
+    и оставлять временные файлы.
+    Гранулярность «между узлами» означает, что отмена срабатывает не мгновенно:
+    разбор кадров длится минуты. Это честная цена, и интерфейс обязан говорить
+    «отменяется», а не «отменено».
+
+    `is_cancelled` необязателен: обёртка используется и там, где отмены нет
+    вовсе, а обязательный аргумент сломал бы все такие места ради одного
+    нового свойства.
+    """
 
     def node(state: PipelineState) -> dict[str, Any]:
+        # Проверка ДО узла, а не после: смысл отмены в том, чтобы не платить за
+        # следующий вызов модели, а не в том, чтобы отметить факт.
+        if is_cancelled is not None and is_cancelled():
+            raise RunCancelled(f"прогон отменён пользователем перед узлом {name}")
+
         if progress is not None:
             progress.emit(name, "RUNNING")
         try:
             update = fn(state) or {}
+        except RunCancelled:
+            # Не отказ — наверх без пометки FAILED.
+            if progress is not None:
+                progress.emit(name, "CANCELLED")
+            raise
         except Exception as e:  # noqa: BLE001 — причина обязана дойти до пользователя
             reason = f"{type(e).__name__}: {e}"
             if progress is not None:
@@ -120,6 +156,7 @@ def build_graph(
     checkpointer: Any = None,
     nodes: dict[str, Callable[[PipelineState], dict[str, Any]]] | None = None,
     progress: ProgressWriter | None = None,
+    is_cancelled: Callable[[], bool] | None = None,
 ):
     """
     Собранный граф конвейера.
@@ -144,7 +181,7 @@ def build_graph(
 
     graph = StateGraph(PipelineState)
     for name in NODES:
-        graph.add_node(name, _traced(name, impl[name], progress))
+        graph.add_node(name, _traced(name, impl[name], progress, is_cancelled))
 
     graph.add_edge(START, "probe_and_normalize")
     graph.add_edge("probe_and_normalize", "extract_audio")
