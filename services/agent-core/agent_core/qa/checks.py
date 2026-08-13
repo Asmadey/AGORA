@@ -27,6 +27,8 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from ..survey import survey_questions
+
 #: Допуск к длительности ролика. Секунда, а не ноль: таймкод последней сцены
 #: округляется при склейке, и ссылка на 01:40 при длительности 99.6 с — это
 #: округление, а не выдумка. Ноль допуска дал бы флаг на каждом ответе,
@@ -196,14 +198,44 @@ def consistency_reasons(answer: dict[str, Any], survey: dict[str, Any] | None = 
     if not any(str(v).strip() for v in verbatims.values()):
         reasons.append("вербатимы пусты: обоснования оценок нет")
 
-    questions = (survey or {}).get("questions") or []
-    asked = {str(q.get("id")) for q in questions if isinstance(q, dict) and q.get("id")}
-    if asked:
-        given = answer.get("survey_answers")
-        given_keys = set(map(str, given)) if isinstance(given, dict) else set()
-        missing = sorted(asked - given_keys)
-        if missing:
-            reasons.append(f"анкета покрыта не полностью, нет ответов: {', '.join(missing)}")
+    # Форму анкеты разбирает agent_core.survey — единственное место, где это
+    # знание живёт. Здесь стояло `(survey or {}).get("questions")`, и сквозной
+    # прогон падал на 690-й секунде ровно тем же способом, что до этого в
+    # respondent/run.py: анкета приезжает списком, а не словарём.
+    # ─── Покрытие анкеты ─────────────────────────────────────────────────────
+    #
+    # Базовые критерии и пользовательские вопросы приезжают в РАЗНЫХ полях, и
+    # это не небрежность, а форма ответа из промпта респондента: пять базовых
+    # баллов лежат в `scores` под своими `baseKey` (`overall_impression`, …),
+    # всё остальное — в `survey_answers` под `id` вопроса.
+    #
+    # Правило сравнивало `id` всех вопросов с ключами `survey_answers` и потому
+    # объявляло base-1…base-5 неотвеченными ВСЕГДА. Заметили это только на
+    # первом успешном сквозном прогоне: QA забраковал 9 ответов из 11, семь —
+    # по этой причине, и отчёт встал на трёх ответах. Отчёт на трёх ответах
+    # выглядит нормальным отчётом: NPS −100 и «100% испытали скепсис» — честные
+    # числа по трём, и по ним принимают решение о материале.
+    #
+    # До починки формы анкеты правило было мёртвым (список вопросов получался
+    # пустым), поэтому расхождение и дожило до продакшена.
+    given = answer.get("survey_answers")
+    given_keys = set(map(str, given)) if isinstance(given, dict) else set()
+    scored = {k for k, v in scores.items() if v is not None}
+
+    missing: list[str] = []
+    for question in survey_questions(survey):
+        qid = str(question.get("id") or "")
+        base_key = question.get("baseKey")
+        if base_key:
+            # Базовый критерий засчитан баллом. `id` тоже принимается: анкеты
+            # старых прогонов могли класть его в survey_answers.
+            if str(base_key) not in scored and qid not in given_keys:
+                missing.append(f"{qid or base_key} ({base_key})")
+        elif qid and qid not in given_keys:
+            missing.append(qid)
+
+    if missing:
+        reasons.append(f"анкета покрыта не полностью, нет ответов: {', '.join(sorted(missing))}")
 
     return reasons
 

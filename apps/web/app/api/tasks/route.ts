@@ -1,6 +1,6 @@
 import { DEFAULT_SETTINGS } from "@/lib/settings";
 import { withTenant } from "@/lib/server/db";
-import { requireSession, toResponse } from "@/lib/server/guard";
+import { HttpError, requireSession, toResponse } from "@/lib/server/guard";
 import { enqueuePipeline } from "@/lib/server/queue";
 import { launchTask, listTasks, type LaunchParams } from "@/lib/server/tasks";
 
@@ -117,10 +117,8 @@ export async function POST(request: Request) {
         seed: body.seed as number,
       };
 
-      const launched = await launchTask(client, params, userId ?? null);
-
-      // Персоны набора читаются здесь же, внутри тенант-контекста: воркер
-      // получает готовый список идентификаторов и не ходит за ним отдельно.
+      // Персоны набора читаются ДО создания задачи, внутри тенант-контекста:
+      // воркер получает готовый список идентификаторов и не ходит за ним сам.
       const personaIds = params.personaSetId
         ? (
             await client.query<{ id: string }>(
@@ -129,6 +127,30 @@ export async function POST(request: Request) {
             )
           ).rows.map((r) => r.id)
         : [];
+
+      // Пустой набор — отказ здесь, а не через шесть минут.
+      //
+      // Прогон с нулём персон обречён: конвейер скачает ролик, нормализует
+      // его, расшифрует речь, разберёт кадры моделью со зрением — и упадёт на
+      // узле опроса с «персоны не загружены». Всё оплаченное к этому моменту
+      // потрачено, а причина выглядит сбоем воркера, хотя известна была до
+      // старта. Именно так и вышло на первом сквозном прогоне: набор создали
+      // маршрутом /api/persona-sets, который заводит запись, но не генерирует
+      // персон, и отказ приехал на 363-й секунде.
+      //
+      // Проверка стоит один COUNT и превращает поздний дорогой отказ в
+      // немедленный 400 с названной причиной.
+      if (params.personaSetId && personaIds.length === 0) {
+        throw new HttpError(
+          400,
+          "в выбранном наборе нет ни одной персоны: прогон дошёл бы до опроса " +
+            "и упал там, уже потратив расшифровку и разбор кадров. Соберите " +
+            "аудиторию заново — набор создаётся маршрутом POST /api/audience, " +
+            "а POST /api/persona-sets только заводит запись о нём",
+        );
+      }
+
+      const launched = await launchTask(client, params, userId ?? null);
 
       const survey = params.surveyId
         ? (

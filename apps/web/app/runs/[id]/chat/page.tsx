@@ -38,7 +38,7 @@ export default async function ChatPage({ params }: { params: Promise<{ id: strin
         actions={
           <Link
             href={`/runs/${id}`}
-            className="inline-flex items-center gap-2 rounded-md border border-border px-4 py-2 text-sm transition-colors hover:bg-secondary"
+            className="inline-flex items-center gap-2 rounded-md border border-hairline px-4 py-2 text-sm transition-colors hover:bg-secondary"
           >
             <ArrowLeft className="h-4 w-4" />
             К отчёту
@@ -54,24 +54,24 @@ export default async function ChatPage({ params }: { params: Promise<{ id: strin
           action={{ href: `/runs/${id}`, label: "Вернуться к отчёту" }}
         />
 
-        <section className="rounded-lg border border-border bg-[hsl(222_47%_7%)] p-6">
+        <section className="rounded-lg border border-hairline bg-card p-6">
           <h2 className="text-sm font-semibold">Что здесь появится</h2>
           <div className="mt-4 grid gap-4 sm:grid-cols-2">
             <div className="flex gap-3">
-              <BarChart3 className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
+              <BarChart3 className="mt-0.5 h-4 w-4 shrink-0 text-slate" />
               <div>
                 <p className="text-sm font-medium">Аналитик</p>
-                <p className="mt-1 text-sm leading-relaxed text-muted-foreground">
+                <p className="mt-1 text-sm leading-relaxed text-slate">
                   Видит весь срез и отвечает по агрегату. Каждое утверждение — со
                   ссылкой на таймкод или цитату персоны; без опоры ответ не выдаётся.
                 </p>
               </div>
             </div>
             <div className="flex gap-3">
-              <User className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
+              <User className="mt-0.5 h-4 w-4 shrink-0 text-slate" />
               <div>
                 <p className="text-sm font-medium">Допрос персоны</p>
-                <p className="mt-1 text-sm leading-relaxed text-muted-foreground">
+                <p className="mt-1 text-sm leading-relaxed text-slate">
                   Видит только свой профиль, видео и свои прежние ответы — та же
                   изоляция, что в основном конвейере. Чужих ответов персона не знает.
                 </p>

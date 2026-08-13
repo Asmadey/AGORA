@@ -4,7 +4,8 @@ import { EmptyState } from "@/components/agora/States";
 import { withTenant } from "@/lib/server/db";
 import { requireSession } from "@/lib/server/guard";
 import { listPortraits } from "@/lib/server/portraits";
-import { ScrollText } from "lucide-react";
+import Link from "next/link";
+import { Database, ScrollText } from "lucide-react";
 
 /**
  * Портреты аудиторий (задача #24).
@@ -57,6 +58,18 @@ export default async function PortraitsPage() {
       <PageHeader
         title="Портреты аудиторий"
         subtitle="Описания сегментов, которые подмешиваются в генерацию персон. Портрет уточняет персон, но не переопределяет заземление на корпус."
+        actions={
+          /* Портрет — это сжатие корпуса, а корпус до сих пор был невидим:
+             прочитать «в основном женщины 35–44» и проверить, откуда это,
+             было негде. Ссылка ведёт к исходнику. */
+          <Link
+            href="/portraits/corpus"
+            className="inline-flex items-center gap-2 rounded-full border border-hairline px-4 py-2 text-sm transition-colors hover:bg-surface"
+          >
+            <Database className="h-4 w-4" />
+            Корпус исследований
+          </Link>
+        }
       />
 
       <div className="p-8">
@@ -72,29 +85,33 @@ export default async function PortraitsPage() {
             {portraits.map((p) => {
               const preview = excerpt(p.body_md);
               return (
-                <article
+                /* Карточка стала ссылкой: править и удалять портрет было
+                   нечем, хотя PUT /api/portraits/{id} и таблица версий
+                   существуют с задачи #24. */
+                <Link
                   key={p.id}
-                  className="rounded-lg border border-border bg-[hsl(222_47%_7%)] p-5 transition-colors hover:border-muted-foreground/40"
+                  href={`/portraits/${p.id}`}
+                  className="block rounded-xl border border-hairline bg-card p-5 transition-colors hover:border-hairline-strong"
                 >
                   <div className="flex items-start justify-between gap-3">
                     <h2 className="font-medium">{p.name}</h2>
                     <Chip tone="outline">{SOURCE_LABEL[p.source] ?? p.source}</Chip>
                   </div>
                   {preview ? (
-                    <p className="mt-3 text-sm leading-relaxed text-muted-foreground">
+                    <p className="mt-3 text-sm leading-relaxed text-slate">
                       {preview}
                     </p>
                   ) : (
                     // Пустой портрет показывается как пустой, а не пропускается:
                     // исчезнувшая из списка запись читается как потерянная.
-                    <p className="mt-3 text-sm italic text-muted-foreground">
+                    <p className="mt-3 text-sm italic text-slate">
                       Текст портрета пуст — на генерацию персон он не повлияет.
                     </p>
                   )}
-                  <p className="mt-4 text-xs text-muted-foreground">
+                  <p className="mt-4 text-xs text-slate">
                     Обновлён {updatedAt(p.updated_at)}
                   </p>
-                </article>
+                </Link>
               );
             })}
           </div>

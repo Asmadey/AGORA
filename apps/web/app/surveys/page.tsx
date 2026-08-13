@@ -61,7 +61,7 @@ export default async function SurveysPage() {
                 <Link
                   key={s.id}
                   href={`/surveys/${s.id}`}
-                  className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-lg border border-border bg-[hsl(222_47%_7%)] p-5 transition-colors hover:border-muted-foreground/40"
+                  className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-lg border border-hairline bg-card p-5 transition-colors hover:border-muted-foreground/40"
                 >
                   <span className="min-w-0 flex-1 truncate font-medium">{s.name}</span>
 
@@ -74,7 +74,7 @@ export default async function SurveysPage() {
                     <Chip tone="outline">без доли просмотра</Chip>
                   )}
 
-                  <span className="text-xs text-muted-foreground">
+                  <span className="text-xs text-slate">
                     {new Date(s.createdAt).toLocaleDateString("ru-RU")}
                   </span>
                 </Link>

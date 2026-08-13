@@ -1,45 +1,227 @@
 @import "tailwindcss";
 
-@theme {
-  --color-background: hsl(222.2 84% 4.9%);
-  --color-foreground: hsl(210 40% 98%);
-  
-  --color-card: hsl(222.2 84% 4.9%);
-  --color-card-foreground: hsl(210 40% 98%);
-  
-  --color-popover: hsl(222.2 84% 4.9%);
-  --color-popover-foreground: hsl(210 40% 98%);
-  
-  --color-primary: hsl(210 40% 98%);
-  --color-primary-foreground: hsl(222.2 47.4% 11.2%);
-  
-  --color-secondary: hsl(217.2 32.6% 17.5%);
-  --color-secondary-foreground: hsl(210 40% 98%);
-  
-  --color-muted: hsl(217.2 32.6% 17.5%);
-  --color-muted-foreground: hsl(215 20.2% 65.1%);
-  
-  --color-accent: hsl(217.2 32.6% 17.5%);
-  --color-accent-foreground: hsl(210 40% 98%);
-  
-  --color-destructive: hsl(0 62.8% 30.6%);
-  --color-destructive-foreground: hsl(210 40% 98%);
-  
-  --color-border: hsl(217.2 32.6% 17.5%);
-  --color-input: hsl(217.2 32.6% 17.5%);
-  --color-ring: hsl(212.7 26.8% 83.9%);
-  
-  --radius-lg: 0.5rem;
-  --radius-md: calc(0.5rem - 2px);
-  --radius-sm: calc(0.5rem - 4px);
+/**
+ * Токены темы. Источник значений — docs/DESIGN.md.
+ *
+ * ─── Почему два слоя, а не один ────────────────────────────────────────────
+ * Значения живут в `:root` и `.dark` обычными CSS-переменными, а `@theme inline`
+ * только присваивает им имена утилит Tailwind. Положить значения прямо в
+ * `@theme`, как было раньше, значит зафиксировать их на этапе сборки: класс
+ * `bg-background` превратится в конкретный цвет, и переключить тему в рантайме
+ * станет нечем. Именно поэтому прежняя редакция интерфейса не имела светлой
+ * темы — не потому, что её не нарисовали, а потому, что переключать было нечего.
+ *
+ * ─── Про шрифт ─────────────────────────────────────────────────────────────
+ * В DESIGN.md вся типографика на Roobert PRO. Шрифт коммерческий, файлов у нас
+ * нет, а тянуть его с CDN нельзя: сборка в CI идёт без сети, и отсутствие
+ * шрифта проявилось бы не ошибкой, а тихой подменой на засечный дефолт.
+ * Поэтому стек системный и геометрически близкий; когда лицензия появится,
+ * достаточно поменять одну строку --font-sans.
+ */
+
+:root {
+  /* Холст и текст */
+  --canvas: #ffffff;
+  --surface: #f7f8fa;
+  --surface-soft: #fafbfc;
+  --ink: #1c1c1e;
+  --ink-deep: #050038;
+  --slate: #555a6a;
+  --steel: #6b6f7e;
+  --stone: #8e91a0;
+  --muted-ink: #a5a8b5;
+
+  /* Границы */
+  --hairline: #e0e2e8;
+  --hairline-soft: #eef0f3;
+  --hairline-strong: #c7cad5;
+
+  /* Бренд */
+  --brand-yellow: #ffd02f;
+  --brand-yellow-deep: #fcb900;
+  --yellow-light: #fff4c4;
+  --surface-yellow: #fff8e0;
+  --brand-blue: #4262ff;
+  --blue-450: #5b76fe;
+  --blue-pressed: #2a41b6;
+  --brand-teal: #0fbcb0;
+  --teal-light: #c3faf5;
+  --brand-coral: #ff9999;
+  --coral-light: #ffc6c6;
+  --brand-rose: #ffd8f4;
+  --rose-light: #fde0f0;
+  --success: #00b473;
+  --danger: #c0362c;
+  --danger-soft: #fbd4d4;
+  --warning: #a06a00;
+  --warning-soft: #fff4c4;
+
+  /* Роли интерфейса */
+  --background: var(--canvas);
+  --foreground: var(--ink);
+  --card: var(--canvas);
+  --card-foreground: var(--ink);
+  --popover: var(--canvas);
+  --popover-foreground: var(--ink);
+  --primary: var(--ink);
+  --primary-foreground: #ffffff;
+  --secondary: var(--surface);
+  --secondary-foreground: var(--ink);
+  --muted: var(--surface);
+  --muted-foreground: var(--slate);
+  --accent: var(--surface);
+  --accent-foreground: var(--ink);
+  --destructive: var(--danger);
+  --destructive-foreground: #ffffff;
+  --border: var(--hairline);
+  --input: var(--hairline-strong);
+  --ring: var(--brand-blue);
+}
+
+.dark {
+  --canvas: #131316;
+  --surface: #1c1c20;
+  --surface-soft: #202026;
+  --ink: #f5f5f7;
+  --ink-deep: #ffffff;
+  --slate: #a5a8b5;
+  --steel: #8e91a0;
+  --stone: #6b6f7e;
+  --muted-ink: #6b6f7e;
+
+  --hairline: #2c2c34;
+  --hairline-soft: #26262c;
+  --hairline-strong: #3a3a44;
+
+  /* Жёлтый на тёмном холсте остаётся тем же: он опознавательный знак, а не
+     оттенок фона. Приглушать его пришлось бы у всех акцентов сразу, и бренд
+     перестал бы читаться. Пастельные заливки, наоборот, на тёмном становятся
+     грязными — им заведены отдельные значения. */
+  --yellow-light: #3a3212;
+  --surface-yellow: #2a2410;
+  --teal-light: #0d3330;
+  --coral-light: #3a1f1f;
+  --rose-light: #35202f;
+  --danger-soft: #3a1d1b;
+  --warning-soft: #33290d;
+  --danger: #ff6b5e;
+  --warning: #ffc94a;
+  --success: #22d39a;
+
+  --background: var(--canvas);
+  --foreground: var(--ink);
+  --card: var(--surface);
+  --card-foreground: var(--ink);
+  --popover: var(--surface);
+  --popover-foreground: var(--ink);
+  --primary: #ffffff;
+  --primary-foreground: #131316;
+  --secondary: var(--surface-soft);
+  --secondary-foreground: var(--ink);
+  --muted: var(--surface-soft);
+  --muted-foreground: var(--slate);
+  --accent: var(--surface-soft);
+  --accent-foreground: var(--ink);
+  --destructive: var(--danger);
+  --destructive-foreground: #131316;
+  --border: var(--hairline);
+  --input: var(--hairline-strong);
+  --ring: var(--blue-450);
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+
+  --color-canvas: var(--canvas);
+  --color-surface: var(--surface);
+  --color-surface-soft: var(--surface-soft);
+  --color-ink: var(--ink);
+  --color-ink-deep: var(--ink-deep);
+  --color-slate: var(--slate);
+  --color-steel: var(--steel);
+  --color-stone: var(--stone);
+  --color-hairline: var(--hairline);
+  --color-hairline-soft: var(--hairline-soft);
+  --color-hairline-strong: var(--hairline-strong);
+  --color-brand-yellow: var(--brand-yellow);
+  --color-brand-yellow-deep: var(--brand-yellow-deep);
+  --color-yellow-light: var(--yellow-light);
+  --color-surface-yellow: var(--surface-yellow);
+  --color-brand-blue: var(--brand-blue);
+  --color-blue-450: var(--blue-450);
+  --color-brand-teal: var(--brand-teal);
+  --color-teal-light: var(--teal-light);
+  --color-brand-coral: var(--brand-coral);
+  --color-coral-light: var(--coral-light);
+  --color-rose-light: var(--rose-light);
+  --color-success: var(--success);
+  --color-danger: var(--danger);
+  --color-danger-soft: var(--danger-soft);
+  --color-warning: var(--warning);
+  --color-warning-soft: var(--warning-soft);
+
+  /* Радиусы из DESIGN.md. `full` — кнопки-пилюли, они здесь основная форма. */
+  --radius-xs: 4px;
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+  --radius-2xl: 20px;
+  --radius-3xl: 28px;
+  --radius-feature: 32px;
+
+  --font-sans: "Roobert PRO", -apple-system, BlinkMacSystemFont, "Segoe UI",
+    "Helvetica Neue", Arial, system-ui, sans-serif;
 }
 
 @layer base {
   * {
-    @apply border-border;
+    border-color: var(--border);
   }
+
+  html {
+    /* Тема переключается сменой класса на <html>. Переход по цвету намеренно
+       не анимируется на всём подряд: анимация фона на длинных списках даёт
+       заметный кадр перерисовки. Плавность оставлена элементам, которые
+       реагируют на наведение, — там она несёт смысл. */
+    color-scheme: light;
+  }
+
+  html.dark {
+    color-scheme: dark;
+  }
+
   body {
-    @apply bg-background text-foreground;
+    background-color: var(--background);
+    color: var(--foreground);
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
     font-feature-settings: "rlig" 1, "calt" 1;
+  }
+
+  /* Фокус виден всегда и одинаково: обводка цветом кольца, а не убранный
+     outline. Снятый фокус ломает навигацию с клавиатуры, и заметно это только
+     тому, кто ей пользуется. */
+  :focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
   }
 }

@@ -78,7 +78,7 @@ export default async function ProjectsPage() {
                 <Link
                   key={p.id}
                   href={`/projects/${p.id}`}
-                  className="flex flex-col rounded-lg border border-border bg-[hsl(222_47%_7%)] p-5 transition-colors hover:border-muted-foreground/40"
+                  className="flex flex-col rounded-lg border border-hairline bg-card p-5 transition-colors hover:border-muted-foreground/40"
                 >
                   <h2 className="truncate font-medium">{p.name}</h2>
 
@@ -92,7 +92,7 @@ export default async function ProjectsPage() {
                     {ready > 0 && <Chip tone="outline">{ready} с отчётом</Chip>}
                   </div>
 
-                  <p className="mt-4 text-xs text-muted-foreground">
+                  <p className="mt-4 text-xs text-slate">
                     Создан {new Date(p.createdAt).toLocaleDateString("ru-RU")}
                   </p>
                 </Link>

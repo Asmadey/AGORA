@@ -42,7 +42,7 @@ export default async function SurveyPage({
         actions={
           <Link
             href="/surveys"
-            className="rounded-md border border-border px-4 py-2 text-sm transition-colors hover:bg-secondary"
+            className="rounded-md border border-hairline px-4 py-2 text-sm transition-colors hover:bg-secondary"
           >
             К списку
           </Link>
@@ -56,9 +56,9 @@ export default async function SurveyPage({
           initialQuestions={survey.questions}
         />
 
-        <div className="max-w-xl border-t border-border pt-8">
-          <h2 className="mb-1 text-sm font-semibold text-rose-300">Удалить анкету</h2>
-          <p className="mb-3 text-xs leading-relaxed text-muted-foreground">
+        <div className="max-w-xl border-t border-hairline pt-8">
+          <h2 className="mb-1 text-sm font-semibold text-danger">Удалить анкету</h2>
+          <p className="mb-3 text-xs leading-relaxed text-slate">
             Прогоны, сделанные по этой анкете, останутся вместе с отчётами — ссылка на
             анкету у них просто опустеет.
           </p>
@@ -66,7 +66,7 @@ export default async function SurveyPage({
             <input type="hidden" name="id" value={survey.id} />
             <button
               type="submit"
-              className="rounded-md border border-rose-500/30 px-4 py-2 text-sm text-rose-300 transition-colors hover:bg-rose-500/10"
+              className="rounded-md border border-danger/40 px-4 py-2 text-sm text-danger transition-colors hover:bg-danger-soft"
             >
               Удалить
             </button>

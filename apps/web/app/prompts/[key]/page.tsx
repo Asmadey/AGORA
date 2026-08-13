@@ -56,7 +56,7 @@ export default async function PromptDetailPage({ params }: { params: Promise<{ k
         actions={
           <Link
             href="/prompts"
-            className="inline-flex items-center gap-1.5 rounded-md border border-border px-4 py-2 text-sm transition-colors hover:bg-secondary"
+            className="inline-flex items-center gap-1.5 rounded-md border border-hairline px-4 py-2 text-sm transition-colors hover:bg-secondary"
           >
             <ChevronLeft className="h-4 w-4" />
             К списку
@@ -64,7 +64,47 @@ export default async function PromptDetailPage({ params }: { params: Promise<{ k
         }
       />
 
-      <div className="max-w-4xl p-8">
+      <div className="max-w-4xl space-y-6 p-8">
+        {/* Что промпт делает — до редактора, а не после.
+            Промпт правят, чтобы изменить поведение агента, и правят вслепую:
+            по строке «Генерация персоны из сегмента корпуса» не понять ни что
+            придёт на вход, ни что обязано вернуться. Ошибка в формате ответа
+            не ломает сборку — она проявляется отказом разбора посреди
+            оплаченного прогона. */}
+        <section className="rounded-xl border border-hairline bg-card p-6">
+          <div className="space-y-3">
+            {meta.about.map((p) => (
+              <p key={p} className="text-sm leading-relaxed">
+                {p}
+              </p>
+            ))}
+          </div>
+
+          <dl className="mt-5 space-y-3 border-t border-hairline pt-5 text-sm">
+            <div>
+              <dt className="text-xs uppercase tracking-wide text-stone">Подставляется</dt>
+              <dd className="mt-1 break-words font-mono text-xs leading-relaxed">{meta.inputs}</dd>
+            </div>
+            <div>
+              <dt className="text-xs uppercase tracking-wide text-stone">Модель обязана вернуть</dt>
+              <dd className="mt-1 leading-relaxed">{meta.output}</dd>
+            </div>
+            <div>
+              <dt className="text-xs uppercase tracking-wide text-stone">Кто вызывает</dt>
+              <dd className="mt-1 font-mono text-xs">
+                {meta.calledBy || (
+                  // Пустая строка — не недосмотр реестра, а факт: промпт готов,
+                  // но ни один модуль воркера его пока не зовёт. Молчание здесь
+                  // читалось бы как «вызывается откуда-то».
+                  <span className="font-sans text-warning">
+                    пока никто — промпт готов, но не подключён
+                  </span>
+                )}
+              </dd>
+            </div>
+          </dl>
+        </section>
+
         {hasDb && active ? (
           <PromptEditor
             promptKey={meta.key}
@@ -75,12 +115,12 @@ export default async function PromptDetailPage({ params }: { params: Promise<{ k
           />
         ) : (
           <div className="space-y-4">
-            <p className="rounded-md border border-amber-500/25 bg-amber-500/5 p-4 text-sm text-amber-200/80">
+            <p className="rounded-md border border-warning/30 bg-warning-soft/60 p-4 text-sm text-warning">
               {hasDb
                 ? "Промпт не найден в базе. Возможно, миграция засева (07_prompts_seed.sql) не применена."
                 : "Требуется вход. Войдите, чтобы увидеть редактор промпта."}
             </p>
-            <p className="text-xs text-muted-foreground">
+            <p className="text-xs text-slate">
               Стадия: {meta.stage}. Описание: {meta.desc}.
             </p>
           </div>

@@ -28,7 +28,7 @@ export default async function NewSurveyPage() {
         actions={
           <Link
             href="/surveys"
-            className="rounded-md border border-border px-4 py-2 text-sm transition-colors hover:bg-secondary"
+            className="rounded-md border border-hairline px-4 py-2 text-sm transition-colors hover:bg-secondary"
           >
             К списку
           </Link>

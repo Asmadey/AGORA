@@ -3,6 +3,7 @@ import { ArrowRight, Loader2, CheckCircle2, Clock, AlertTriangle, Film } from "l
 import { PageHeader } from "@/components/AppShell";
 import { Chip } from "@/components/agora/Primitives";
 import { EmptyState } from "@/components/agora/States";
+import { DeleteRunButton } from "@/components/agora/DeleteRunButton";
 import { withTenant } from "@/lib/server/db";
 import { requireSession } from "@/lib/server/guard";
 import { listTasks } from "@/lib/server/tasks";
@@ -25,10 +26,10 @@ export const dynamic = "force-dynamic";
 type Status = "QUEUED" | "RUNNING" | "REPORT_READY" | "FAILED";
 
 const BADGE: Record<Status, { label: string; icon: React.ElementType; cls: string }> = {
-  QUEUED: { label: "В очереди", icon: Clock, cls: "text-muted-foreground" },
-  RUNNING: { label: "Идёт прогон", icon: Loader2, cls: "text-sky-400" },
-  REPORT_READY: { label: "Отчёт готов", icon: CheckCircle2, cls: "text-emerald-400" },
-  FAILED: { label: "Ошибка", icon: AlertTriangle, cls: "text-rose-400" },
+  QUEUED: { label: "В очереди", icon: Clock, cls: "text-slate" },
+  RUNNING: { label: "Идёт прогон", icon: Loader2, cls: "text-brand-blue" },
+  REPORT_READY: { label: "Отчёт готов", icon: CheckCircle2, cls: "text-success" },
+  FAILED: { label: "Ошибка", icon: AlertTriangle, cls: "text-danger" },
 };
 
 function StatusBadge({ status }: { status: string }) {
@@ -36,7 +37,7 @@ function StatusBadge({ status }: { status: string }) {
   // завести новый, и молча пропавшая подпись выглядела бы как «без статуса».
   const known = BADGE[status as Status];
   if (!known) {
-    return <span className="text-xs text-muted-foreground">{status}</span>;
+    return <span className="text-xs text-slate">{status}</span>;
   }
   const { label, icon: Icon, cls } = known;
   return (
@@ -71,7 +72,7 @@ export default async function RunsPage() {
         actions={
           <Link
             href="/studies/new"
-            className="rounded-md bg-foreground px-4 py-2 text-sm font-medium text-background transition-opacity hover:opacity-90"
+            className="rounded-full bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-ink/90"
           >
             Новое исследование
           </Link>
@@ -95,7 +96,7 @@ export default async function RunsPage() {
                 <Link
                   key={task.id}
                   href={href}
-                  className="group flex items-center gap-6 rounded-lg border border-border bg-[hsl(222_47%_7%)] p-5 transition-colors hover:border-muted-foreground/40"
+                  className="group relative flex items-center gap-6 rounded-xl border border-hairline bg-card p-5 pr-14 transition-colors hover:border-hairline-strong"
                 >
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
@@ -104,7 +105,7 @@ export default async function RunsPage() {
                       </h2>
                       <StatusBadge status={task.status} />
                     </div>
-                    <p className="mt-1 truncate text-sm text-muted-foreground">
+                    <p className="mt-1 truncate text-sm text-slate">
                       {ago(task.createdAt)}
                     </p>
                     <div className="mt-3 flex flex-wrap items-center gap-2">
@@ -117,7 +118,11 @@ export default async function RunsPage() {
                     </div>
                   </div>
 
-                  <ArrowRight className="h-4 w-4 shrink-0 text-muted-foreground transition-transform group-hover:translate-x-0.5" />
+                  <ArrowRight className="h-4 w-4 shrink-0 text-slate transition-transform group-hover:translate-x-0.5" />
+
+                  {/* Крестик справа вверху, поверх карточки: в потоке он бы
+                      сдвигал содержимое, когда превращается в подтверждение. */}
+                  <DeleteRunButton runId={task.id} className="absolute right-3 top-3" />
                 </Link>
               );
             })}

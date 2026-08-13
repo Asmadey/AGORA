@@ -40,6 +40,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
 
+from ..survey import question_label, survey_questions
 from .diversity import diversity_report
 
 #: Размер пачки (PRD §8). Проверяется тестом задачи: число здесь — контракт.
@@ -102,6 +103,8 @@ class QwenRespondentClient:
                 {"role": "user", "content": user},
             ],
             temperature=self.temperature,
+            # Размышление выключено: см. ModelConfig.thinking — замер и причина.
+            extra_body=self.config.extra_body("respondent"),
         )
         return (response.choices[0].message.content or "").strip()
 
@@ -169,13 +172,19 @@ def build_slice(
     return system, user
 
 
-def _render_questions(survey: dict[str, Any]) -> str:
-    questions = survey.get("questions") or []
+def _render_questions(survey: Any) -> str:
+    """
+    Анкета в текст для промпта респондента.
+
+    Форму и имя поля разбирает `agent_core.survey` — единственное место, где
+    это знание живёт. Раньше разбор был здесь по месту, и после его починки
+    ровно тот же дефект нашёлся в `qa/checks.py`: заплатка не уменьшает число
+    мест, она только отодвигает встречу со следующим.
+    """
     lines = []
-    for q in questions:
-        if not isinstance(q, dict):
-            continue
-        lines.append(f"- [{q.get('id', '?')}] ({q.get('type', 'открытый')}) {q.get('text', '')}")
+    for q in survey_questions(survey):
+        label = question_label(q)
+        lines.append(f"- [{q.get('id', '?')}] ({q.get('type', 'открытый')}) {label}".rstrip())
     return "\n".join(lines) if lines else "(анкета пуста)"
 
 

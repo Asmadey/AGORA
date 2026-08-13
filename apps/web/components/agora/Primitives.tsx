@@ -27,11 +27,11 @@ export function ScoreBar({
   return (
     <div>
       <div className="mb-1.5 flex items-baseline justify-between gap-3">
-        <span className="text-sm text-muted-foreground">{label}</span>
+        <span className="text-sm text-slate">{label}</span>
         <span className="tabular-nums text-sm font-medium">
           {value.toFixed(1)}
           {confidence && (
-            <span className="ml-1.5 text-xs font-normal text-muted-foreground">
+            <span className="ml-1.5 text-xs font-normal text-slate">
               ±{confidence.stdev.toFixed(2)}
             </span>
           )}
@@ -69,7 +69,7 @@ export function BigFiveChart({ value }: { value: BigFive }) {
     <div className="space-y-3">
       {(Object.keys(BIG_FIVE_LABELS) as (keyof BigFive)[]).map((key) => (
         <div key={key} className="flex items-center gap-3">
-          <span className="w-44 shrink-0 text-sm text-muted-foreground">
+          <span className="w-44 shrink-0 text-sm text-slate">
             {BIG_FIVE_LABELS[key]}
           </span>
           <div className="flex gap-1.5">
@@ -103,16 +103,16 @@ export function StatCard({
 }) {
   const toneClass = {
     default: "text-foreground",
-    good: "text-emerald-400",
+    good: "text-success",
     warn: "text-amber-400",
-    bad: "text-rose-400",
+    bad: "text-danger",
   }[tone];
 
   return (
-    <div className="rounded-lg border border-border bg-[hsl(222_47%_7%)] p-4">
-      <p className="text-xs uppercase tracking-wide text-muted-foreground">{label}</p>
+    <div className="rounded-lg border border-hairline bg-card p-4">
+      <p className="text-xs uppercase tracking-wide text-slate">{label}</p>
       <p className={cn("mt-1.5 text-2xl font-semibold tabular-nums", toneClass)}>{value}</p>
-      {hint && <p className="mt-1 text-xs text-muted-foreground">{hint}</p>}
+      {hint && <p className="mt-1 text-xs text-slate">{hint}</p>}
     </div>
   );
 }
@@ -129,7 +129,7 @@ export function Chip({
       className={cn(
         "inline-flex items-center rounded-full px-2.5 py-0.5 text-xs",
         tone === "muted" && "bg-secondary text-secondary-foreground",
-        tone === "outline" && "border border-border text-muted-foreground",
+        tone === "outline" && "border border-hairline text-slate",
         tone === "solid" && "bg-foreground text-background",
       )}
     >
@@ -142,9 +142,9 @@ export function Chip({
 export function Field({ label, value }: { label: string; value?: string | string[] }) {
   const text = Array.isArray(value) ? value.join(", ") : value;
   return (
-    <div className="border-b border-border/60 py-2 last:border-0">
-      <dt className="text-xs text-muted-foreground">{label}</dt>
-      <dd className={cn("mt-0.5 text-sm", !text && "italic text-muted-foreground/60")}>
+    <div className="border-b border-hairline/60 py-2 last:border-0">
+      <dt className="text-xs text-slate">{label}</dt>
+      <dd className={cn("mt-0.5 text-sm", !text && "italic text-slate/60")}>
         {text || "не задано"}
       </dd>
     </div>
@@ -193,11 +193,11 @@ export function TimecodeRef({
   const seconds = timecodeSeconds(timecode);
   const body = (
     <>
-      <span className="font-mono tabular-nums text-sky-300">{timecode}</span>
-      <span className="text-muted-foreground">{note}</span>
+      <span className="font-mono tabular-nums text-brand-blue">{timecode}</span>
+      <span className="text-slate">{note}</span>
     </>
   );
-  const shell = "inline-flex items-center gap-1.5 rounded border border-border px-2 py-0.5 text-xs";
+  const shell = "inline-flex items-center gap-1.5 rounded border border-hairline px-2 py-0.5 text-xs";
 
   if (seconds === null) {
     return <span className={shell}>{body}</span>;
@@ -216,7 +216,7 @@ export function TimecodeRef({
 /** Материал — гипотеза, а не измерение. Это должно быть видно в интерфейсе. */
 export function HypothesisNotice({ replication }: { replication: number }) {
   return (
-    <p className="rounded-md border border-amber-500/25 bg-amber-500/5 px-4 py-3 text-xs leading-relaxed text-amber-200/80">
+    <p className="rounded-md border border-warning/30 bg-warning-soft/60 px-4 py-3 text-xs leading-relaxed text-warning">
       Это прогноз на синтетической аудитории, а не результат опроса живых людей.
       Оценки заземлены на корпус из 165 реальных респондентов и откалиброваны по нему,
       но требуют экспертной проверки перед решением.

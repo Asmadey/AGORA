@@ -61,7 +61,7 @@ export function SkeletonGrid({ cards = 8 }: { cards?: number }) {
 /** Шапка страницы на время загрузки: заголовок и подпись уже занимают место. */
 export function SkeletonHeader() {
   return (
-    <div className="border-b border-border px-8 py-6">
+    <div className="border-b border-hairline px-8 py-6">
       <Skeleton className="h-7 w-56" />
       <Skeleton className="mt-3 h-4 w-full max-w-xl" />
     </div>
@@ -87,12 +87,12 @@ export function EmptyState({
   icon?: ReactNode;
 }) {
   return (
-    <div className="rounded-lg border border-dashed border-border px-8 py-14 text-center">
-      <div className="mx-auto mb-4 grid h-11 w-11 place-items-center rounded-full bg-secondary text-muted-foreground">
+    <div className="rounded-lg border border-dashed border-hairline px-8 py-14 text-center">
+      <div className="mx-auto mb-4 grid h-11 w-11 place-items-center rounded-full bg-secondary text-slate">
         {icon ?? <Inbox className="h-5 w-5" />}
       </div>
       <h2 className="text-sm font-medium">{title}</h2>
-      <p className="mx-auto mt-2 max-w-md text-sm leading-relaxed text-muted-foreground">
+      <p className="mx-auto mt-2 max-w-md text-sm leading-relaxed text-slate">
         {description}
       </p>
       {action && (
@@ -125,13 +125,13 @@ export function ErrorState({
   retry?: ReactNode;
 }) {
   return (
-    <div className="rounded-lg border border-amber-500/20 bg-amber-500/5 px-8 py-12 text-center">
-      <div className="mx-auto mb-4 grid h-11 w-11 place-items-center rounded-full bg-amber-500/10 text-amber-300">
+    <div className="rounded-lg border border-warning/30 bg-warning-soft/60 px-8 py-12 text-center">
+      <div className="mx-auto mb-4 grid h-11 w-11 place-items-center rounded-full bg-amber-500/10 text-warning">
         <AlertTriangle className="h-5 w-5" />
       </div>
       <h2 className="text-sm font-medium text-amber-200">{title}</h2>
       {reason && (
-        <p className="mx-auto mt-2 max-w-lg break-words font-mono text-xs leading-relaxed text-muted-foreground">
+        <p className="mx-auto mt-2 max-w-lg break-words font-mono text-xs leading-relaxed text-slate">
           {reason}
         </p>
       )}

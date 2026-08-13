@@ -42,10 +42,10 @@ export const dynamic = "force-dynamic";
 type Status = ProjectRun["status"];
 
 const BADGE: Record<Status, { label: string; icon: React.ElementType; cls: string }> = {
-  QUEUED: { label: "В очереди", icon: Clock, cls: "text-muted-foreground" },
-  RUNNING: { label: "Идёт прогон", icon: Loader2, cls: "text-sky-400" },
-  REPORT_READY: { label: "Отчёт готов", icon: CheckCircle2, cls: "text-emerald-400" },
-  FAILED: { label: "Ошибка", icon: AlertTriangle, cls: "text-rose-400" },
+  QUEUED: { label: "В очереди", icon: Clock, cls: "text-slate" },
+  RUNNING: { label: "Идёт прогон", icon: Loader2, cls: "text-brand-blue" },
+  REPORT_READY: { label: "Отчёт готов", icon: CheckCircle2, cls: "text-success" },
+  FAILED: { label: "Ошибка", icon: AlertTriangle, cls: "text-danger" },
 };
 
 export default async function ProjectPage({
@@ -99,10 +99,10 @@ export default async function ProjectPage({
                   <Link
                     key={run.id}
                     href={href}
-                    className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-lg border border-border bg-[hsl(222_47%_7%)] p-4 transition-colors hover:border-muted-foreground/40"
+                    className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-lg border border-hairline bg-card p-4 transition-colors hover:border-muted-foreground/40"
                   >
                     <span
-                      className={`flex shrink-0 items-center gap-1.5 text-sm ${badge?.cls ?? "text-muted-foreground"}`}
+                      className={`flex shrink-0 items-center gap-1.5 text-sm ${badge?.cls ?? "text-slate"}`}
                     >
                       <Icon
                         className={`h-4 w-4 ${run.status === "RUNNING" ? "animate-spin" : ""}`}
@@ -117,7 +117,7 @@ export default async function ProjectPage({
                       )}
                     </span>
 
-                    <span className="text-xs text-muted-foreground">
+                    <span className="text-xs text-slate">
                       {new Date(run.createdAt).toLocaleString("ru-RU")}
                     </span>
 
@@ -125,12 +125,12 @@ export default async function ProjectPage({
                         переходом: без неё «Ошибка» означает только то, что
                         что-то не вышло, и следующий шаг пользователю неизвестен. */}
                     {run.error && (
-                      <span className="w-full break-words font-mono text-xs text-rose-300/80">
+                      <span className="w-full break-words font-mono text-xs text-danger">
                         {run.error}
                       </span>
                     )}
 
-                    <ArrowRight className="ml-auto h-4 w-4 shrink-0 text-muted-foreground" />
+                    <ArrowRight className="ml-auto h-4 w-4 shrink-0 text-slate" />
                   </Link>
                 );
               })}
@@ -138,7 +138,7 @@ export default async function ProjectPage({
           )}
         </section>
 
-        <section className="max-w-xl space-y-6 border-t border-border pt-8">
+        <section className="max-w-xl space-y-6 border-t border-hairline pt-8">
           <div>
             <h2 className="mb-3 text-sm font-semibold">Переименовать</h2>
             <form action={renameProjectAction} className="flex flex-wrap gap-2">
@@ -149,11 +149,11 @@ export default async function ProjectPage({
                 required
                 maxLength={200}
                 aria-label="Название проекта"
-                className="min-w-0 flex-1 rounded-md border border-border bg-background px-3 py-2 text-sm outline-none transition-colors focus:border-muted-foreground/60"
+                className="min-w-0 flex-1 rounded-md border border-hairline bg-background px-3 py-2 text-sm outline-none transition-colors focus:border-muted-foreground/60"
               />
               <button
                 type="submit"
-                className="rounded-md border border-border px-4 py-2 text-sm transition-colors hover:bg-secondary"
+                className="rounded-md border border-hairline px-4 py-2 text-sm transition-colors hover:bg-secondary"
               >
                 Сохранить
               </button>
@@ -161,15 +161,15 @@ export default async function ProjectPage({
           </div>
 
           <div>
-            <h2 className="mb-1 text-sm font-semibold text-rose-300">Удалить проект</h2>
-            <p className="mb-3 text-xs leading-relaxed text-muted-foreground">
+            <h2 className="mb-1 text-sm font-semibold text-danger">Удалить проект</h2>
+            <p className="mb-3 text-xs leading-relaxed text-slate">
               Вместе с проектом уйдут все его прогоны — {project.runs.length}. Отменить нельзя.
             </p>
             <form action={deleteProjectAction}>
               <input type="hidden" name="id" value={project.id} />
               <button
                 type="submit"
-                className="rounded-md border border-rose-500/30 px-4 py-2 text-sm text-rose-300 transition-colors hover:bg-rose-500/10"
+                className="rounded-md border border-danger/40 px-4 py-2 text-sm text-danger transition-colors hover:bg-danger-soft"
               >
                 Удалить
               </button>

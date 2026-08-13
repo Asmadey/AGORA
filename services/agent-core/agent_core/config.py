@@ -57,10 +57,62 @@ class ModelConfig:
     vlm_model: str
     proxy_source: str
 
+    #: Роли, которым размышление ОСТАВЛЕНО. Остальные идут без него.
+    #:
+    #: Замер тремя прогонами golden-сета решил вопрос, который одиночный прогон
+    #: решить не мог. С размышлением, выключенным везде, QA браковал 7, 5 и 4
+    #: ответа из двенадцати: персоны выдумывали таймкоды и приписывали сцены не
+    #: тем моментам. С включённым везде — ноль отбраковок из двенадцати, но
+    #: прогон занимал 23 минуты против десяти по критерию #22.
+    #:
+    #: Отсюда разделение по РОЛЯМ, а не один рубильник:
+    #:
+    #:   respondent  — размышление НУЖНО. Персона строит ответ по материалу и
+    #:                 обязана не промахнуться мимо таймкода; без размышления
+    #:                 треть ответов не заземлена, и это воспроизводится.
+    #:   frames      — не нужно: разбор кадра описывает увиденное.
+    #:   qa          — не нужно: судья сверяет по правилам и без размышления
+    #:                 ловил галлюцинации ничуть не хуже, отказов ноль.
+    #:   analytics,
+    #:   persona,
+    #:   portrait    — не нужно: сжатие и пересказ уже готового.
+    #:
+    #: Экономия при этом сохраняется: судей и разборов кадров в прогоне больше,
+    #: чем персон, и основное время уходило именно на них.
+    #:
+    #: Переопределяется переменной MODEL_THINKING_ROLES: список через запятую,
+    #: `none` — выключить везде, `all` — включить везде.
+    thinking_roles: frozenset[str] = frozenset({"respondent"})
+
     @property
     def default_headers(self) -> dict[str, str]:
         """Передаётся в OpenAI(..., default_headers=...) — иначе запрос отклонят."""
         return {"x-proxy-source": self.proxy_source}
+
+    #: Роли, которые вообще бывают. Список закрытый намеренно — см. extra_body.
+    ROLES = ("respondent", "frames", "qa", "analytics", "persona", "portrait")
+
+    def extra_body(self, role: str) -> dict[str, object]:
+        """
+        Дополнительные поля запроса для роли. Пустой словарь — ничего не добавляем.
+
+        Ключ именно `enable_thinking`, соглашение vLLM/Qwen. `thinking: false`
+        из документации провайдера этот шлюз ИГНОРИРУЕТ: замер дал те же 600
+        токенов рассуждения и пустой content. Опечатка в имени ничего не
+        сломает — просто вернёт медленные прогоны, поэтому имя под тестом.
+
+        Незнакомая роль — ValueError, а не тихое умолчание. Опечатка в имени
+        роли иначе молча выбрала бы быстрый режим там, где нужен заземлённый, и
+        увидеть это можно было бы только по доле отбракованных ответов через
+        десять минут прогона.
+        """
+        if role not in self.ROLES:
+            raise ValueError(
+                f"неизвестная роль модели {role!r}; ожидается одна из {', '.join(self.ROLES)}"
+            )
+        if role in self.thinking_roles:
+            return {}
+        return {"chat_template_kwargs": {"enable_thinking": False}}
 
     @property
     def vlm_shares_agent(self) -> bool:
@@ -77,6 +129,7 @@ class ModelConfig:
             text_model=_optional("AI_MODEL", "qwen3.6"),
             vlm_model=_optional("VLM_MODEL", "qwen3.6"),
             proxy_source=_optional("MODEL_PROXY_SOURCE", "agora"),
+            thinking_roles=_thinking_roles(),
         )
 
 
@@ -292,3 +345,20 @@ def _validate_model(model: str, *, source: str) -> str:
             f"{' или '.join(repr(m) for m in WHISPER_MODELS)} (Decision Log #6)"
         )
     return model
+
+
+def _thinking_roles() -> frozenset[str]:
+    """
+    Роли с размышлением из окружения. Умолчание — только респондент.
+
+    `none` и `all` названы явно: пустая строка означала бы «не задано», и
+    отличить её от «выключить везде» было бы нечем.
+    """
+    raw = _optional("MODEL_THINKING_ROLES", "respondent").strip().lower()
+    if raw in ("", "respondent"):
+        return frozenset({"respondent"})
+    if raw == "none":
+        return frozenset()
+    if raw == "all":
+        return frozenset(ModelConfig.ROLES)
+    return frozenset(part.strip() for part in raw.split(",") if part.strip())

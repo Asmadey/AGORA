@@ -2,11 +2,11 @@
 
 import { useEffect, useState } from "react";
 import { FileText, Info, Loader2 } from "lucide-react";
+import { FileChip } from "@/components/agora/FileChip";
 
 import {
   AGE_GROUPS,
   AUDIENCE_SIZE_BOUNDS,
-  EDUCATION_LEVELS,
   GENDERS,
   GEOS,
   type AudienceCriteria,
@@ -67,8 +67,9 @@ export interface AudienceStepProps {
    * стоимость прогона наугад.
    */
   onPersonaSetChange: (id: string | null, size?: number) => void;
-  contextFile: string | null;
-  onContextFileChange: (name: string | null) => void;
+  /** Приложенный файл контекста: имя и размер для плашки. */
+  contextFile: { name: string; size: number } | null;
+  onContextFileChange: (file: { name: string; size: number } | null) => void;
 }
 
 function toggle<T extends string>(list: T[], value: T): T[] {
@@ -87,7 +88,7 @@ function coverageNote(rows: CriterionCoverage[], picked: string[], total: number
   const problems = rows.filter((r) => picked.includes(r.value) && r.level !== "grounded");
   if (problems.length === 0) return null;
   return (
-    <p className="mt-3 flex gap-2 rounded-md border border-amber-500/25 bg-amber-500/5 p-3 text-xs leading-relaxed text-amber-200/80">
+    <p className="mt-3 flex gap-2 rounded-md border border-warning/30 bg-warning-soft/60 p-3 text-xs leading-relaxed text-warning">
       <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" />
       <span>
         {problems.map((r) => (
@@ -203,7 +204,7 @@ export function AudienceStep({
           onClick={() => onPersonaSetChange(null)}
           className={cn(
             "flex-1 rounded-md border p-3 text-sm transition-colors",
-            !reuse ? "border-foreground bg-secondary" : "border-border hover:bg-secondary/50",
+            !reuse ? "border-ink bg-secondary" : "border-hairline hover:bg-secondary",
           )}
         >
           Создать аудиторию
@@ -213,7 +214,7 @@ export function AudienceStep({
           disabled={!sets || sets.length === 0}
           className={cn(
             "flex-1 rounded-md border p-3 text-sm transition-colors disabled:opacity-40",
-            reuse ? "border-foreground bg-secondary" : "border-border hover:bg-secondary/50",
+            reuse ? "border-ink bg-secondary" : "border-hairline hover:bg-secondary",
           )}
         >
           Выбрать существующую
@@ -222,7 +223,7 @@ export function AudienceStep({
       </div>
 
       {loadError && (
-        <p className="rounded-md border border-red-500/25 bg-red-500/5 p-3 text-xs text-red-200/80">
+        <p className="rounded-md border border-danger/30 bg-danger-soft/60 p-3 text-xs text-danger">
           Не удалось загрузить данные о заземлении: {loadError}. Пометки о слабо
           заземлённых сегментах показаны не будут — это не значит, что их нет.
         </p>
@@ -230,26 +231,47 @@ export function AudienceStep({
 
       {reuse ? (
         <div className="space-y-2">
-          {(sets ?? []).map((s) => (
-            <button
-              key={s.id}
-              onClick={() => onPersonaSetChange(s.id, s.personaCount)}
-              className={cn(
-                "w-full rounded-md border p-4 text-left transition-colors",
-                personaSetId === s.id
-                  ? "border-foreground bg-secondary"
-                  : "border-border hover:bg-secondary/50",
-              )}
-            >
-              <p className="text-sm font-medium">{s.name}</p>
-              <p className="mt-1 text-xs text-muted-foreground">
-                {s.personaCount} персон
-                {s.seed !== null && ` · seed ${s.seed}`} ·{" "}
-                {new Date(s.createdAt).toLocaleDateString("ru-RU")}
-              </p>
-            </button>
-          ))}
-          <p className="mt-3 text-xs leading-relaxed text-muted-foreground">
+          {/* Список ограничен по высоте пятью плашками, и скролл — внутри него.
+              Без ограничения десяток наборов уводил кнопку «Дальше» за пределы
+              экрана: пользователь прокручивал всю страницу, терял из виду шаги
+              визарда и не понимал, где закончился выбор. Высота задана в тех же
+              единицах, что и плашка (5 × 76px + зазоры), а не «на глаз»: иначе
+              она разъедется при первой же правке содержимого плашки. */}
+          <div
+            className={cn(
+              "space-y-2 overflow-y-auto pr-1",
+              (sets?.length ?? 0) > 5 && "max-h-[420px]",
+            )}
+          >
+            {(sets ?? []).map((s) => (
+              <button
+                key={s.id}
+                onClick={() => onPersonaSetChange(s.id, s.personaCount)}
+                className={cn(
+                  "w-full rounded-lg border p-4 text-left transition-colors",
+                  personaSetId === s.id
+                    ? "border-ink bg-secondary"
+                    : "border-hairline hover:bg-secondary",
+                )}
+              >
+                <p className="text-sm font-medium">{s.name}</p>
+                <p className="mt-1 text-xs text-slate">
+                  {s.personaCount} персон
+                  {s.seed !== null && ` · seed ${s.seed}`} ·{" "}
+                  {new Date(s.createdAt).toLocaleDateString("ru-RU")}
+                </p>
+              </button>
+            ))}
+          </div>
+
+          {(sets?.length ?? 0) > 5 && (
+            <p className="pt-1 text-xs text-stone">
+              Показаны {Math.min(5, sets?.length ?? 0)} из {sets?.length} — остальные
+              прокруткой внутри списка
+            </p>
+          )}
+
+          <p className="mt-3 text-xs leading-relaxed text-slate">
             Генерация будет пропущена: набор берётся целиком, вместе с его seed. Это
             делает результаты сопоставимыми между версиями монтажа — разница в баллах
             отражает изменения материала, а не разницу аудиторий.
@@ -267,8 +289,8 @@ export function AudienceStep({
                   className={cn(
                     "rounded-full border px-3 py-1.5 text-sm transition-colors",
                     criteria.ageGroups.includes(g)
-                      ? "border-foreground bg-secondary"
-                      : "border-border text-muted-foreground hover:bg-secondary/50",
+                      ? "border-ink bg-secondary"
+                      : "border-hairline text-slate hover:bg-secondary",
                   )}
                 >
                   {g}
@@ -289,8 +311,8 @@ export function AudienceStep({
                   className={cn(
                     "rounded-full border px-3 py-1.5 text-sm transition-colors",
                     criteria.genders.includes(g)
-                      ? "border-foreground bg-secondary"
-                      : "border-border text-muted-foreground hover:bg-secondary/50",
+                      ? "border-ink bg-secondary"
+                      : "border-hairline text-slate hover:bg-secondary",
                   )}
                 >
                   {g}
@@ -311,8 +333,8 @@ export function AudienceStep({
                   className={cn(
                     "rounded-full border px-3 py-1.5 text-sm transition-colors",
                     criteria.geos.includes(g)
-                      ? "border-foreground bg-secondary"
-                      : "border-border text-muted-foreground hover:bg-secondary/50",
+                      ? "border-ink bg-secondary"
+                      : "border-hairline text-slate hover:bg-secondary",
                   )}
                 >
                   {g}
@@ -322,36 +344,13 @@ export function AudienceStep({
             {grounding && coverageNote(grounding.geos, criteria.geos, grounding.totalRecords)}
           </div>
 
-          <div>
-            <h2 className="text-sm font-semibold">
-              Образование <span className="text-muted-foreground">— необязательно</span>
-            </h2>
-            <div className="mt-3 flex flex-wrap gap-2">
-              {EDUCATION_LEVELS.map((g) => (
-                <button
-                  key={g}
-                  onClick={() => set({ education: toggle(criteria.education, g) })}
-                  className={cn(
-                    "rounded-full border px-3 py-1.5 text-sm transition-colors",
-                    criteria.education.includes(g)
-                      ? "border-foreground bg-secondary"
-                      : "border-border text-muted-foreground hover:bg-secondary/50",
-                  )}
-                >
-                  {g}
-                </button>
-              ))}
-            </div>
-            {criteria.education.length > 0 &&
-              grounding?.ungroundedDimensions.includes("education") && (
-                <p className="mt-3 flex gap-2 rounded-md border border-amber-500/25 bg-amber-500/5 p-3 text-xs leading-relaxed text-amber-200/80">
-                  <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-                  В корпусе нет поля «образование» ни у одной из {grounding.totalRecords}{" "}
-                  записей. Критерий повлияет на текст персон, но не на заземление, и
-                  метрика persona_grounding его не проверяет.
-                </p>
-              )}
-          </div>
+          {/* Здесь был выбор образования. Убран, а не отключён.
+              Поля education нет ни у одной из 165 записей корпуса — заземлить
+              критерий нечем, и persona_grounding его не проверяет. Прежде экран
+              честно писал это предупреждением под выбором, но предупреждение не
+              лечит: пользователь всё равно заполняет поле, потому что оно есть,
+              и получает персон, чьё «высшее образование» ничем не подкреплено.
+              Поле, обещающее влияние на результат, хуже отсутствующего. */}
 
           <div>
             <h2 className="text-sm font-semibold">Размер аудитории</h2>
@@ -369,32 +368,45 @@ export function AudienceStep({
                 {criteria.size}
               </span>
             </div>
-            <p className="mt-2 text-xs text-muted-foreground">
+            <p className="mt-2 text-xs text-slate">
               Рекомендуем 20 — этого хватает на сегментные срезы без лишней стоимости.
             </p>
           </div>
 
           <div>
             <h2 className="text-sm font-semibold">Дополнительный контекст</h2>
-            <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+            <p className="mt-1 text-xs leading-relaxed text-slate">
               Файл с описанием вашей аудитории уточнит персон — лексику, специфику ниши.
               Он не переопределяет распределения и калибровку баллов: заземление на
               корпус остаётся главным.
             </p>
-            <label className="mt-3 flex cursor-pointer items-center gap-3 rounded-md border border-dashed border-border px-4 py-3 transition-colors hover:border-muted-foreground/50">
-              <FileText className="h-4 w-4 text-muted-foreground" />
-              <span className="text-sm">
-                {contextFile ?? "Приложить файл (pdf, docx, md, xlsx)"}
-              </span>
-              <input
-                type="file"
-                className="hidden"
-                onChange={(e) => onContextFileChange(e.target.files?.[0]?.name ?? null)}
+            {/* Как и у ролика: пока файла нет — зона выбора, после — плашка с
+                именем, весом и крестиком. Прежде здесь менялась только подпись
+                внутри той же рамки, и снять уже приложенный файл было нечем. */}
+            {contextFile ? (
+              <FileChip
+                className="mt-3"
+                name={contextFile.name}
+                size={contextFile.size}
+                onRemove={() => onContextFileChange(null)}
               />
-            </label>
+            ) : (
+              <label className="mt-3 flex cursor-pointer items-center gap-3 rounded-lg border border-dashed border-hairline-strong px-4 py-3 transition-colors hover:border-ink/40 hover:bg-surface">
+                <FileText className="h-4 w-4 text-slate" />
+                <span className="text-sm">Приложить файл (pdf, docx, md, xlsx)</span>
+                <input
+                  type="file"
+                  className="hidden"
+                  onChange={(e) => {
+                    const f = e.target.files?.[0];
+                    onContextFileChange(f ? { name: f.name, size: f.size } : null);
+                  }}
+                />
+              </label>
+            )}
           </div>
 
-          <div className="border-t border-border pt-6">
+          <div className="border-t border-hairline pt-6">
             <button
               onClick={generate}
               disabled={isGenerating}
@@ -407,13 +419,13 @@ export function AudienceStep({
             </button>
 
             {genError && (
-              <p className="mt-3 rounded-md border border-red-500/25 bg-red-500/5 p-3 text-xs leading-relaxed text-red-200/80">
+              <p className="mt-3 rounded-md border border-danger/30 bg-danger-soft/60 p-3 text-xs leading-relaxed text-danger">
                 {genError}
               </p>
             )}
 
             {generated && (
-              <div className="mt-3 rounded-md border border-emerald-500/25 bg-emerald-500/5 p-3 text-xs leading-relaxed text-emerald-200/80">
+              <div className="mt-3 rounded-md border border-emerald-500/25 bg-success/10 p-3 text-xs leading-relaxed text-emerald-200/80">
                 <p>
                   Готово: {generated.size} персон сохранено. Набор подставлен в запуск —
                   менять критерии больше не нужно.
@@ -423,7 +435,7 @@ export function AudienceStep({
                     но читаются они заметно суше, и пользователь вправе понимать,
                     почему. */}
                 {!generated.enrichment?.enriched && (
-                  <p className="mt-2 text-amber-200/80">
+                  <p className="mt-2 text-warning">
                     Портреты собраны по шаблону: модель не отвечала
                     {generated.enrichment?.degraded_reason
                       ? ` (${generated.enrichment.degraded_reason})`
@@ -438,7 +450,7 @@ export function AudienceStep({
       )}
 
       {!grounding && !loadError && (
-        <p className="flex items-center gap-2 text-xs text-muted-foreground">
+        <p className="flex items-center gap-2 text-xs text-slate">
           <Loader2 className="h-3.5 w-3.5 animate-spin" /> Считаем охват критериев по корпусу…
         </p>
       )}

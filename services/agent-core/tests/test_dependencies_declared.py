@@ -27,9 +27,12 @@ healthy, а ModuleNotFoundError ждёт первого обращения к м
 from __future__ import annotations
 
 import ast
+import importlib.util
 import sys
 from importlib.util import find_spec
 from pathlib import Path
+
+import pytest
 
 PKG = Path(__file__).resolve().parents[1] / "agent_core"
 
@@ -61,6 +64,30 @@ def external_imports() -> dict[str, set[str]]:
     return found
 
 
+def _worker_environment() -> bool:
+    """
+    Мы в среде воркера, а не на машине разработчика.
+
+    Проверка имеет смысл только там, где окружение собрано из pyproject: тогда
+    неразрешимое имя означает незаявленный пакет. На хосте не установлено
+    НИЧЕГО, и тест объявляет незаявленными все четыре зависимости сразу —
+    четыре ложных дефекта на каждом прогоне.
+
+    Признак — `celery`: он объявлен в pyproject явно и нужен воркеру всегда.
+    Если его нет, окружение не воркерово, и сравнивать не с чем.
+
+    Запуск в правильном месте: `./evals/run_in_worker.sh -- python -m pytest`.
+    """
+    return importlib.util.find_spec("celery") is not None
+
+
+@pytest.mark.skipif(
+    not _worker_environment(),
+    reason=(
+        "окружение не воркера: зависимости живут в его образе. "
+        "Запустите ./evals/run_in_worker.sh -- python -m pytest services/agent-core/tests"
+    ),
+)
 def test_every_import_resolves():
     found = external_imports()
     assert found, "внешних импортов не найдено — проверка что-то не разобрала"

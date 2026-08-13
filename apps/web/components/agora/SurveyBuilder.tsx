@@ -78,9 +78,9 @@ function QuestionEditor({
   const invalidScale = draft.type === "scale" && draft.scaleMin >= draft.scaleMax;
 
   return (
-    <div className="space-y-3 rounded-md border border-foreground/40 bg-secondary/40 p-4">
+    <div className="space-y-3 rounded-md border border-ink/40 bg-secondary/40 p-4">
       <div>
-        <label className="text-xs text-muted-foreground" htmlFor={`label-${draft.id}`}>
+        <label className="text-xs text-slate" htmlFor={`label-${draft.id}`}>
           Формулировка вопроса
         </label>
         <input
@@ -93,12 +93,12 @@ function QuestionEditor({
             if (e.key === "Escape") onCancel();
           }}
           placeholder="Например: насколько убедителен финал?"
-          className="mt-1.5 w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:border-foreground/60"
+          className="mt-1.5 w-full rounded-md border border-hairline bg-background px-3 py-2 text-sm outline-none focus:border-ink/60"
         />
       </div>
 
       <div>
-        <span className="text-xs text-muted-foreground">Тип ответа</span>
+        <span className="text-xs text-slate">Тип ответа</span>
         <div className="mt-1.5 flex flex-wrap gap-1.5">
           {QUESTION_TYPES.map((t) => (
             <button
@@ -109,15 +109,15 @@ function QuestionEditor({
               className={cn(
                 "rounded-full border px-3 py-1 text-xs transition-colors",
                 draft.type === t.v
-                  ? "border-foreground bg-secondary text-foreground"
-                  : "border-border text-muted-foreground hover:bg-secondary/50",
+                  ? "border-ink bg-secondary text-foreground"
+                  : "border-hairline text-slate hover:bg-secondary",
               )}
             >
               {t.label}
             </button>
           ))}
         </div>
-        <p className="mt-1.5 text-xs text-muted-foreground">
+        <p className="mt-1.5 text-xs text-slate">
           {QUESTION_TYPES.find((t) => t.v === draft.type)?.hint}
         </p>
       </div>
@@ -125,7 +125,7 @@ function QuestionEditor({
       {draft.type === "scale" && (
         <div className="flex items-end gap-3">
           <div>
-            <label className="text-xs text-muted-foreground" htmlFor={`min-${draft.id}`}>
+            <label className="text-xs text-slate" htmlFor={`min-${draft.id}`}>
               От
             </label>
             <input
@@ -133,11 +133,11 @@ function QuestionEditor({
               type="number"
               value={draft.scaleMin}
               onChange={(e) => onChange({ ...draft, scaleMin: Number(e.target.value) })}
-              className="mt-1.5 w-20 rounded-md border border-border bg-background px-3 py-2 text-sm tabular-nums outline-none focus:border-foreground/60"
+              className="mt-1.5 w-20 rounded-md border border-hairline bg-background px-3 py-2 text-sm tabular-nums outline-none focus:border-ink/60"
             />
           </div>
           <div>
-            <label className="text-xs text-muted-foreground" htmlFor={`max-${draft.id}`}>
+            <label className="text-xs text-slate" htmlFor={`max-${draft.id}`}>
               До
             </label>
             <input
@@ -145,11 +145,11 @@ function QuestionEditor({
               type="number"
               value={draft.scaleMax}
               onChange={(e) => onChange({ ...draft, scaleMax: Number(e.target.value) })}
-              className="mt-1.5 w-20 rounded-md border border-border bg-background px-3 py-2 text-sm tabular-nums outline-none focus:border-foreground/60"
+              className="mt-1.5 w-20 rounded-md border border-hairline bg-background px-3 py-2 text-sm tabular-nums outline-none focus:border-ink/60"
             />
           </div>
           {invalidScale && (
-            <p className="pb-2 text-xs text-rose-300">Нижняя граница должна быть меньше верхней.</p>
+            <p className="pb-2 text-xs text-danger">Нижняя граница должна быть меньше верхней.</p>
           )}
         </div>
       )}
@@ -166,7 +166,7 @@ function QuestionEditor({
         <button
           type="button"
           onClick={onCancel}
-          className="rounded-md border border-border px-4 py-2 text-sm transition-colors hover:bg-secondary"
+          className="rounded-md border border-hairline px-4 py-2 text-sm transition-colors hover:bg-secondary"
         >
           Отмена
         </button>
@@ -191,9 +191,9 @@ function QuestionRow({
   const modified = isModified(q);
 
   return (
-    <div className="flex items-center gap-3 rounded-md border border-border px-4 py-2.5">
+    <div className="flex items-center gap-3 rounded-md border border-hairline px-4 py-2.5">
       {q.baseKey ? (
-        <Check className={cn("h-4 w-4 shrink-0", modified ? "text-amber-400" : "text-emerald-400")} />
+        <Check className={cn("h-4 w-4 shrink-0", modified ? "text-amber-400" : "text-success")} />
       ) : (
         <span className="h-4 w-4 shrink-0" />
       )}
@@ -201,11 +201,11 @@ function QuestionRow({
       <div className="min-w-0 flex-1">
         <p className="truncate text-sm">{q.label}</p>
         {q.baseKey && (
-          <p className="mt-0.5 truncate font-mono text-[11px] text-muted-foreground">{q.baseKey}</p>
+          <p className="mt-0.5 truncate font-mono text-[11px] text-slate">{q.baseKey}</p>
         )}
       </div>
 
-      <span className="shrink-0 text-xs text-muted-foreground">{describe(q)}</span>
+      <span className="shrink-0 text-xs text-slate">{describe(q)}</span>
 
       {modified && (
         <button
@@ -213,7 +213,7 @@ function QuestionRow({
           onClick={onRestore}
           title="Вернуть исходную формулировку и шкалу"
           aria-label={`Вернуть исходный критерий: ${q.label}`}
-          className="shrink-0 rounded p-1.5 text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
+          className="shrink-0 rounded p-1.5 text-slate transition-colors hover:bg-secondary hover:text-foreground"
         >
           <RotateCcw className="h-4 w-4" />
         </button>
@@ -223,7 +223,7 @@ function QuestionRow({
         onClick={onEdit}
         title="Редактировать"
         aria-label={`Редактировать вопрос: ${q.label}`}
-        className="shrink-0 rounded p-1.5 text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
+        className="shrink-0 rounded p-1.5 text-slate transition-colors hover:bg-secondary hover:text-foreground"
       >
         <Pencil className="h-4 w-4" />
       </button>
@@ -232,7 +232,7 @@ function QuestionRow({
         onClick={onDelete}
         title="Удалить"
         aria-label={`Удалить вопрос: ${q.label}`}
-        className="shrink-0 rounded p-1.5 text-muted-foreground transition-colors hover:bg-rose-500/10 hover:text-rose-300"
+        className="shrink-0 rounded p-1.5 text-slate transition-colors hover:bg-danger-soft hover:text-danger"
       >
         <Trash2 className="h-4 w-4" />
       </button>
@@ -343,13 +343,13 @@ export function SurveyBuilder({
             <button
               type="button"
               onClick={restoreAllBase}
-              className="text-xs text-muted-foreground underline-offset-2 transition-colors hover:text-foreground hover:underline"
+              className="text-xs text-slate underline-offset-2 transition-colors hover:text-foreground hover:underline"
             >
               Вернуть все пять как было
             </button>
           )}
         </div>
-        <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+        <p className="mt-1 text-xs leading-relaxed text-slate">
           По этим пяти критериям посчитаны средние в корпусе 165 респондентов. Пока их
           подписи и шкала 1–10 не тронуты, отчёт можно сравнивать с реальными данными.
         </p>
@@ -357,7 +357,7 @@ export function SurveyBuilder({
         <div className="mt-3 space-y-2">{renderList(base)}</div>
 
         {groundingBroken && (
-          <p className="mt-3 flex gap-2 rounded-md border border-amber-500/25 bg-amber-500/5 p-3 text-xs leading-relaxed text-amber-200/80">
+          <p className="mt-3 flex gap-2 rounded-md border border-warning/30 bg-warning-soft/60 p-3 text-xs leading-relaxed text-warning">
             <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" />
             <span>
               {missingBase.length > 0
@@ -375,14 +375,14 @@ export function SurveyBuilder({
 
       <div>
         <h2 className="text-sm font-semibold">Дополнительные вопросы</h2>
-        <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+        <p className="mt-1 text-xs leading-relaxed text-slate">
           Задаются всем персонам после базовых. Заземления на корпус у них нет — сравнивать
           можно только прогоны между собой.
         </p>
 
         <div className="mt-3 space-y-2">
           {custom.length === 0 && !addingNew && (
-            <p className="rounded-md border border-dashed border-border px-4 py-3 text-xs text-muted-foreground">
+            <p className="rounded-md border border-dashed border-hairline px-4 py-3 text-xs text-slate">
               Пока ни одного. Анкета из пяти базовых критериев полностью рабочая.
             </p>
           )}
@@ -396,7 +396,7 @@ export function SurveyBuilder({
           <button
             type="button"
             onClick={startAdd}
-            className="mt-2 flex w-full items-center justify-center gap-2 rounded-md border border-dashed border-border py-3 text-sm text-muted-foreground transition-colors hover:border-muted-foreground/50 hover:text-foreground"
+            className="mt-2 flex w-full items-center justify-center gap-2 rounded-md border border-dashed border-hairline py-3 text-sm text-slate transition-colors hover:border-muted-foreground/50 hover:text-foreground"
           >
             <Plus className="h-4 w-4" />
             Добавить вопрос
@@ -404,11 +404,11 @@ export function SurveyBuilder({
         )}
       </div>
 
-      <div className="flex flex-wrap items-center gap-2 border-t border-border pt-4">
+      <div className="flex flex-wrap items-center gap-2 border-t border-hairline pt-4">
         <Chip tone="outline">Всего вопросов: {questions.length}</Chip>
         {groundingBroken ? (
           <Chip tone="outline">
-            <span className="text-amber-300">заземление частично отключено</span>
+            <span className="text-warning">заземление частично отключено</span>
           </Chip>
         ) : (
           <Chip tone="outline">заземление на корпус активно</Chip>

@@ -349,12 +349,18 @@ def distill_portrait_llm(
     prompt = prompt_template.replace("{{segment}}", segment_label)
     prompt = prompt.replace("{{segment_records}}", segment_records)
 
+    from ..config import ModelConfig
+
     try:
         client = OpenAI(api_key=key, base_url=url)
         response = client.chat.completions.create(
             model=mdl,
             messages=[{"role": "user", "content": prompt}],
             temperature=0.3,
+            # Размышление выключено: см. ModelConfig.thinking — замер и причина.
+            # Здесь функция, а не метод клиента, поэтому конфигурация читается
+            # на месте: ключ и адрес выше берутся из окружения тем же способом.
+            extra_body=ModelConfig.from_env().extra_body("portrait"),
         )
         content = response.choices[0].message.content
         if content and content.strip():

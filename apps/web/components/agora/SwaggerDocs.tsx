@@ -71,8 +71,8 @@ export function SwaggerDocs() {
     return (
       <div className="rounded-md border border-rose-400/40 bg-rose-400/5 p-4 text-sm">
         <p className="font-medium">Swagger UI не загрузился</p>
-        <p className="mt-1 text-muted-foreground">{error}</p>
-        <p className="mt-2 text-muted-foreground">
+        <p className="mt-1 text-slate">{error}</p>
+        <p className="mt-2 text-slate">
           Спецификация при этом доступна:{" "}
           <a className="underline underline-offset-4" href={SPEC_URL}>
             {SPEC_URL}

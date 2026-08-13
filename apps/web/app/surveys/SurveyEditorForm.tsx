@@ -90,7 +90,7 @@ export function SurveyEditorForm({
             setSaved(false);
           }}
           maxLength={200}
-          className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-none transition-colors focus:border-muted-foreground/60"
+          className="w-full rounded-md border border-hairline bg-background px-3 py-2 text-sm outline-none transition-colors focus:border-muted-foreground/60"
         />
       </div>
 
@@ -118,7 +118,7 @@ export function SurveyEditorForm({
         >
           {saving ? "Сохранение…" : "Сохранить"}
         </button>
-        {saved && <span className="text-sm text-emerald-400">Сохранено</span>}
+        {saved && <span className="text-sm text-success">Сохранено</span>}
       </div>
     </div>
   );

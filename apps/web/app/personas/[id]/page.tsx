@@ -31,7 +31,7 @@ import { categoryLabel, fieldLabel, SCALE_1_5 } from "@/lib/persona-dna-labels";
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <section className="rounded-lg border border-border bg-[hsl(222_47%_7%)] p-5">
+    <section className="rounded-lg border border-hairline bg-card p-5">
       <h2 className="text-sm font-semibold">{title}</h2>
       <div className="mt-3">{children}</div>
     </section>
@@ -50,14 +50,14 @@ function Scale({ value }: { value: number }) {
           />
         ))}
       </span>
-      <span className="text-xs text-muted-foreground">{value} из 5</span>
+      <span className="text-xs text-slate">{value} из 5</span>
     </span>
   );
 }
 
 function renderValue(key: string, value: unknown) {
   if (Array.isArray(value)) {
-    if (value.length === 0) return <span className="text-muted-foreground">—</span>;
+    if (value.length === 0) return <span className="text-slate">—</span>;
     return (
       <span className="flex flex-wrap gap-1">
         {value.map((v, i) => (
@@ -70,7 +70,7 @@ function renderValue(key: string, value: unknown) {
   }
   if (typeof value === "number" && SCALE_1_5.has(key)) return <Scale value={value} />;
   if (value === null || value === undefined || value === "") {
-    return <span className="text-muted-foreground">—</span>;
+    return <span className="text-slate">—</span>;
   }
   return <span>{String(value)}</span>;
 }
@@ -101,7 +101,7 @@ export default async function PersonaCardPage({
     <div className="mx-auto max-w-5xl p-8">
       <Link
         href="/personas"
-        className="mb-6 inline-flex items-center gap-1.5 text-sm text-muted-foreground transition-colors hover:text-foreground"
+        className="mb-6 inline-flex items-center gap-1.5 text-sm text-slate transition-colors hover:text-foreground"
       >
         <ArrowLeft className="h-4 w-4" />
         Все персоны
@@ -109,16 +109,16 @@ export default async function PersonaCardPage({
 
       <header className="mb-6">
         <h1 className="text-2xl font-semibold">{persona.name}</h1>
-        <p className="mt-1 text-sm text-muted-foreground">
+        <p className="mt-1 text-sm text-slate">
           Создана {new Date(persona.createdAt).toLocaleDateString("ru-RU")}
           {persona.seed !== null && ` · seed ${persona.seed}`}
         </p>
       </header>
 
       {persona.narrative && (
-        <section className="mb-6 rounded-lg border border-border bg-[hsl(222_47%_7%)] p-5">
+        <section className="mb-6 rounded-lg border border-hairline bg-card p-5">
           <h2 className="text-sm font-semibold">Описание</h2>
-          <p className="mt-2 whitespace-pre-line text-sm leading-relaxed text-muted-foreground">
+          <p className="mt-2 whitespace-pre-line text-sm leading-relaxed text-slate">
             {persona.narrative}
           </p>
         </section>
@@ -130,7 +130,7 @@ export default async function PersonaCardPage({
             <dl className="space-y-2 text-sm">
               {Object.entries(fields).map(([key, value]) => (
                 <div key={key} className="flex flex-wrap items-baseline gap-x-2">
-                  <dt className="text-muted-foreground">{fieldLabel(key)}:</dt>
+                  <dt className="text-slate">{fieldLabel(key)}:</dt>
                   <dd>{renderValue(key, value)}</dd>
                 </div>
               ))}

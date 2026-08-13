@@ -44,7 +44,7 @@ export function ShareDialog() {
     <>
       <button
         onClick={() => setOpen(true)}
-        className="inline-flex items-center gap-2 rounded-md border border-border px-4 py-2 text-sm transition-colors hover:bg-secondary"
+        className="inline-flex items-center gap-2 rounded-md border border-hairline px-4 py-2 text-sm transition-colors hover:bg-secondary"
       >
         <Share2 className="h-4 w-4" />
         Поделиться
@@ -56,12 +56,12 @@ export function ShareDialog() {
           onClick={() => setOpen(false)}
         >
           <div
-            className="w-full max-w-md rounded-lg border border-border bg-[hsl(222_47%_8%)] p-6"
+            className="w-full max-w-md rounded-lg border border-hairline bg-[hsl(222_47%_8%)] p-6"
             onClick={(e) => e.stopPropagation()}
           >
             <h2 className="text-lg font-semibold">Публичная ссылка на отчёт</h2>
 
-            <p className="mt-3 flex gap-2.5 rounded-md border border-amber-500/25 bg-amber-500/5 p-3 text-xs leading-relaxed text-amber-200/80">
+            <p className="mt-3 flex gap-2.5 rounded-md border border-warning/30 bg-warning-soft/60 p-3 text-xs leading-relaxed text-warning">
               <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0" />
               По ссылке отчёт открывается <strong>без входа в систему</strong>. Любой, у
               кого она есть, увидит содержимое. Ссылку можно отозвать в любой момент.
@@ -80,11 +80,11 @@ export function ShareDialog() {
                     key={o.v}
                     onClick={() => setScope(o.v)}
                     className={`rounded-md border p-3 text-left text-sm transition-colors ${
-                      scope === o.v ? "border-foreground bg-secondary" : "border-border hover:bg-secondary/50"
+                      scope === o.v ? "border-ink bg-secondary" : "border-hairline hover:bg-secondary"
                     }`}
                   >
                     <span className="block font-medium">{o.t}</span>
-                    <span className="mt-0.5 block text-xs text-muted-foreground">{o.d}</span>
+                    <span className="mt-0.5 block text-xs text-slate">{o.d}</span>
                   </button>
                 ))}
               </div>
@@ -98,7 +98,7 @@ export function ShareDialog() {
                     key={o.value}
                     onClick={() => setTtl(o.value)}
                     className={`flex-1 rounded-md border px-3 py-2 text-sm transition-colors ${
-                      ttl === o.value ? "border-foreground bg-secondary" : "border-border hover:bg-secondary/50"
+                      ttl === o.value ? "border-ink bg-secondary" : "border-hairline hover:bg-secondary"
                     }`}
                   >
                     {o.label}
@@ -109,21 +109,21 @@ export function ShareDialog() {
 
             {link ? (
               <div className="mt-5">
-                <div className="flex items-center gap-2 rounded-md border border-border bg-background px-3 py-2">
+                <div className="flex items-center gap-2 rounded-md border border-hairline bg-background px-3 py-2">
                   <span className="min-w-0 flex-1 truncate font-mono text-xs">{link}</span>
                   <button
                     onClick={copy}
-                    className="shrink-0 text-muted-foreground transition-colors hover:text-foreground"
+                    className="shrink-0 text-slate transition-colors hover:text-foreground"
                     aria-label="Скопировать"
                   >
                     {copied ? (
-                      <Check className="h-4 w-4 text-emerald-400" />
+                      <Check className="h-4 w-4 text-success" />
                     ) : (
                       <Copy className="h-4 w-4" />
                     )}
                   </button>
                 </div>
-                <p className="mt-2 text-xs text-muted-foreground">
+                <p className="mt-2 text-xs text-slate">
                   Действует {TTL_OPTIONS.find((o) => o.value === ttl)?.label.toLowerCase()}.
                   Просмотры записываются в журнал.
                 </p>
@@ -139,7 +139,7 @@ export function ShareDialog() {
 
             <button
               onClick={() => setOpen(false)}
-              className="mt-3 w-full rounded-md border border-border py-2 text-sm transition-colors hover:bg-secondary"
+              className="mt-3 w-full rounded-md border border-hairline py-2 text-sm transition-colors hover:bg-secondary"
             >
               Закрыть
             </button>

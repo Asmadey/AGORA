@@ -34,7 +34,7 @@ export function PersonaAccordion({
 
   if (answers.length === 0) {
     return (
-      <p className="rounded-lg border border-border p-5 text-sm text-muted-foreground">
+      <p className="rounded-lg border border-hairline p-5 text-sm text-slate">
         Ответов нет. Если прогон завершён, смотрите причины на экране прогресса —
         пустой отчёт при успешном прогоне означает, что все ответы забракованы QA.
       </p>
@@ -42,13 +42,13 @@ export function PersonaAccordion({
   }
 
   return (
-    <div className="divide-y divide-border overflow-hidden rounded-lg border border-border">
+    <div className="divide-y divide-border overflow-hidden rounded-lg border border-hairline">
       {answers.map((a) => {
         const key = `${a.personaId}#${a.replication}`;
         const open = openKey === key;
 
         return (
-          <div key={key} className="bg-[hsl(222_47%_7%)]">
+          <div key={key} className="bg-card">
             <button
               onClick={() => setOpenKey(open ? null : key)}
               className="flex w-full items-center gap-4 px-5 py-4 text-left transition-colors hover:bg-secondary/40"
@@ -68,12 +68,12 @@ export function PersonaAccordion({
                 <p className="truncate text-sm font-medium">
                   {a.personaName}
                   {a.replication > 0 && (
-                    <span className="ml-2 text-xs text-muted-foreground">
+                    <span className="ml-2 text-xs text-slate">
                       повтор {a.replication + 1}
                     </span>
                   )}
                 </p>
-                <p className="truncate text-xs text-muted-foreground">
+                <p className="truncate text-xs text-slate">
                   {a.segmentLabel ?? "срез не записан"}
                 </p>
               </div>
@@ -89,7 +89,7 @@ export function PersonaAccordion({
               )}
 
               <div className="hidden w-32 shrink-0 text-right sm:block">
-                <p className="text-xs text-muted-foreground">Досмотрит</p>
+                <p className="text-xs text-slate">Досмотрит</p>
                 <p className="truncate text-sm">
                   {a.watchedShare !== null
                     ? `${a.watchedShare}%`
@@ -102,9 +102,9 @@ export function PersonaAccordion({
                   className={cn(
                     "text-xl font-semibold tabular-nums",
                     a.overall === null
-                      ? "text-muted-foreground"
+                      ? "text-slate"
                       : a.overall >= 8
-                        ? "text-emerald-400"
+                        ? "text-success"
                         : a.overall >= 6.5
                           ? ""
                           : "text-amber-400",
@@ -116,18 +116,18 @@ export function PersonaAccordion({
 
               <ChevronDown
                 className={cn(
-                  "h-4 w-4 shrink-0 text-muted-foreground transition-transform",
+                  "h-4 w-4 shrink-0 text-slate transition-transform",
                   open && "rotate-180",
                 )}
               />
             </button>
 
             {open && (
-              <div className="border-t border-border/60 px-5 py-5">
+              <div className="border-t border-hairline/60 px-5 py-5">
                 <div className="grid gap-4 sm:grid-cols-5">
                   {CRITERIA.map((c) => (
                     <div key={c}>
-                      <p className="text-xs text-muted-foreground">{CRITERIA_LABELS[c]}</p>
+                      <p className="text-xs text-slate">{CRITERIA_LABELS[c]}</p>
                       <p className="mt-0.5 text-lg font-semibold tabular-nums">
                         {a.scores[c] ?? "—"}
                       </p>
@@ -136,7 +136,7 @@ export function PersonaAccordion({
                 </div>
 
                 {a.verbatim && (
-                  <blockquote className="mt-5 border-l-2 border-border pl-4 text-sm leading-relaxed">
+                  <blockquote className="mt-5 border-l-2 border-hairline pl-4 text-sm leading-relaxed">
                     «{a.verbatim}»
                   </blockquote>
                 )}
@@ -157,7 +157,7 @@ export function PersonaAccordion({
                   </ul>
                 )}
 
-                <div className="mt-5 flex flex-wrap items-center gap-x-5 gap-y-2 text-xs text-muted-foreground">
+                <div className="mt-5 flex flex-wrap items-center gap-x-5 gap-y-2 text-xs text-slate">
                   {a.nps !== null && <span>Порекомендует: {a.nps} из 10</span>}
                   {a.emotions.length > 0 && <span>Эмоции: {a.emotions.join(", ")}</span>}
                   <Link

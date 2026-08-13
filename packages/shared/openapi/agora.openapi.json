@@ -815,6 +815,50 @@
             }
           }
         }
+      },
+      "delete": {
+        "summary": "Удалить портрет аудитории",
+        "description": "Версии уходят каскадом. Персоны, сгенерированные с этим портретом, не трогаются: их DNA самодостаточна, и терять аудиторию прогонов из-за уборки в портретах дороже, чем хранить лишний текст.",
+        "tags": [
+          "Портреты"
+        ],
+        "operationId": "deletePortrait",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Портрет удалён"
+          },
+          "401": {
+            "description": "Нет действующей сессии",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Портрет не существует или принадлежит другой команде",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
       }
     },
     "/api/projects": {
@@ -1619,6 +1663,62 @@
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/LaunchRequest"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/tasks/{id}": {
+      "delete": {
+        "summary": "Удалить прогон",
+        "description": "Каскадом уходят отчёт, публичные ссылки и ветки чата в Postgres. Документы отчёта в Mongo остаются: другая база, транзакции между ними нет, и удаление вторым шагом дало бы состояние «в Postgres нет, в Mongo есть» при любом отказе между шагами. Идущий и стоящий в очереди прогон отклоняются 409: воркер не узнает об удалении и примет пропавшую задачу за сбой базы.",
+        "tags": [
+          "Прогоны"
+        ],
+        "operationId": "deleteTask",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Прогон удалён"
+          },
+          "401": {
+            "description": "Нет действующей сессии",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Прогон не существует или принадлежит другой команде",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Прогон идёт или стоит в очереди — удалять нельзя",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
               }
             }
           }

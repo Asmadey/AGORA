@@ -16,6 +16,7 @@ import {
   LogOut,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { ThemeToggle } from "@/components/ThemeToggle";
 
 /**
  * Каркас приложения: левое меню по PRD §6 + рабочая область.
@@ -60,12 +61,16 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   return (
     <div className="flex h-screen overflow-hidden">
       {isAuthenticated && (
-        <aside className="hidden h-screen w-60 shrink-0 flex-col overflow-hidden border-r border-border bg-[hsl(222_47%_7%)] md:flex">
-          <div className="flex h-14 items-center gap-2 border-b border-border px-5">
-            <div className="grid h-7 w-7 place-items-center rounded-md bg-foreground text-[13px] font-bold text-background">
+        <aside className="hidden h-screen w-60 shrink-0 flex-col overflow-hidden border-r border-hairline bg-surface md:flex">
+          <div className="flex h-14 items-center gap-2 border-b border-hairline px-5">
+            {/* Жёлтый знак по DESIGN.md: на белом холсте он единственная
+                насыщенная точка и потому работает опознавательным знаком.
+                Чёрный квадрат на белом сливался бы с текстом. */}
+            <div className="grid h-7 w-7 place-items-center rounded-md bg-brand-yellow text-[13px] font-bold text-ink">
               A
             </div>
             <span className="text-[15px] font-semibold tracking-tight">AGORA</span>
+            <ThemeToggle className="ml-auto h-7 w-7" />
           </div>
 
           {/* Запуск исследования — главное действие продукта, и он стоит над
@@ -75,7 +80,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           <div className="px-3 pt-3">
             <Link
               href="/studies/new"
-              className="flex items-center justify-center gap-2 rounded-md bg-foreground px-3 py-2 text-sm font-medium text-background transition-opacity hover:opacity-90"
+              className="flex items-center justify-center gap-2 rounded-full bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground transition-colors hover:bg-ink/90"
             >
               <Plus className="h-4 w-4 shrink-0" />
               Новое исследование
@@ -92,8 +97,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                   className={cn(
                     "flex items-center gap-2.5 rounded-md px-3 py-2 text-sm transition-colors",
                     active
-                      ? "bg-secondary text-foreground"
-                      : "text-muted-foreground hover:bg-secondary/60 hover:text-foreground",
+                      ? "bg-canvas font-medium text-ink shadow-[0_1px_2px_rgba(5,0,56,0.06)]"
+                      : "text-slate hover:bg-canvas/70 hover:text-ink",
                   )}
                 >
                   <Icon className="h-4 w-4 shrink-0" />
@@ -103,21 +108,22 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             })}
           </nav>
 
-          <div className="border-t border-border px-5 py-3">
-            <p className="text-xs text-muted-foreground">Команда</p>
-            <p className="truncate text-sm">{session?.user?.teamName ?? "—"}</p>
-            <div className="mt-3 flex items-center justify-between gap-2">
+          {/* Название команды отсюда убрано: одна команда на арендатора, и
+              подпись «Команда / AGORA Team» повторяла то, что и так следует из
+              входа. Роль оставлена — от неё зависит, что можно нажать. */}
+          <div className="border-t border-hairline px-5 py-3">
+            <div className="flex items-center justify-between gap-2">
               <div className="min-w-0">
-                <p className="truncate text-xs text-muted-foreground">
+                <p className="truncate text-sm">
                   {session?.user?.name ?? session?.user?.email ?? ""}
                 </p>
-                <p className="text-[11px] uppercase tracking-wide text-muted-foreground/60">
+                <p className="text-[11px] uppercase tracking-wide text-stone">
                   {session?.user?.role ?? ""}
                 </p>
               </div>
               <button
                 onClick={() => signOut({ callbackUrl: "/login" })}
-                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-secondary/60 hover:text-foreground"
+                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-slate transition-colors hover:bg-secondary hover:text-ink"
                 title="Выйти"
               >
                 <LogOut className="h-4 w-4" />
@@ -143,12 +149,15 @@ export function PageHeader({
   actions?: React.ReactNode;
 }) {
   return (
-    <header className="border-b border-border px-8 py-6">
+    <header className="border-b border-hairline px-8 py-6">
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="min-w-0">
-          <h1 className="text-2xl font-semibold tracking-tight">{title}</h1>
+          {/* heading-3 из DESIGN.md: 28px/1.25, средняя насыщенность.
+              Отрицательный трекинг из спецификации оставлен только крупным
+              размерам — на 28px он уже съедает воздух между буквами. */}
+          <h1 className="text-[28px] font-medium leading-[1.25] tracking-tight">{title}</h1>
           {subtitle && (
-            <p className="mt-1 max-w-2xl text-sm text-muted-foreground">{subtitle}</p>
+            <p className="mt-1 max-w-2xl text-sm text-slate">{subtitle}</p>
           )}
         </div>
         {actions && <div className="flex shrink-0 items-center gap-2">{actions}</div>}
