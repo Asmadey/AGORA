@@ -78,6 +78,9 @@ sys.exit(0 if ok else 1)"
 COPY services/agent-core/ ./
 COPY packages/shared/ /app/shared/
 COPY prompts/ /app/prompts/
+# Корпус заземления. Без него генерация аудитории в воркере падает с
+# FileNotFoundError: раньше её запускал веб, и в образ она не попадала.
+COPY data/ /app/data/
 
 RUN pip install -e .
 

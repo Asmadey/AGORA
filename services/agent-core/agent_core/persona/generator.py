@@ -42,12 +42,20 @@ from pathlib import Path
 from typing import Any
 
 # --- пути к репозиторию (относительно этого файла) ---
+from ..paths import find_data_file
 
 _AGENT_CORE = Path(__file__).resolve().parent.parent.parent  # services/agent-core
 _REPO_ROOT = _AGENT_CORE.parent.parent  # AGORA/
 
 SCHEMA_PATH = _REPO_ROOT / "packages" / "shared" / "schemas" / "persona-dna.schema.json"
-CORPUS_PATH = _REPO_ROOT / "data" / "grounding" / "unified_respondent_sessions.json"
+# Путь ищется, а не вычисляется: в образе воркера исходники лежат в
+# /app/agent_core/, и арифметика по parents давала /data/grounding/… — корень
+# файловой системы. Отказ был невидим из репозитория, где та же арифметика
+# верна. См. agent_core/paths.py.
+CORPUS_PATH = (
+    find_data_file("grounding/unified_respondent_sessions.json")
+    or _REPO_ROOT / "data" / "grounding" / "unified_respondent_sessions.json"
+)
 PROMPT_PATH = _REPO_ROOT / "prompts" / "persona.generate.md"
 REFERENCE_PERSONA_PATH = _REPO_ROOT / "evals" / "fixtures" / "persona_reference.json"
 
