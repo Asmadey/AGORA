@@ -44,6 +44,14 @@ export interface LaunchedTask {
   videoRef: string | null;
   replicationCount: number;
   promptsSnapshot: Record<string, PinnedPrompt>;
+  /**
+   * Настройки команды на момент запуска: жёсткий кап вызовов VLM и прочее.
+   *
+   * Снимок по той же причине, что и промпты: пока задача стоит в очереди, кап
+   * можно сменить, и тогда часть панелей разобрана под одним потолком, часть
+   * под другим. Разница в полноте разбора выглядела бы свойством материала.
+   */
+  settingsSnapshot: Record<string, unknown>;
   status: string;
   createdAt: string;
   /** Кто запустил. `null` — автора удалили из команды. */
@@ -68,6 +76,7 @@ interface TaskRow {
   status: string;
   created_at: Date;
   author: string | null;
+  settings_snapshot: Record<string, unknown>;
 }
 
 /**
@@ -100,6 +109,41 @@ export async function buildPromptsSnapshot(
     );
   }
   return snapshot;
+}
+
+/**
+ * Настройки команды на момент запуска, в форме, которую читает воркер.
+ *
+ * ─── Почему это вообще понадобилось ────────────────────────────────────────
+ * Жёсткий кап вызовов VLM жил в двух местах сразу: в интерфейсе, где его
+ * выставляют, и в `CallBudget.for_task`, который умеет его применить. Между
+ * ними не было ничего — воркер получал в очереди снимок промптов и не получал
+ * настроек, а `analyze_panels` звался без бюджета. Настройка была, ограничения
+ * не было, и отличить одно от другого можно было только по счёту провайдера.
+ *
+ * Форма полей совпадает с `lib/settings.ts` и с тем, что читает воркер:
+ * costCap ∈ {auto, hard}, costCapValue осмыслен только при hard. Отсутствие
+ * строки настроек — законное состояние (команда их ни разу не сохраняла), и
+ * означает «авто», то есть без потолка.
+ */
+export async function buildSettingsSnapshot(
+  client: PoolClient,
+): Promise<Record<string, unknown>> {
+  const { rows } = await client.query<{
+    cost_cap_calls: number | null;
+    whisper_model: string;
+  }>(
+    "SELECT cost_cap_calls, whisper_model FROM settings WHERE tenant_id = current_setting('app.tenant_id')::uuid",
+  );
+  const row = rows[0];
+  if (!row) return { costCap: "auto" };
+  return row.cost_cap_calls === null
+    ? { costCap: "auto", whisperModel: row.whisper_model }
+    : {
+        costCap: "hard",
+        costCapValue: row.cost_cap_calls,
+        whisperModel: row.whisper_model,
+      };
 }
 
 /**
@@ -137,6 +181,7 @@ function toTask(row: TaskRow, created: boolean): LaunchedTask {
     videoRef: row.video_ref,
     replicationCount: row.replication_count,
     promptsSnapshot: row.prompts_snapshot,
+    settingsSnapshot: row.settings_snapshot ?? {},
     status: row.status,
     createdAt: row.created_at.toISOString(),
     author: row.author,
@@ -158,17 +203,18 @@ export async function launchTask(
   createdBy: string | null,
 ): Promise<LaunchedTask> {
   const snapshot = await buildPromptsSnapshot(client);
+  const settings = await buildSettingsSnapshot(client);
   const key = idempotencyKey(params, snapshot);
 
   const inserted = await client.query<TaskRow>(
     `INSERT INTO tasks (project_id, persona_set_id, survey_id, mode, video_ref,
-                        replication_count, prompts_snapshot, idempotency_key,
-                        created_by, tenant_id)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9,
+                        replication_count, prompts_snapshot, settings_snapshot,
+                        idempotency_key, created_by, tenant_id)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
              current_setting('app.tenant_id')::uuid)
      ON CONFLICT (tenant_id, idempotency_key) WHERE idempotency_key IS NOT NULL
      DO NOTHING
-     RETURNING id, mode, video_ref, replication_count, prompts_snapshot, status, created_at, (SELECT COALESCE(u.name, u.email) FROM users u WHERE u.id = tasks.created_by) AS author`,
+     RETURNING id, mode, video_ref, replication_count, prompts_snapshot, settings_snapshot, status, created_at, (SELECT COALESCE(u.name, u.email) FROM users u WHERE u.id = tasks.created_by) AS author`,
     [
       params.projectId,
       params.personaSetId,
@@ -177,6 +223,7 @@ export async function launchTask(
       params.videoRef,
       params.replicationCount,
       JSON.stringify(snapshot),
+      JSON.stringify(settings),
       key,
       createdBy,
     ],
@@ -187,7 +234,7 @@ export async function launchTask(
   // Конфликт: задача с таким ключом уже есть. Возвращаем её, а не ошибку —
   // для вызывающего повторный запуск обязан выглядеть как успешный.
   const existing = await client.query<TaskRow>(
-    `SELECT id, mode, video_ref, replication_count, prompts_snapshot, status, created_at, (SELECT COALESCE(u.name, u.email) FROM users u WHERE u.id = tasks.created_by) AS author
+    `SELECT id, mode, video_ref, replication_count, prompts_snapshot, settings_snapshot, status, created_at, (SELECT COALESCE(u.name, u.email) FROM users u WHERE u.id = tasks.created_by) AS author
      FROM tasks WHERE idempotency_key = $1`,
     [key],
   );
@@ -208,7 +255,7 @@ export async function getTask(
   id: string,
 ): Promise<LaunchedTask | null> {
   const { rows } = await client.query<TaskRow>(
-    `SELECT id, mode, video_ref, replication_count, prompts_snapshot, status, created_at, (SELECT COALESCE(u.name, u.email) FROM users u WHERE u.id = tasks.created_by) AS author
+    `SELECT id, mode, video_ref, replication_count, prompts_snapshot, settings_snapshot, status, created_at, (SELECT COALESCE(u.name, u.email) FROM users u WHERE u.id = tasks.created_by) AS author
      FROM tasks WHERE id = $1`,
     [id],
   );
@@ -217,7 +264,7 @@ export async function getTask(
 
 export async function listTasks(client: PoolClient): Promise<LaunchedTask[]> {
   const { rows } = await client.query<TaskRow>(
-    `SELECT id, mode, video_ref, replication_count, prompts_snapshot, status, created_at, (SELECT COALESCE(u.name, u.email) FROM users u WHERE u.id = tasks.created_by) AS author
+    `SELECT id, mode, video_ref, replication_count, prompts_snapshot, settings_snapshot, status, created_at, (SELECT COALESCE(u.name, u.email) FROM users u WHERE u.id = tasks.created_by) AS author
      FROM tasks ORDER BY created_at DESC LIMIT 100`,
   );
   return rows.map((r) => toTask(r, false));

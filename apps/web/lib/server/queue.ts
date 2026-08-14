@@ -37,6 +37,8 @@ export interface PipelinePayload {
   survey: unknown;
   replication_count: number;
   prompts_snapshot: Record<string, unknown>;
+  /** Настройки команды на момент запуска: кап вызовов VLM, модель Whisper. */
+  settings_snapshot: Record<string, unknown>;
 }
 
 /**

@@ -222,31 +222,73 @@ def merge_transcript(state: PipelineState) -> dict[str, Any]:
 
 
 def sample_frames(state: PipelineState) -> dict[str, Any]:
-    from ..frames.dedup import dedupe
-    from ..frames.extract import build_panels, extract_frames
-    from ..frames.scenes import detect_scenes, keyframe_timestamps
+    """
+    Сцены → панели. Одна сцена — одна панель — один вызов модели.
+
+    ─── Что здесь было ─────────────────────────────────────────────────────
+    Кадры брались по одному на сцену (середина), потом склеивались в панели по
+    четыре ПОДРЯД — то есть в одну картинку попадали моменты, разнесённые на
+    полминуты, а описание получало время первого из них. Отсюда шесть описаний
+    на ролик 2:42 и отбраковки по grounding.
+
+    Вторая беда была тише: `kept_stamps = [stamps[frames.index(f)] for f in kept]`.
+    `extract_frames` штатно пропускает кадры, которые ffmpeg не отдал, — и после
+    первого же пропуска эта строка сдвигала времена всех последующих кадров.
+    Рассинхрон включался сам собой и ничем себя не выдавал. Теперь времена
+    приезжают парами из `extract_frames` и никем не пересчитываются.
+
+    Дедупликация переехала на уровень панелей (`analyze_panels`): выбрасывать
+    кадры внутри сцены нельзя — они там затем и стоят, чтобы модель увидела
+    движение, — а вот две подряд идущие одинаковые сцены платить дважды не
+    должны.
+    """
+    from ..frames.extract import panels_for_scenes
+    from ..frames.scenes import detect_scenes
 
     proxy = str(state["proxy_ref"])
     scenes = detect_scenes(proxy)
-    stamps = keyframe_timestamps(scenes)
-    frames = extract_frames(proxy, stamps, workdir(state) / "frames")
-
-    kept = dedupe(frames)
-    kept_stamps = [stamps[frames.index(f)] for f in kept]
+    panels = panels_for_scenes(proxy, scenes, workdir(state) / "frames")
 
     panels_dir = workdir(state) / "panels"
     panels_dir.mkdir(parents=True, exist_ok=True)
     refs: list[dict[str, Any]] = []
-    for i, panel in enumerate(build_panels(kept, timestamps=kept_stamps)):
-        path = panels_dir / f"panel_{i:04d}.jpg"
+    for panel in panels:
+        path = panels_dir / f"panel_{panel.index:04d}.jpg"
         path.write_bytes(panel.image)
-        refs.append({"path": str(path), "timestamp_sec": panel.timestamp_sec})
+        refs.append({
+            "path": str(path),
+            "timestamp_sec": panel.timestamp_sec,
+            "end_sec": panel.end_sec,
+            "is_cut": panel.is_cut,
+            "frame_times": panel.frame_times,
+            "frames": [str(p) for p in panel.frames],
+        })
     return {"panel_refs": refs}
+
+
+def _vlm_cache(state: PipelineState) -> Any:
+    """
+    Кэш разбора панелей — в Mongo, между процессами.
+
+    Кэш был написан и не подключён: `analyze_panels` звался без него, и повтор
+    прогона (#30) заново оплачивал уже разобранные панели. Дефект тихий вдвойне
+    — он не мешает работать, он только стоит денег.
+
+    Недоступная Mongo не роняет разбор: кэш ускоряет, а не определяет результат.
+    Возвращается None, и разбор идёт как раньше — платя за всё.
+    """
+    try:
+        from ..frames.analyze import MongoCache
+        from ..mongo import mongo_db
+
+        return MongoCache(mongo_db().chunk_analyses, tenant_id=str(state["tenant_id"]))
+    except Exception:  # noqa: BLE001 — причина уедет в degraded вызывающего
+        return None
 
 
 def analyze_chunks(state: PipelineState) -> dict[str, Any]:
     """MAP по панелям. Результат кладётся на диск: в state ему не место по объёму."""
-    from ..frames.analyze import QwenVlmClient, analyze_panels
+    from ..frames.analyze import CallBudget, QwenVlmClient, analyze_panels
 
     refs = state.get("panel_refs", [])
     if not refs:
@@ -256,11 +298,30 @@ def analyze_chunks(state: PipelineState) -> dict[str, Any]:
 
     template, degraded = _prompt("content.frame_analysis", state)
     panels = [
-        Panel(index=i, timestamp_sec=r["timestamp_sec"], image=Path(r["path"]).read_bytes())
+        Panel(
+            index=i,
+            timestamp_sec=r["timestamp_sec"],
+            # Прогоны, начатые до перехода на сцены, несут только начало. Конец
+            # у них не выдумывается: пусть интервал вырожден, зато честен.
+            end_sec=float(r.get("end_sec") or r["timestamp_sec"]),
+            is_cut=bool(r.get("is_cut", True)),
+            frame_times=list(r.get("frame_times") or []),
+            frames=[Path(p) for p in (r.get("frames") or [])],
+            image=Path(r["path"]).read_bytes(),
+        )
         for i, r in enumerate(refs)
     ]
 
-    result = analyze_panels(panels, client=QwenVlmClient(), prompt=template)
+    result = analyze_panels(
+        panels,
+        client=QwenVlmClient(),
+        prompt=template,
+        # Кэш и кап были написаны и не подключены: разбор платил заново за уже
+        # разобранные панели, а жёсткий кап из Настроек (#27) не действовал
+        # вовсе — то есть настройка была, а ограничения не было.
+        cache=_vlm_cache(state),
+        budget=CallBudget.for_task(state.get("settings_snapshot")),
+    )
     out = workdir(state) / "chunk_analyses.json"
     out.write_text(json.dumps(result.scenes, ensure_ascii=False), "utf-8")
 

@@ -99,6 +99,11 @@ class PipelineState(TypedDict, total=False):
     #: Снимок промптов прогона (Decision Log #10): {ключ: {id, version, sha256}}.
     #: Пиннится на запуске (#11); узлы читают шаблон по нему, а не из файлов.
     prompts_snapshot: dict[str, Any]
+    #: Снимок настроек команды на момент запуска: {costCap, costCapValue, …}.
+    #: По той же причине, что и промпты: пока задача стоит в очереди, кап можно
+    #: сменить, и тогда часть панелей разобрана под одним потолком, часть под
+    #: другим. Пустой словарь — «авто», то есть без потолка.
+    settings_snapshot: dict[str, Any]
     #: Этапы, отработавшие не полностью. Пустой список — не то же самое, что
     #: отсутствие поля: отчёт обязан показать, что VLM отвалился, даже если
     #: остальное собралось.
@@ -121,6 +126,7 @@ def new_state(
     survey: dict[str, Any] | None = None,
     replication_count: int = 1,
     prompts_snapshot: dict[str, Any] | None = None,
+    settings_snapshot: dict[str, Any] | None = None,
 ) -> PipelineState:
     """
     Начальное состояние прогона.
@@ -157,6 +163,7 @@ def new_state(
         status=STATUS_QUEUED,
         progress={},
         prompts_snapshot=dict(prompts_snapshot or {}),
+        settings_snapshot=dict(settings_snapshot or {}),
         degraded=[],
         error=None,
     )

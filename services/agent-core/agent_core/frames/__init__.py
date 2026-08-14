@@ -57,12 +57,22 @@ from .analyze import (
 )
 from .dedup import DEFAULT_THRESHOLD as DEDUP_THRESHOLD
 from .dedup import dedupe, dhash, hamming
-from .extract import FRAME_WIDTH, PANEL_SIZE, Panel, build_panels, extract_frames
+from .extract import (
+    FRAME_WIDTH,
+    PANEL_SIZE,
+    Panel,
+    build_panels,
+    extract_frames,
+    panels_for_scenes,
+)
 from .scenes import (
-    FALLBACK_INTERVAL_SEC,
+    MAX_SCENE_SEC,
+    MIN_SCENE_SEC,
     Scene,
+    build_scenes,
     detect_scenes,
     keyframe_timestamps,
+    sample_times,
 )
 
 __all__ = [
@@ -71,11 +81,15 @@ __all__ = [
     "Scene",
     "detect_scenes",
     "keyframe_timestamps",
-    "FALLBACK_INTERVAL_SEC",
+    "build_scenes",
+    "sample_times",
+    "MIN_SCENE_SEC",
+    "MAX_SCENE_SEC",
     # кадры и панели
     "Panel",
     "extract_frames",
     "build_panels",
+    "panels_for_scenes",
     "PANEL_SIZE",
     "FRAME_WIDTH",
     # дедупликация

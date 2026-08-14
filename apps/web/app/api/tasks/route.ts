@@ -180,6 +180,9 @@ export async function POST(request: Request) {
           survey: task.survey,
           replication_count: task.launched.replicationCount,
           prompts_snapshot: task.launched.promptsSnapshot,
+          // Кап вызовов VLM: до этого он оставался в интерфейсе и до воркера
+          // не доезжал вовсе — то есть жёсткий потолок не действовал никогда.
+          settings_snapshot: task.launched.settingsSnapshot,
         });
         queued = true;
       } catch (e) {

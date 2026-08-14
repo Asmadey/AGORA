@@ -102,7 +102,7 @@ def run_pipeline(self: Any, payload: dict[str, Any]) -> dict[str, Any]:
     Прогон исследования.
 
     `payload` — параметры запуска из #11: task_id, tenant_id, mode, video_ref,
-    persona_ids, survey, replication_count, prompts_snapshot.
+    persona_ids, survey, replication_count, prompts_snapshot, settings_snapshot.
 
     Повторный вызов с тем же task_id НЕ начинает заново: граф поднимает
     чекпоинт по thread_id и продолжает с места отказа. Ради этого в
@@ -137,6 +137,7 @@ def run_pipeline(self: Any, payload: dict[str, Any]) -> dict[str, Any]:
         survey=payload.get("survey"),
         replication_count=int(payload.get("replication_count") or 1),
         prompts_snapshot=payload.get("prompts_snapshot") or {},
+        settings_snapshot=payload.get("settings_snapshot") or {},
     )
 
     _set_task_status(task_id, tenant_id, STATUS_RUNNING)

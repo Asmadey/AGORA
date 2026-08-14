@@ -14,6 +14,9 @@ import os
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
+from .dedup import DEFAULT_THRESHOLD as DEDUP_THRESHOLD
+from .dedup import hamming
+
 DEFAULT_MODEL = "qwen3.6"
 
 #: Сколько секунд ждать ответа модели на одну панель. Разбор изображения идёт
@@ -160,13 +163,22 @@ class MongoCache:
         self.collection = collection
         self.tenant_id = tenant_id
 
+    #: Имя поля ключа в документе.
+    #:
+    #: `content_hash`, а не `cache_key`: именно так поле названо в схеме
+    #: коллекции и именно по нему построен индекс
+    #: (`infra/mongo/init/01_collections.js`). Писать под другим именем значило
+    #: держать кэш, который никогда не попадает в индекс: на пустой коллекции
+    #: это незаметно, а на выросшей — полный перебор при каждом промахе.
+    KEY_FIELD = "content_hash"
+
     def get(self, key: str) -> dict[str, Any] | None:
-        doc = self.collection.find_one({"tenant_id": self.tenant_id, "cache_key": key})
+        doc = self.collection.find_one({"tenant_id": self.tenant_id, self.KEY_FIELD: key})
         return doc.get("analysis") if doc else None
 
     def set(self, key: str, value: dict[str, Any]) -> None:
         self.collection.update_one(
-            {"tenant_id": self.tenant_id, "cache_key": key},
+            {"tenant_id": self.tenant_id, self.KEY_FIELD: key},
             {"$set": {"analysis": value}},
             upsert=True,
         )
@@ -182,6 +194,12 @@ class AnalysisResult:
     scenes: list[dict[str, Any]] = field(default_factory=list)
     calls_made: int = 0
     cache_hits: int = 0
+    #: Сцены, описание которым досталось от предыдущей — визуально та же
+    #: картинка. Отдельно от cache_hits: попадание в кэш означает «это уже
+    #: разбирали когда-то», а дедупликация — «соседняя сцена выглядит так же».
+    #: Слить их в один счётчик значит потерять способность понять, за что
+    #: заплачено и почему у двух сцен одинаковое описание.
+    deduped: int = 0
 
 
 class VlmClient(Protocol):
@@ -222,13 +240,39 @@ def analyze_panels(
     budget = budget or CallBudget.unlimited()
     result = AnalysisResult()
 
+    previous_hash: int | None = None
+    previous_analysis: dict[str, Any] | None = None
+
     for panel in panels:
+        # ── Соседняя сцена, визуально неотличимая от предыдущей ─────────────
+        #
+        # Слайд, который лектор держит три минуты, режется на блоки по 30 секунд
+        # (см. build_scenes) — и каждый блок стоил бы отдельного вызова за один и
+        # тот же ответ. Кэш здесь не помогает: панели собраны из разных кадров, и
+        # байты у них разные, а значит и ключ разный.
+        #
+        # Сравнение только с НЕПОСРЕДСТВЕННО предыдущей панелью, а не со всеми
+        # виденными: возврат к той же локации через десять минут — это событие
+        # материала, и описание ему полагается своё. Тем же порогом, что и кадры:
+        # 4 бита из 64.
+        current_hash = _panel_hash(panel)
+        if (
+            previous_analysis is not None
+            and previous_hash is not None
+            and current_hash is not None
+            and hamming(current_hash, previous_hash) <= DEDUP_THRESHOLD
+        ):
+            result.scenes.append(_stamp({**previous_analysis, "deduped": True}, panel))
+            result.deduped += 1
+            continue
+
         key = cache_key(panel.image, prompt, model_name)
 
         cached = cache.get(key) if cache else None
         if cached is not None:
             result.scenes.append(_stamp(cached, panel))
             result.cache_hits += 1
+            previous_hash, previous_analysis = current_hash, cached
             continue
 
         if budget.limit is not None and result.calls_made >= budget.limit:
@@ -243,26 +287,68 @@ def analyze_panels(
         if cache:
             cache.set(key, analysis)
         result.scenes.append(_stamp(analysis, panel))
+        previous_hash, previous_analysis = current_hash, analysis
 
     return result
 
 
+def _panel_hash(panel: Any) -> int | None:
+    """
+    Перцептивный хеш панели. `None` — посчитать не вышло.
+
+    Отказ хеширования не должен ронять разбор: он всего лишь означает, что
+    сцена будет оплачена, хотя могла бы не быть. Ронять из-за этого прогон,
+    в котором уже оплачены транскрипция и часть панелей, несоразмерно.
+    """
+    from .dedup import dhash_bytes
+
+    try:
+        return dhash_bytes(panel.image)
+    except Exception:  # noqa: BLE001 — см. докстринг
+        return None
+
+
 def _render(template: str, panel: Any) -> str:
     """Подстановка переменных промпта content.frame_analysis."""
+    end = getattr(panel, "end_sec", 0.0) or panel.timestamp_sec
+    times = getattr(panel, "frame_times", None) or []
     return (
         template
         .replace("{{timestamp}}", f"{panel.timestamp_sec:.2f}")
+        .replace("{{scene_start}}", f"{panel.timestamp_sec:.2f}")
+        .replace("{{scene_end}}", f"{end:.2f}")
         .replace("{{panel_size}}", str(len(panel.frames) or 1))
+        .replace(
+            "{{frame_times}}",
+            ", ".join(f"{t:.2f}" for t in times) or f"{panel.timestamp_sec:.2f}",
+        )
         .replace("{{frames}}", f"панель #{panel.index}")
     )
 
 
 def _stamp(analysis: dict[str, Any], panel: Any) -> dict[str, Any]:
-    """Приклеивает к разбору таймкод и номер панели из proxy, а не из ответа."""
+    """
+    Приклеивает к разбору границы сцены из proxy, а не из ответа модели.
+
+    Раньше приклеивался один момент — время первого кадра панели, — и описание
+    четырёх разных моментов оказывалось привязано к одному. Персона, сославшаяся
+    на середину, получала описание от начала; судья видел несовпадение и был
+    прав. Теперь у описания есть начало и конец, и внутри этих границ оно верно
+    по построению.
+
+    `timestamp` из ответа модели затирается намеренно: промпт просит его вернуть
+    ради связности рассуждения, но единственный источник времени — proxy
+    (Decision Log #14). Модель видит только подставленное значение и вольна его
+    переписать.
+    """
+    end = getattr(panel, "end_sec", 0.0) or panel.timestamp_sec
     return {
         **analysis,
         "panel_index": panel.index,
         "timestamp_sec": panel.timestamp_sec,
+        "end_sec": end,
+        "is_cut": bool(getattr(panel, "is_cut", True)),
+        "frame_times": list(getattr(panel, "frame_times", None) or []),
     }
 
 
