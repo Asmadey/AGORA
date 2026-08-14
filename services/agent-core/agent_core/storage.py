@@ -52,6 +52,8 @@ class S3Client(Protocol):
 
     def download(self, key: str, dest: Path) -> None: ...
 
+    def upload(self, src: Path, key: str, content_type: str) -> None: ...
+
 
 def looks_like_s3_key(ref: str) -> bool:
     """
@@ -96,6 +98,19 @@ class Boto3S3(S3Client):
             aws_secret_access_key=os.environ["S3_SECRET_KEY"],
             region_name=os.environ.get("S3_REGION", "ru-1"),
             config=Config(s3={"addressing_style": "path"}, retries={"max_attempts": 3}),
+        )
+
+    def upload(self, src: Path, key: str, content_type: str = "image/jpeg") -> None:
+        """
+        Кладёт файл в бакет. Ошибка не гасится: гасит вызывающий, если хочет.
+
+        Нужен кадрам сцен. Раньше они жили в `/tmp/agora/<task>` внутри
+        контейнера — каталог не смонтирован, и всё умирало вместе с контейнером.
+        Экран исследования показать таймлайн со скриншотами не мог: файлов уже
+        не было, а других копий не делалось.
+        """
+        self._client.upload_file(
+            str(src), self.bucket, key, ExtraArgs={"ContentType": content_type}
         )
 
     def download(self, key: str, dest: Path) -> None:

@@ -322,6 +322,14 @@ def analyze_chunks(state: PipelineState) -> dict[str, Any]:
         cache=_vlm_cache(state),
         budget=CallBudget.for_task(state.get("settings_snapshot")),
     )
+    # Пути кадров кладутся рядом с описанием: следующий узел выгружает по
+    # одному кадру на сцену в S3, и связь «описание → картинка» должна пережить
+    # границу узлов. В сам разбор (то, что уходит в кэш) им не место: пути
+    # локальные и к содержимому панели отношения не имеют.
+    frames_by_panel = {i: (r.get("frames") or []) for i, r in enumerate(refs)}
+    for scene in result.scenes:
+        scene["frames"] = frames_by_panel.get(scene.get("panel_index"), [])
+
     out = workdir(state) / "chunk_analyses.json"
     out.write_text(json.dumps(result.scenes, ensure_ascii=False), "utf-8")
 
@@ -334,15 +342,87 @@ def analyze_chunks(state: PipelineState) -> dict[str, Any]:
 # ─── Склейка и пакет (#17) ───────────────────────────────────────────────────
 
 
+def _frames_prefix(state: PipelineState) -> str:
+    return f"tenants/{state['tenant_id']}/runs/{state['task_id']}/frames"
+
+
+def _publish_frames(state: PipelineState, scenes: list[dict[str, Any]]) -> list[str]:
+    """
+    Выгружает по кадру на сцену в S3 и проставляет сценам `screenshot`.
+
+    ─── Зачем ──────────────────────────────────────────────────────────────
+    Кадры, панели и пакет жили в `/tmp/agora/<task>` внутри контейнера. Каталог
+    не смонтирован, поэтому всё это умирало вместе с контейнером, и показать
+    таймлайн со скриншотами было не из чего: файлов нет, других копий не
+    делалось. Дефект не проявлялся как отказ — просто экрана не существовало.
+
+    Один кадр на сцену, а не четыре: панель нужна модели, чтобы увидеть
+    движение, а человеку на таймлайне — одна картинка на ячейку. Берётся первый
+    кадр сцены как самый близкий к её началу.
+
+    Отказ выгрузки не роняет прогон: ответы персон уже оплачены, и терять их
+    из-за недоступного бакета незачем. Причины возвращаются вызывающему —
+    молчать нельзя, иначе пустой таймлайн выглядит как дефект интерфейса.
+    """
+    degraded: list[str] = []
+    try:
+        from ..storage import Boto3S3
+
+        client = Boto3S3()
+    except Exception as exc:  # noqa: BLE001
+        return [f"кадры не выгружены ({type(exc).__name__}: {exc}); таймлайн будет без скриншотов"]
+
+    prefix = _frames_prefix(state)
+    failures = 0
+    for scene in scenes:
+        frames = scene.get("frames") or []
+        if not frames:
+            continue
+        src = Path(str(frames[0]))
+        if not src.exists():
+            continue
+        key = f"{prefix}/{int(round(float(scene.get('timestamp_sec') or 0) * 1000)):09d}.jpg"
+        try:
+            client.upload(src, key, "image/jpeg")
+        except Exception:  # noqa: BLE001 — счётчик вместо тысячи одинаковых строк
+            failures += 1
+            continue
+        scene["screenshot"] = key
+
+    if failures:
+        degraded.append(f"кадры сцен выгружены не полностью: отказов {failures} из {len(scenes)}")
+    return degraded
+
+
 def stitch(state: PipelineState) -> dict[str, Any]:
+    """
+    Сводит разбор панелей в video_understanding и выгружает кадры в S3.
+
+    Промпт `content.stitch_summary` здесь не вызывается и никогда не вызывался:
+    склейка — это перекладывание уже полученных описаний в общий список, и
+    модели тут делать нечего. Числится в реестре промптов он ошибочно; помечен
+    неиспользуемым в `apps/web/lib/prompt-registry.ts`, чтобы Промпт-студия не
+    предлагала править инструкцию, которая ни на что не влияет.
+    """
     ref = state.get("chunk_analyses_ref")
     scenes = json.loads(Path(str(ref)).read_text("utf-8")) if ref else []
-    return {
+
+    degraded = _publish_frames(state, scenes)
+
+    # Пути кадров в состоянии не нужны: они локальные и умрут вместе с
+    # контейнером, а ссылка на S3 уже проставлена.
+    for scene in scenes:
+        scene.pop("frames", None)
+
+    update: dict[str, Any] = {
         "video_understanding": {
             "scenes": scenes,
             "stitched": state.get("mode") == "long",
         }
     }
+    if degraded:
+        update["degraded"] = degraded
+    return update
 
 
 def pack(state: PipelineState) -> dict[str, Any]:
@@ -357,7 +437,36 @@ def pack(state: PipelineState) -> dict[str, Any]:
         mode=str(state.get("mode") or "short"),
         title=str(state.get("task_id")),
     )
-    return {"content_pack_full": built.full(), "content_pack_compact": built.compact()}
+    full = built.full()
+
+    # Пакет обязан пережить контейнер: экран исследования строит по нему
+    # таймлайн, а состояние графа живёт в чекпоинтере и наружу не выходит.
+    # Отказ записи не роняет прогон — материал уже разобран и оплачен, — но и не
+    # молчит: пустой таймлайн иначе выглядит как дефект интерфейса.
+    degraded: list[str] = []
+    try:
+        from ..analytics.store import save_content_pack
+        from ..mongo import mongo_db
+
+        save_content_pack(
+            mongo_db(),
+            tenant_id=str(state["tenant_id"]),
+            task_id=str(state["task_id"]),
+            pack=full,
+        )
+    except Exception as exc:  # noqa: BLE001
+        degraded.append(
+            f"пакет материала не сохранён ({type(exc).__name__}: {exc}); "
+            f"таймлайн на экране исследования будет пуст"
+        )
+
+    update: dict[str, Any] = {
+        "content_pack_full": full,
+        "content_pack_compact": built.compact(),
+    }
+    if degraded:
+        update["degraded"] = degraded
+    return update
 
 
 # ─── Респонденты (#18) ───────────────────────────────────────────────────────

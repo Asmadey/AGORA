@@ -100,4 +100,16 @@ target.grounding_dataset.createIndex({
 ensureCollection("audience_context_files", tenantRequired);
 target.audience_context_files.createIndex({ tenant_id: 1, file_id: 1 });
 
+// ── Пакет материала: таймлайн, сцены, транскрипт (#17) ────────────────────
+//
+// Отдельный документ, а не поле отчёта. Отчёт читают целиком при каждой
+// загрузке экрана исследования, а пакет — только когда открывают таймлайн, и на
+// пятнадцатиминутном ролике он в разы больше самого отчёта.
+//
+// До этого пакет жил только в состоянии графа и в /tmp внутри контейнера —
+// каталог не смонтирован, поэтому таймлайн умирал вместе с прогоном, хотя
+// каждая его ячейка уже была посчитана и оплачена.
+ensureCollection("content_packs", tenantRequired);
+target.content_packs.createIndex({ tenant_id: 1, task_id: 1 }, { unique: true, sparse: true });
+
 print("MongoDB готова: " + target.getCollectionNames().join(", "));

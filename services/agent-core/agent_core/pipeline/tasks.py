@@ -63,6 +63,39 @@ def _set_task_status(task_id: str, tenant_id: str, status: str, error: str | Non
         )
 
 
+def _save_timings(task_id: str, tenant_id: str, timings: list[dict[str, Any]]) -> None:
+    """
+    Складывает замеры этапов в `tasks.progress`.
+
+    Колонка заведена в схеме с первого дня и не писалась никем. Снимок прогресса
+    живёт в Valkey с TTL и перезаписывается на каждое событие — то есть разбивка
+    «сколько занял какой этап» существовала только пока прогон идёт, да и то в
+    виде текущего узла. Экран исследования показывает «Время обработки», и на
+    вопрос «за что заплачено» отвечать было нечем.
+
+    Отказ записи не роняет прогон и не меняет статус: замеры — служебная
+    информация, а отчёт к этому моменту уже посчитан и сохранён.
+    """
+    dsn = os.environ.get("DATABASE_URL")
+    if not dsn or not timings:
+        return
+
+    import json as _json
+
+    import psycopg
+
+    from ..db import tenant_scope
+
+    try:
+        with psycopg.connect(dsn) as conn, tenant_scope(conn, tenant_id) as cur:
+            cur.execute(
+                "UPDATE tasks SET progress = %s WHERE id = %s::uuid",
+                (_json.dumps({"timings": timings}, ensure_ascii=False), task_id),
+            )
+    except Exception:  # noqa: BLE001 — см. докстринг
+        pass
+
+
 def _cancel_requested(task_id: str, tenant_id: str) -> bool:
     """
     Просили ли отменить этот прогон.
@@ -160,7 +193,10 @@ def run_pipeline(self: Any, payload: dict[str, Any]) -> dict[str, Any]:
         raise
 
     _set_task_status(task_id, tenant_id, STATUS_REPORT_READY)
-    progress.emit("pipeline", STATUS_REPORT_READY, degraded=final.get("degraded") or [])
+    snapshot = progress.emit(
+        "pipeline", STATUS_REPORT_READY, degraded=final.get("degraded") or []
+    )
+    _save_timings(task_id, tenant_id, snapshot.get("timings") or [])
     return {
         "task_id": task_id,
         "status": STATUS_REPORT_READY,

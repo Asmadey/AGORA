@@ -63,6 +63,13 @@ class ProgressWriter:
     def __init__(self, client: ValkeyLike, task_id: str) -> None:
         self.client = client
         self.task_id = task_id
+        #: Замеры этапов. Подхватываются из снимка при первой записи, а не в
+        #: конструкторе: воркер может перезапуститься посреди прогона (ради
+        #: этого и заведён чекпоинтер), и новый писатель обязан продолжить счёт,
+        #: а не начать с нуля — иначе «время обработки» покажет длительность
+        #: последней попытки. Ленивость нужна затем, чтобы конструктор не ходил
+        #: в сеть: его зовут и там, где писать ничего не собираются.
+        self._timings: list[dict[str, Any]] | None = None
 
     # ── чтение ──────────────────────────────────────────────────────────────
 
@@ -99,6 +106,7 @@ class ProgressWriter:
         if detail:
             payload["detail"] = detail
         payload.update(extra)
+        payload["timings"] = self._track(node, status, payload["at"])
         return self._write(payload)
 
     def fail(self, node: str, error: str) -> dict[str, Any]:
@@ -109,13 +117,58 @@ class ProgressWriter:
         отправляет пользователя читать логи воркера, к которым у него нет
         доступа.
         """
+        at = time.time()
         return self._write({
             "task_id": self.task_id,
             "node": node,
             "status": "FAILED",
             "error": error,
-            "at": time.time(),
+            "at": at,
+            # Упавший этап тоже имеет длительность. Иначе самый интересный для
+            # разбора случай — «на чём встало и через сколько» — остаётся
+            # единственным, о котором ничего не известно.
+            "timings": self._track(node, "FAILED", at),
         })
+
+    def _track(self, node: str, status: str, at: float) -> list[dict[str, Any]]:
+        """
+        Копит замеры этапов: RUNNING открывает запись, всё прочее закрывает.
+
+        Длительность узла восстановить было нечем: снимок лежит в одном ключе и
+        перезаписывается на каждое событие, а колонка `tasks.progress` заведена
+        в схеме с первого дня и не пишется никем. Между тем «Время обработки» —
+        показатель экрана, и на вопрос «почему прогон шёл сорок минут» без
+        разбивки по этапам ответить нечем: транскрипция, разбор кадров и опрос
+        персон отличаются по цене в разы.
+        """
+        if self._timings is None:
+            raw = self.snapshot().get("timings")
+            self._timings = list(raw) if isinstance(raw, list) else []
+
+        if status == "RUNNING":
+            self._timings.append({
+                "node": node,
+                "started_at": at,
+                "finished_at": None,
+                "duration_sec": None,
+                "status": "RUNNING",
+            })
+            return self._timings
+
+        for entry in reversed(self._timings):
+            if entry.get("node") == node and entry.get("finished_at") is None:
+                entry["finished_at"] = at
+                entry["duration_sec"] = round(at - float(entry.get("started_at") or at), 3)
+                entry["status"] = status
+                return self._timings
+
+        # Закрытие без открытия — узел, о начале которого никто не сообщил.
+        # Запись всё равно заводится: «этап был» полезнее, чем его отсутствие.
+        self._timings.append({
+            "node": node, "started_at": None, "finished_at": at,
+            "duration_sec": None, "status": status,
+        })
+        return self._timings
 
     def _write(self, payload: dict[str, Any]) -> dict[str, Any]:
         message = json.dumps(payload, ensure_ascii=False)

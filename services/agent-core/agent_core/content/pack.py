@@ -204,6 +204,14 @@ class ContentPack:
             "scenes_key": sum(1 for s in self.scenes if s.get("key")),
             "lines_total": sum(len(e["lines"]) for e in self.timeline),
             "speakers": len(speakers),
+            # Слова считаются по репликам таймлайна, а не по сырому транскрипту:
+            # это то, что персона действительно увидела. Показатель уходит на
+            # экран исследования рядом со «Спикерами».
+            "words": sum(
+                len(ln["text"].split())
+                for entry in self.timeline
+                for ln in entry["lines"]
+            ),
         }
 
     def size_ratio(self) -> float:
@@ -266,7 +274,15 @@ def build_pack(
                 ),
             })
             continue
-        valid_scenes.append({**scene, "timestamp_sec": ts})
+        # Конец сцены ставим мы сами, из сетки, поэтому превысить длительность
+        # он может только округлением — подрезаем, а не выбрасываем. С началом
+        # иначе: выход за границы там означает выдумку модели, и такая сцена
+        # уходит в dropped_scenes выше.
+        end = _num(scene.get("end_sec"))
+        valid = {**scene, "timestamp_sec": ts}
+        if end is not None:
+            valid["end_sec"] = min(max(end, ts), duration_sec)
+        valid_scenes.append(valid)
 
     valid_scenes.sort(key=lambda s: s["timestamp_sec"])
 
@@ -337,8 +353,19 @@ def _build_timeline(
         bounds.append((lines[0]["start"], scenes[0]["timestamp_sec"], None))
     for i, scene in enumerate(scenes):
         start = scene["timestamp_sec"]
-        end = scenes[i + 1]["timestamp_sec"] if i + 1 < len(scenes) else duration_sec
-        bounds.append((start, end, scene))
+        # Конец берётся у самой сцены. Расстояние до соседа — запасной вариант
+        # для прогонов, начатых до перехода на сцены: у них конца нет, и
+        # выдумывать его нельзя.
+        #
+        # Разница появляется там, где между сценами есть пропуск: панель не
+        # собралась или разбор оборван капом. Прежняя арифметика молча отдавала
+        # этот кусок предыдущей сцене — то есть растягивала описание на материал,
+        # которого модель не видела, а персона ссылалась на него как на факт.
+        own_end = _num(scene.get("end_sec"))
+        end = own_end if own_end is not None else (
+            scenes[i + 1]["timestamp_sec"] if i + 1 < len(scenes) else duration_sec
+        )
+        bounds.append((start, min(end, duration_sec), scene))
 
     timeline: list[dict[str, Any]] = []
     for start, end, scene in bounds:
@@ -356,6 +383,14 @@ def _build_timeline(
             "end": end,
             "scene": scene.get("scene_description") if scene else None,
             "mood": scene.get("mood") if scene else None,
+            # Граница пришла от монтажа, а не от нарезки длинной сцены на блоки.
+            # По ней экран рисует смену сцены; без флага он показывал бы монтаж
+            # там, где спикер просто продолжает говорить.
+            "is_cut": bool(scene.get("is_cut", True)) if scene else False,
+            # Кадр сцены в S3 — его показывает таймлайн на экране исследования.
+            # None у прогонов, начатых до того, как кадры стали переживать
+            # контейнер.
+            "screenshot": scene.get("screenshot") if scene else None,
             "lines": entry_lines,
         })
     return timeline
