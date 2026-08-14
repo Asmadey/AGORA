@@ -12,6 +12,7 @@ import {
   BookUser,
   BookOpen,
   Database,
+  UserCog,
   Plus,
   SlidersHorizontal,
   Settings,
@@ -55,6 +56,7 @@ const NAV = [
   // принадлежал разработчику, а не исследователю.
   { href: "/corpus", label: "Корпус", icon: Database },
   { href: "/prompts", label: "Промпт-студия", icon: SlidersHorizontal },
+  { href: "/users", label: "Пользователи", icon: UserCog },
   { href: "/settings", label: "Настройки", icon: Settings },
   // Страница /api-docs существовала с задачи #26, но попасть на неё можно
   // было только по прямой ссылке: пункта меню не было.
