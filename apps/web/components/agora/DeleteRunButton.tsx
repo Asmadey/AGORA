@@ -2,7 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useState } from "react";
-import { Loader2, X } from "lucide-react";
+import { Loader2, Trash2, X } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 
@@ -25,9 +25,23 @@ import { cn } from "@/lib/utils";
 export function DeleteRunButton({
   runId,
   className,
+  variant = "icon",
+  onDeleted,
 }: {
   runId: string;
   className?: string;
+  /**
+   * `icon` — крестик в углу карточки списка. `danger` — явная красная кнопка
+   * на экране исследования.
+   *
+   * Один компонент на оба места, а не два: удаление здесь — это не «нажать
+   * DELETE», а разбор пяти исходов (202 отмены, зависший QUEUED, недоудалённые
+   * объекты, отказ, успех). Написанный дважды, он разойдётся по обработке
+   * ровно тех случаев, ради которых и написан.
+   */
+  variant?: "icon" | "danger";
+  /** Куда уходить после удаления. По умолчанию — обновить текущий экран. */
+  onDeleted?: () => void;
 }) {
   const router = useRouter();
   const [asking, setAsking] = useState(false);
@@ -75,6 +89,12 @@ export function DeleteRunButton({
       // неудалённый ролик означало бы, что за место платят неизвестно за что.
       if (Array.isArray(payload.leftovers) && payload.leftovers.length > 0) {
         setNotice(`Удалено. Осталось убрать: ${payload.leftovers.join("; ")}`);
+        router.refresh();
+        return;
+      }
+      if (onDeleted) {
+        onDeleted();
+        return;
       }
       router.refresh();
     } catch (err) {
@@ -135,6 +155,26 @@ export function DeleteRunButton({
           Отмена
         </button>
       </span>
+    );
+  }
+
+  if (variant === "danger") {
+    return (
+      <button
+        type="button"
+        onClick={(e) => {
+          swallow(e);
+          setAsking(true);
+        }}
+        className={cn(
+          "inline-flex items-center gap-2 rounded-md border border-danger px-4 py-2 text-sm",
+          "text-danger transition-colors hover:bg-danger hover:text-white",
+          className,
+        )}
+      >
+        <Trash2 className="h-4 w-4" />
+        Удалить
+      </button>
     );
   }
 

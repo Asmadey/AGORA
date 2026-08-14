@@ -2016,6 +2016,121 @@
         ]
       }
     },
+    "/api/tasks/{id}/timeline": {
+      "get": {
+        "summary": "Разбор материала и ссылка на ролик",
+        "description": "Таймлайн прогона: сцены с описанием от VLM, репликами транскрипта и кадром, плюс подписанная ссылка на исходный ролик.\n\nРолик и таймлайн отдаются вместе намеренно: порознь они бесполезны — плеер без таймлайна это просто видео, таймлайн без плеера некуда перематывать.\n\nСсылки подписаны и живут час, поэтому маршрут динамический: отрисованные на сервере, они кешировались бы вместе со страницей и протухали молча.\n\n`timeline: null` — законное состояние, а не отказ: так выглядят прогоны, начатые до того, как пакет материала стал сохраняться, и прогоны, у которых Mongo была недоступна в момент записи (причина тогда в `degraded` отчёта).",
+        "tags": [
+          "Прогон"
+        ],
+        "operationId": "taskTimeline",
+        "responses": {
+          "200": {
+            "description": "Таймлайн и ссылка на ролик",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "video": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "Подписанная ссылка на ролик. null — S3 не настроен либо ролика нет."
+                    },
+                    "timeline": {
+                      "type": "object",
+                      "nullable": true,
+                      "properties": {
+                        "durationSec": {
+                          "type": "number"
+                        },
+                        "stitched": {
+                          "type": "boolean"
+                        },
+                        "cells": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "start": {
+                                "type": "number"
+                              },
+                              "end": {
+                                "type": "number"
+                              },
+                              "scene": {
+                                "type": "string",
+                                "nullable": true
+                              },
+                              "mood": {
+                                "type": "string",
+                                "nullable": true
+                              },
+                              "isCut": {
+                                "type": "boolean",
+                                "description": "Граница от монтажной склейки, а не от нарезки длинной сцены на блоки."
+                              },
+                              "screenshot": {
+                                "type": "string",
+                                "nullable": true
+                              },
+                              "lines": {
+                                "type": "array",
+                                "items": {
+                                  "type": "object",
+                                  "properties": {
+                                    "start": {
+                                      "type": "number"
+                                    },
+                                    "end": {
+                                      "type": "number"
+                                    },
+                                    "text": {
+                                      "type": "string"
+                                    },
+                                    "speaker": {
+                                      "type": "string",
+                                      "nullable": true
+                                    }
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        },
+                        "stats": {
+                          "type": "object",
+                          "properties": {
+                            "scenesTotal": {
+                              "type": "integer"
+                            },
+                            "speakers": {
+                              "type": "integer"
+                            },
+                            "words": {
+                              "type": "integer"
+                            },
+                            "linesTotal": {
+                              "type": "integer"
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Нет сессии"
+          },
+          "404": {
+            "description": "Прогон не найден либо принадлежит другой команде"
+          }
+        }
+      }
+    },
     "/api/upload/complete": {
       "post": {
         "summary": "Подтвердить загрузку",

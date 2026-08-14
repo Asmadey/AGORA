@@ -71,6 +71,29 @@ export interface ReportView {
    * экран не пытается — он просто не показывает секцию.
    */
   asked: { id: string; label: string; type: string }[];
+  /**
+   * Средняя готовность рекомендовать, 1–10.
+   *
+   * Рядом с NPS, а не вместо него. NPS — доля промоутеров минус доля критиков,
+   * он лежит в −100…+100 и при почти сплошных критиках честно даёт −86. Число
+   * без подписи шкалы читается как ошибка расчёта, а среднее по той же шкале
+   * 1–10 отвечает на вопрос «а насколько всё-таки плохо».
+   */
+  recommendation: number | null;
+  /**
+   * Сводка QA: сколько ответов проверено и сколько исключено из агрегата.
+   *
+   * Именно «исключено», а не «пересоздано»: механизма перегенерации в системе
+   * нет — забракованный ответ выбывает из расчёта и не переспрашивается.
+   */
+  qa: {
+    checked: number;
+    flagged: number;
+    byKind: { kind: string; count: number }[];
+    bySource: { source: string; count: number }[];
+    escalated: number;
+    judgeFailures: number;
+  } | null;
   disclaimer: string | null;
   degraded: string[];
 }
@@ -151,6 +174,32 @@ function scoresOf(source: Record<string, unknown>): Record<Criterion, number | n
   const out = {} as Record<Criterion, number | null>;
   for (const c of CRITERIA) out[c] = num(source[c]);
   return out;
+}
+
+/**
+ * Сводка QA из отчёта. `null` — прогон сделан до её появления.
+ *
+ * `null`, а не нули: «проверено 0» и «не знаем, проверялось ли» — разные факты,
+ * и первый на экране означал бы, что судья не посмотрел ни одного ответа.
+ */
+function qaOf(value: unknown): ReportView["qa"] {
+  const raw = obj(value);
+  if (Object.keys(raw).length === 0) return null;
+
+  const counts = (source: unknown, key: "kind" | "source") =>
+    Object.entries(obj(source))
+      .map(([name, count]) => ({ [key]: name, count: num(count) ?? 0 }))
+      .filter((row) => row.count > 0)
+      .sort((a, b) => b.count - a.count);
+
+  return {
+    checked: num(raw.checked) ?? 0,
+    flagged: num(raw.flagged) ?? 0,
+    byKind: counts(raw.by_kind, "kind") as { kind: string; count: number }[],
+    bySource: counts(raw.by_source, "source") as { source: string; count: number }[],
+    escalated: num(raw.escalated) ?? 0,
+    judgeFailures: num(raw.judge_failures) ?? 0,
+  };
 }
 
 function quotesOf(value: unknown): Quote[] {
@@ -236,6 +285,8 @@ export function parseReport(raw: Record<string, unknown>): ReportView {
     }),
     strengths: strings(raw.strengths),
     weaknesses: strings(raw.weaknesses),
+    recommendation: num(agg.recommendation_mean),
+    qa: qaOf(raw.qa_summary),
     asked: (Array.isArray(raw.survey_asked) ? raw.survey_asked : []).flatMap((rawQ) => {
       const q = obj(rawQ);
       const label = str(q.label);

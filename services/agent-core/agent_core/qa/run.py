@@ -65,6 +65,46 @@ class QaOutcome:
     def flagged(self) -> list[dict[str, Any]]:
         return [v for v in self.verdicts if v.get("verdict") == "regenerate"]
 
+    def summary(self) -> dict[str, Any]:
+        """
+        Сводка для экрана исследования.
+
+        ─── Почему её приходится считать здесь ─────────────────────────────
+        Наружу из прогона уходили только `flagged` — те вердикты, что требуют
+        перегенерации. По ним видно, сколько ответов исключено, и не видно
+        ничего больше: ни по каким видам проверки, ни кем забраковано (правило
+        или судья), ни сколько вердиктов ушло на эскалацию. Полный список
+        вердиктов живёт в `qa_report.json` в рабочем каталоге прогона, а он
+        внутри контейнера и умирает вместе с ним.
+
+        ─── Про перегенерацию, которой нет ─────────────────────────────────
+        Забракованный ответ ИСКЛЮЧАЕТСЯ из агрегата, а не переспрашивается:
+        механизма перегенерации в системе нет. Поэтому здесь нет и не может быть
+        поля «сколько персон пересоздано» — писать в него ноль значило бы
+        обещать несуществующий механизм, а не сообщать факт.
+        """
+        flagged = self.flagged
+        by_kind: dict[str, int] = {}
+        by_source: dict[str, int] = {}
+        for verdict in flagged:
+            kind = str(verdict.get("kind") or "неизвестно")
+            source = str(verdict.get("source") or "неизвестно")
+            by_kind[kind] = by_kind.get(kind, 0) + 1
+            by_source[source] = by_source.get(source, 0) + 1
+
+        return {
+            "checked": len(self.verdicts),
+            "flagged": len(flagged),
+            "by_kind": by_kind,
+            "by_source": by_source,
+            "escalated": self.escalated,
+            # Отказы судьи: ответ, по которому судья не высказался, остаётся в
+            # агрегате. Знать их число обязательно — иначе «проверено N» читается
+            # как «N проверок прошло», а не «N попыток сделано».
+            "judge_failures": self.failures,
+            "degraded": list(self.degraded),
+        }
+
 
 def _verdict(
     kind: str,

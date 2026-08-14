@@ -250,6 +250,63 @@ export async function launchTask(
   return toTask(existing.rows[0], false);
 }
 
+export interface RunTiming {
+  /** Сколько шёл прогон целиком, в секундах. null — не запускался или не завершён. */
+  totalSec: number | null;
+  /** Длительность по этапам: [{node, durationSec}]. Пусто у прогонов до #В. */
+  nodes: { node: string; durationSec: number | null; status: string }[];
+}
+
+/**
+ * Сколько занял прогон и его этапы.
+ *
+ * ─── Откуда числа ──────────────────────────────────────────────────────────
+ * `started_at` и `finished_at` ставит воркер при смене статуса; разбивка по
+ * этапам приезжает в `progress` в конце прогона (`_save_timings`). До этого
+ * колонка `progress` была заведена в схеме и не писалась никем, а снимок
+ * прогресса в Valkey перезаписывался на каждое событие — то есть длительность
+ * этапа не хранилась нигде, и «Время обработки» показывать было нечем.
+ *
+ * Пустая разбивка при непустом `totalSec` — это прогон, сделанный до появления
+ * замеров. Показывать вместо неё нули значило бы утверждать, что этапы прошли
+ * мгновенно.
+ */
+export async function loadRunTiming(
+  client: PoolClient,
+  id: string,
+): Promise<RunTiming> {
+  const { rows } = await client.query<{
+    started_at: Date | null;
+    finished_at: Date | null;
+    progress: { timings?: unknown } | null;
+  }>("SELECT started_at, finished_at, progress FROM tasks WHERE id = $1", [id]);
+
+  const row = rows[0];
+  if (!row) return { totalSec: null, nodes: [] };
+
+  const totalSec =
+    row.started_at && row.finished_at
+      ? (row.finished_at.getTime() - row.started_at.getTime()) / 1000
+      : null;
+
+  const raw = Array.isArray(row.progress?.timings) ? row.progress.timings : [];
+  const nodes = raw.flatMap((item) => {
+    const entry = (item ?? {}) as Record<string, unknown>;
+    const node = typeof entry.node === "string" ? entry.node : null;
+    if (!node) return [];
+    return [{
+      node,
+      durationSec:
+        typeof entry.duration_sec === "number" && Number.isFinite(entry.duration_sec)
+          ? entry.duration_sec
+          : null,
+      status: typeof entry.status === "string" ? entry.status : "неизвестно",
+    }];
+  });
+
+  return { totalSec, nodes };
+}
+
 export async function getTask(
   client: PoolClient,
   id: string,

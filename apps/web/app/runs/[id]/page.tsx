@@ -3,15 +3,18 @@ import { MessageCircle, RotateCcw } from "lucide-react";
 import { PageHeader } from "@/components/AppShell";
 import {
   Chip,
-  HypothesisNotice,
   ScoreBar,
   StatCard,
   TimecodeRef,
 } from "@/components/agora/Primitives";
+import { DeleteRunButton } from "@/components/agora/DeleteRunButton";
 import { PersonaAccordion } from "@/components/agora/PersonaAccordion";
+import { Timeline } from "@/components/agora/Timeline";
 import { ShareDialog } from "@/components/agora/ShareDialog";
+import { withTenant } from "@/lib/server/db";
 import { requireSession } from "@/lib/server/guard";
 import { loadReport, loadReportPersonas } from "@/lib/server/reports";
+import { loadRunTiming } from "@/lib/server/tasks";
 import { parseAnswer, parseReport } from "@/lib/report-view";
 import { CRITERIA, CRITERIA_LABELS } from "@/lib/agora-types";
 
@@ -60,11 +63,12 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
   const view = parseReport(envelope.report);
   const { items } = await loadReportPersonas(session, id, { limit: FIRST_PAGE });
   const answers = items.map(parseAnswer);
+  const timing = await withTenant(tenantId, (client) => loadRunTiming(client, id));
 
   return (
     <>
       <PageHeader
-        title="Отчёт по прогону"
+        title={`Исследование ${id}`}
         subtitle={
           `${envelope.audienceSize} ответов` +
           (view.replicationCount > 1 ? ` · перекрытие ×${view.replicationCount}` : "") +
@@ -87,13 +91,15 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
               Перезапустить
             </Link>
             <ShareDialog />
+            {/* Удаление стоит последним и красное: оно уносит отчёт, за который
+                заплачено моделью, и отменить его нечем. Подтверждение — внутри
+                кнопки, диалог здесь тяжелее задачи. */}
+            <DeleteRunButton runId={id} variant="danger" />
           </>
         }
       />
 
       <div className="space-y-8 p-8">
-        <HypothesisNotice replication={view.replicationCount} />
-
         {/* Чего в отчёте не хватает и почему. Молчаливая деградация выглядит
             как полный отчёт, и отличить её можно только по коду. */}
         {view.degraded.length > 0 && (
@@ -112,17 +118,32 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
             рядом намеренно. Первая считается по retention_intent: он
             категориален, и процента просмотра из него не выводится. Вторая
             приходит из шкального вопроса анкеты, и без него честно пуста. */}
-        <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+        <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
           <StatCard
             label="Общее впечатление"
             value={fmt(view.scores.overall_impression, 1)}
             hint="из 10"
           />
+          {/* Шкала подписана намеренно. NPS лежит в −100…+100, и «−86» без
+              подписи читается как ошибка расчёта, а не как «почти все критики».
+              Рядом — среднее по той же шкале 1–10: оно отвечает на следующий
+              вопрос читателя, «насколько всё-таки плохо». Одно другое не
+              заменяет: NPS чувствителен к поляризации, среднее — нет. */}
           <StatCard
             label="NPS"
             value={fmt(view.nps, 0)}
-            hint="доля промоутеров минус критиков"
+            hint="промоутеры минус критики, шкала −100…+100"
             tone={view.nps === null ? undefined : view.nps < 0 ? "bad" : view.nps > 30 ? "good" : "warn"}
+          />
+          <StatCard
+            label="Готовность рекомендовать"
+            value={fmt(view.recommendation, 1)}
+            hint="среднее по шкале 1–10"
+            tone={
+              view.recommendation === null
+                ? undefined
+                : view.recommendation < 5 ? "bad" : view.recommendation >= 8 ? "good" : "warn"
+            }
           />
           <StatCard
             label="Досмотрят до конца"
@@ -145,6 +166,17 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
             value={fmt(view.emotionalIndex, 1)}
             hint="из 10"
           />
+          {/* Прочерк, а не ноль: прогоны до появления замеров не знают своей
+              длительности, и «0 с» утверждало бы, что обработка была мгновенной. */}
+          <StatCard
+            label="Время обработки"
+            value={timing.totalSec === null ? "—" : formatDuration(timing.totalSec)}
+            hint={
+              timing.nodes.length > 0
+                ? `${timing.nodes.length} этапов · дольше всего ${longestNode(timing.nodes)}`
+                : "разбивка по этапам не записана"
+            }
+          />
         </section>
 
         {/* Нарратив: главный текст отчёта */}
@@ -163,11 +195,11 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
           {/* Критерии */}
           <section className="rounded-lg border border-hairline bg-card p-6">
             <h2 className="text-sm font-semibold">Оценки по критериям</h2>
-            {view.replicationCount > 1 && (
-              <p className="mt-0.5 text-xs text-slate">
-                Затемнённая зона на шкале — разброс между повторами
-              </p>
-            )}
+            <p className="mt-0.5 text-xs text-slate">
+              {view.replicationCount > 1
+                ? "Затемнённая зона на шкале — разброс между повторами"
+                : "Перекрытие равно 1: разброс между повторами не измерялся"}
+            </p>
             <div className="mt-5 space-y-4">
               {CRITERIA.map((c) => (
                 <ScoreBar
@@ -348,6 +380,84 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
           </section>
         )}
 
+        {/* Разбор материала: плеер и таймлайн.
+            Стоит выше персон и ниже чисел: сначала «сколько», потом «что именно
+            видела персона», потом «кто что сказал». Без этой секции ни одну
+            ссылку персоны на материал проверить нельзя — остаётся верить. */}
+        <section>
+          <h2 className="mb-1 text-sm font-semibold">Материал</h2>
+          <p className="mb-4 text-xs text-slate">
+            То, что видели персоны: описание сцены и реплики на её отрезке. Клик по
+            сцене перематывает ролик
+          </p>
+          <Timeline runId={id} />
+        </section>
+
+        {/* Проверка ответов.
+            Панель называет вещи своими именами: «исключено из агрегата», а не
+            «пересоздано». Перегенерации в системе нет — забракованный ответ
+            выбывает из расчёта и не переспрашивается, и писать сюда «пересоздано
+            0» значило бы обещать несуществующий механизм. */}
+        {view.qa && (
+          <section className="rounded-lg border border-hairline bg-card p-6">
+            <h2 className="text-sm font-semibold">Проверка ответов</h2>
+            <p className="mt-0.5 text-xs text-slate">
+              Отчёт построен на {view.sampleSize} ответах
+              {view.qa.flagged > 0 && ` · ${view.qa.flagged} исключено из агрегата`}
+            </p>
+            <dl className="mt-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+              <div>
+                <dt className="text-xs text-slate">Проверено вердиктов</dt>
+                <dd className="mt-0.5 text-lg tabular-nums">{view.qa.checked}</dd>
+              </div>
+              <div>
+                <dt className="text-xs text-slate">Исключено из агрегата</dt>
+                <dd className="mt-0.5 text-lg tabular-nums">{view.qa.flagged}</dd>
+              </div>
+              <div>
+                <dt className="text-xs text-slate">Ушло на эскалацию</dt>
+                <dd className="mt-0.5 text-lg tabular-nums">{view.qa.escalated}</dd>
+              </div>
+              <div>
+                <dt className="text-xs text-slate">Судья не ответил</dt>
+                <dd className="mt-0.5 text-lg tabular-nums">{view.qa.judgeFailures}</dd>
+              </div>
+            </dl>
+            {(view.qa.byKind.length > 0 || view.qa.bySource.length > 0) && (
+              <div className="mt-5 grid gap-4 sm:grid-cols-2">
+                {view.qa.byKind.length > 0 && (
+                  <div>
+                    <p className="text-xs text-slate">По видам проверки</p>
+                    <ul className="mt-1 space-y-0.5 text-sm">
+                      {view.qa.byKind.map((row) => (
+                        <li key={row.kind}>
+                          {QA_KINDS[row.kind] ?? row.kind} — {row.count}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+                {view.qa.bySource.length > 0 && (
+                  <div>
+                    <p className="text-xs text-slate">Кто забраковал</p>
+                    <ul className="mt-1 space-y-0.5 text-sm">
+                      {view.qa.bySource.map((row) => (
+                        <li key={row.source}>
+                          {QA_SOURCES[row.source] ?? row.source} — {row.count}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </div>
+            )}
+            <p className="mt-5 text-xs leading-relaxed text-slate">
+              Забракованный ответ исключается из расчёта, а не переспрашивается:
+              перегенерации ответов в системе нет.
+            </p>
+          </section>
+        )}
+
         {/*
           Заданные вопросы.
 
@@ -400,6 +510,45 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
     </>
   );
 }
+
+/** Секунды → «4 мин 12 с». Часы появляются только когда они есть. */
+function formatDuration(sec: number): string {
+  const total = Math.max(0, Math.round(sec));
+  if (total < 60) return `${total} с`;
+  const m = Math.floor(total / 60) % 60;
+  const h = Math.floor(total / 3600);
+  return h > 0 ? `${h} ч ${m} мин` : `${m} мин ${total % 60} с`;
+}
+
+/** Самый долгий этап — то, чем объясняется длительность прогона. */
+function longestNode(
+  nodes: { node: string; durationSec: number | null }[],
+): string {
+  const worst = nodes.reduce<{ node: string; durationSec: number | null } | null>(
+    (best, n) =>
+      n.durationSec !== null && (best === null || n.durationSec > (best.durationSec ?? 0))
+        ? n
+        : best,
+    null,
+  );
+  return worst && worst.durationSec !== null
+    ? `${worst.node} (${formatDuration(worst.durationSec)})`
+    : "неизвестно";
+}
+
+/** Виды проверки QA в человеческих словах. Ключи — из agent_core/qa/run.py. */
+const QA_KINDS: Record<string, string> = {
+  consistency: "Противоречия внутри ответа",
+  grounding: "Ссылки на материал",
+  diversity: "Однообразие ответов",
+};
+
+/** Источник вердикта: правило считает код, судью спрашивает модель. */
+const QA_SOURCES: Record<string, string> = {
+  rule: "правило",
+  judge: "судья",
+  escalated: "судья после эскалации",
+};
 
 /** Прочерк, а не ноль: «не посчитано» и «посчитано, вышло ноль» — разные факты. */
 function fmt(value: number | null, digits: number): string {

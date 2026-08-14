@@ -111,6 +111,7 @@ def build_report(
     artifact_path: Path | None = None,
     personas: list[dict[str, Any]] | None = None,
     asked: list[dict[str, Any]] | None = None,
+    qa_summary: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Отчёт: посчитанный агрегат, точки риска и отсеянный по опорам синтез."""
     degraded: list[str] = []
@@ -138,6 +139,10 @@ def build_report(
         # и что анкета доехала, и о чём спрашивали — анкету могли отредактировать
         # уже после прогона, и тогда экран показывал бы не то.
         "survey_asked": list(asked or []),
+        # Сводка QA: сколько ответов проверено и сколько исключено, по видам и
+        # по источнику вердикта. Экран называет вещи своими именами — «исключено
+        # из агрегата», а не «пересоздано»: перегенерации в системе нет.
+        "qa_summary": dict(qa_summary or {}),
         "narrative": [],
         "themes": [],
         "disagreements": [],

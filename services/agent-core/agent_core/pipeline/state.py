@@ -91,6 +91,9 @@ class PipelineState(TypedDict, total=False):
 
     # ── QA и аналитика (#19, #20) ───────────────────────────────────────────
     qa_flags: list[dict[str, Any]]
+    #: Сводка проверки: сколько проверено, сколько забраковано, по каким видам и
+    #: кем. Полный список вердиктов остаётся в артефакте прогона.
+    qa_summary: dict[str, Any]
     report: dict[str, Any] | None
 
     # ── Служебное ───────────────────────────────────────────────────────────
@@ -159,6 +162,7 @@ def new_state(
         persona_answers=[],
         survey_asked=[],
         qa_flags=[],
+        qa_summary={},
         report=None,
         status=STATUS_QUEUED,
         progress={},

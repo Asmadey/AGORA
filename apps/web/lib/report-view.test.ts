@@ -184,3 +184,69 @@ test("подпись сегмента идёт в фиксированном п�
     "60+ · столицы · жен",
   );
 });
+
+// ─── Экран исследования (этап Г) ──────────────────────────────────────────
+
+test("сводка QA отсутствует у прогонов, сделанных до её появления", () => {
+  // null, а не нули. «Проверено 0» на экране означало бы, что судья не посмотрел
+  // ни одного ответа, — то есть утверждение о прогоне вместо признания незнания.
+  assert.equal(parseReport({}).qa, null);
+  assert.equal(parseReport({ qa_summary: {} }).qa, null);
+});
+
+test("сводка QA разбирается и сортируется по убыванию", () => {
+  const view = parseReport({
+    qa_summary: {
+      checked: 30,
+      flagged: 7,
+      by_kind: { grounding: 5, consistency: 2, diversity: 0 },
+      by_source: { judge: 6, rule: 1 },
+      escalated: 3,
+      judge_failures: 1,
+    },
+  });
+
+  assert.equal(view.qa?.checked, 30);
+  assert.equal(view.qa?.flagged, 7);
+  assert.equal(view.qa?.escalated, 3);
+  assert.equal(view.qa?.judgeFailures, 1);
+  // Нулевые виды не показываются: строка «однообразие — 0» читается как
+  // результат проверки, а не как её отсутствие.
+  assert.deepEqual(view.qa?.byKind, [
+    { kind: "grounding", count: 5 },
+    { kind: "consistency", count: 2 },
+  ]);
+  assert.deepEqual(view.qa?.bySource, [
+    { source: "judge", count: 6 },
+    { source: "rule", count: 1 },
+  ]);
+});
+
+test("готовность рекомендовать читается отдельно от NPS", () => {
+  // Две разные величины по одной шкале ответов. NPS в −100…+100 чувствителен к
+  // поляризации, среднее 1–10 — нет, и расходятся они как раз на интересных
+  // случаях. Подменить одно другим значит потерять этот сигнал.
+  const view = parseReport({ aggregate: { nps: -86, recommendation_mean: 3.4 } });
+  assert.equal(view.nps, -86);
+  assert.equal(view.recommendation, 3.4);
+
+  // Прогон до появления поля: прочерк, а не ноль.
+  assert.equal(parseReport({ aggregate: { nps: -86 } }).recommendation, null);
+});
+
+test("заданные вопросы берутся из отчёта, а не из анкеты", () => {
+  const view = parseReport({
+    survey_asked: [
+      { id: "base-1", label: "Общее впечатление", type: "scale" },
+      { id: "q-7", label: "", type: "open" },
+      { label: "Без идентификатора", type: "open" },
+    ],
+  });
+
+  // Вопрос без формулировки выбрасывается: строка «q-7 ()» на экране выглядит
+  // как заданный вопрос, которого персона не видела.
+  assert.deepEqual(view.asked, [
+    { id: "base-1", label: "Общее впечатление", type: "scale" },
+    { id: "?", label: "Без идентификатора", type: "open" },
+  ]);
+});

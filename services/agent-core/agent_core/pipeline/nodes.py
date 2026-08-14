@@ -641,7 +641,13 @@ def qa(state: PipelineState) -> dict[str, Any]:
         artifact_path=workdir(state) / "qa_report.json",
     )
 
-    update: dict[str, Any] = {"qa_flags": outcome.flagged}
+    update: dict[str, Any] = {
+        "qa_flags": outcome.flagged,
+        # Сводка едет в состояние и дальше в отчёт: полный список вердиктов
+        # лежит в qa_report.json внутри контейнера и умирает вместе с ним, а
+        # экран обязан показать, сколько ответов забраковано и по каким видам.
+        "qa_summary": outcome.summary(),
+    }
     degraded.extend(outcome.degraded)
     if outcome.failures:
         degraded.append(f"qa: отказов судьи {outcome.failures}")
@@ -700,6 +706,7 @@ def analytics(state: PipelineState) -> dict[str, Any]:
         replication_count=int(state.get("replication_count") or 1),
         artifact_path=workdir(state) / "report.json",
         asked=state.get("survey_asked") or [],
+        qa_summary=state.get("qa_summary") or {},
         # Запасной источник среза для посегментного разреза. Ответы нового
         # прогона несут срез сами, и тогда реестр не читается вовсе.
         personas=_personas_for_segments(state, degraded),
