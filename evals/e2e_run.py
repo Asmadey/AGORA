@@ -69,6 +69,14 @@ ARTIFACT_NAME = {
 #: означало, а посегментный разрез при этом честно скрывался порогом.
 AUDIENCE_SIZE = 12
 
+#: Сколько ждать наполнения набора персон.
+#:
+#: Генерация ушла в воркер и стала фоновой: маршрут отвечает 202, а персон пишет
+#: Celery-задача. Обогащение — последовательный цикл с вызовом модели на каждую
+#: персону, поэтому двенадцать персон занимают минуты, а не секунды.
+AUDIENCE_TIMEOUT_SEC = 600
+AUDIENCE_POLL_SEC = 5
+
 #: Какая доля аудитории обязана пережить QA, чтобы отчёту можно было верить.
 #:
 #: Две трети — не круглое число ради круглости: при перекрытии 1 и двенадцати
@@ -235,13 +243,47 @@ def make_audience(client: ApiClient, seed: int) -> str:
         "genders": ["муж", "жен"],
     })
     set_id = made.get("personaSetId") or (made.get("personaSet") or {}).get("id")
-    generated = int(made.get("size") or 0)
     if not set_id:
         raise RunFailed(f"набор персон не создан: {json.dumps(made, ensure_ascii=False)[:200]}")
+
+    # ── Ожидание фоновой генерации ──────────────────────────────────────────
+    #
+    # Маршрут отвечает 202: набор заведён, персон в нём ещё нет — их пишет
+    # воркер. Поле `size` в ответе — это ЗАКАЗАННЫЙ размер, а не готовый, и
+    # читать его как готовый было ошибкой прогонщика: он тут же шёл запускать
+    # прогон, а запуск отказывал «в наборе нет ни одной персоны». Три прогона
+    # подряд не состоялись именно так, причём каждый успел оплатить загрузку
+    # ролика.
+    #
+    # Опрос, а не мгновенная проверка: обогащение — последовательный цикл по
+    # персонам с вызовом модели на каждую, и двенадцать персон занимают минуты.
+    deadline = time.time() + AUDIENCE_TIMEOUT_SEC
+    generated = 0
+    status = "generating"
+    while time.time() < deadline:
+        sets = api(client, "/api/persona-sets", "GET").get("personaSets") or []
+        mine = next((s for s in sets if str(s.get("id")) == str(set_id)), None)
+        if mine is None:
+            raise RunFailed(f"набор {set_id} исчез из списка сразу после создания")
+        status = str(mine.get("status") or "")
+        generated = int(mine.get("personaCount") or mine.get("generatedCount") or 0)
+        if status == "failed":
+            raise RunFailed(
+                f"генерация набора {set_id} провалилась: {mine.get('error') or 'без причины'}"
+            )
+        if status == "ready":
+            break
+        time.sleep(AUDIENCE_POLL_SEC)
+    else:
+        raise RunFailed(
+            f"набор {set_id} не наполнился за {AUDIENCE_TIMEOUT_SEC} с "
+            f"(статус {status}, персон {generated}) — смотрите лог воркера"
+        )
+
     if generated == 0:
         raise RunFailed(
-            f"набор {set_id} создан, но персон в нём ноль — прогон дошёл бы до "
-            f"опроса и упал там. Ответ: {json.dumps(made, ensure_ascii=False)[:200]}"
+            f"набор {set_id} готов, но персон в нём ноль — прогон дошёл бы до "
+            f"опроса и упал там"
         )
     log(f"  аудитория {set_id}: {generated} персон")
     return str(set_id)
