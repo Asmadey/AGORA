@@ -59,6 +59,18 @@ export interface ReportView {
   minSegmentPersonas: number;
   /** null — разрез не считали (в ответах не было среза DNA). */
   hasSegments: boolean;
+  /**
+   * Вопросы, которые персоны действительно получили в промпте.
+   *
+   * Не анкета из базы: анкету можно отредактировать после прогона, и тогда
+   * экран показывал бы не то, что спрашивали. Воркер собирает этот список из
+   * готовой строки промпта — то есть из того, что ушло в модель.
+   *
+   * Пусто у прогонов до появления поля и у прогонов без анкеты (они законны:
+   * пять базовых критериев живут в формате ответа). Различать эти два случая
+   * экран не пытается — он просто не показывает секцию.
+   */
+  asked: { id: string; label: string; type: string }[];
   disclaimer: string | null;
   degraded: string[];
 }
@@ -224,6 +236,12 @@ export function parseReport(raw: Record<string, unknown>): ReportView {
     }),
     strengths: strings(raw.strengths),
     weaknesses: strings(raw.weaknesses),
+    asked: (Array.isArray(raw.survey_asked) ? raw.survey_asked : []).flatMap((rawQ) => {
+      const q = obj(rawQ);
+      const label = str(q.label);
+      if (!label) return [];
+      return [{ id: str(q.id) ?? "?", label, type: str(q.type) ?? "открытый" }];
+    }),
     riskPoints: (Array.isArray(raw.retention_risk_points) ? raw.retention_risk_points : [])
       .flatMap((rawPoint) => {
         const p = obj(rawPoint);

@@ -348,6 +348,38 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
           </section>
         )}
 
+        {/*
+          Заданные вопросы.
+
+          Секция отвечает на вопрос, который иначе проверяется только чтением
+          кода: получила ли персона анкету. Список собран воркером из готовой
+          строки промпта — то есть из того, что действительно ушло в модель, а
+          не из анкеты в базе, которую после прогона можно отредактировать.
+        */}
+        {view.asked.length > 0 && (
+          <section>
+            <h2 className="mb-1 text-sm font-semibold">Заданные вопросы</h2>
+            <p className="mb-4 text-xs text-slate">
+              {view.asked.length}{" "}
+              {view.asked.length === 1 ? "вопрос" : view.asked.length < 5 ? "вопроса" : "вопросов"}{" "}
+              в том виде, в каком их получила каждая персона
+            </p>
+            <ol className="space-y-2 text-sm">
+              {view.asked.map((q, index) => (
+                <li key={q.id} className="flex gap-3">
+                  <span className="w-6 shrink-0 text-right tabular-nums text-slate">
+                    {index + 1}.
+                  </span>
+                  <span className="flex-1">
+                    {q.label}
+                    <span className="ml-2 text-xs text-slate">{q.type}</span>
+                  </span>
+                </li>
+              ))}
+            </ol>
+          </section>
+        )}
+
         {/* Персоны */}
         <section>
           <h2 className="mb-1 text-sm font-semibold">Ответы по персонам</h2>

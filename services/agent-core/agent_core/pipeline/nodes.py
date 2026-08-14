@@ -318,6 +318,23 @@ def evaluate_personas(state: PipelineState) -> dict[str, Any]:
             "персоны не загружены: persona_ids пуст или нет доступа к Postgres"
         )
 
+    # Промпты — из снимка прогона, а не из файла в образе.
+    #
+    # Снимок пиннит каждый активный промпт реестра, включая эти два, и делает
+    # это ровно затем, чтобы правка в Промпт-студии не меняла прежние прогоны.
+    # Пока шаблоны сюда не передавались, run_survey читал файлы: снимок для
+    # главного промпта продукта записывался и не использовался, а отчёт
+    # ссылался на версию, по которой прогон не шёл. Разойтись эти два источника
+    # могут только после первой правки промпта — то есть дефект просыпается в
+    # тот день, когда Промпт-студией начинают пользоваться.
+    degraded: list[str] = []
+    system_template, why = _prompt("respondent.system", state)
+    if why:
+        degraded.append(why)
+    user_template, why = _prompt("respondent.user", state)
+    if why:
+        degraded.append(why)
+
     outcome = run_survey(
         personas=personas,
         pack=state.get("content_pack_compact") or {},
@@ -325,10 +342,20 @@ def evaluate_personas(state: PipelineState) -> dict[str, Any]:
         client=QwenRespondentClient(),
         replication_count=int(state.get("replication_count") or 1),
         artifact_path=workdir(state) / "persona_answers.json",
+        system_template=system_template,
+        user_template=user_template,
     )
-    update: dict[str, Any] = {"persona_answers": outcome.answers}
+    update: dict[str, Any] = {
+        "persona_answers": outcome.answers,
+        # Заданные вопросы едут в состояние: отчёт обязан показывать те
+        # формулировки, которые получили персоны, а не те, что лежат в анкете
+        # на момент чтения отчёта.
+        "survey_asked": outcome.asked,
+    }
     if outcome.failures:
-        update["degraded"] = [f"evaluate_personas: отказов {outcome.failures}"]
+        degraded.append(f"evaluate_personas: отказов {outcome.failures}")
+    if degraded:
+        update["degraded"] = degraded
     return update
 
 
@@ -502,6 +529,7 @@ def analytics(state: PipelineState) -> dict[str, Any]:
         template=template,
         replication_count=int(state.get("replication_count") or 1),
         artifact_path=workdir(state) / "report.json",
+        asked=state.get("survey_asked") or [],
         # Запасной источник среза для посегментного разреза. Ответы нового
         # прогона несут срез сами, и тогда реестр не читается вовсе.
         personas=_personas_for_segments(state, degraded),

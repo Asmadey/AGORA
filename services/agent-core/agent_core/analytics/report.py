@@ -110,6 +110,7 @@ def build_report(
     replication_count: int = 1,
     artifact_path: Path | None = None,
     personas: list[dict[str, Any]] | None = None,
+    asked: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Отчёт: посчитанный агрегат, точки риска и отсеянный по опорам синтез."""
     degraded: list[str] = []
@@ -132,6 +133,11 @@ def build_report(
         ),
         "based_on_answers": len(kept),
         "excluded_by_qa": agg.get("excluded_by_qa", 0),
+        # Вопросы, которые персоны действительно получили в промпте. Список
+        # собран узлом опроса из готовой строки, а не из анкеты: по нему видно
+        # и что анкета доехала, и о чём спрашивали — анкету могли отредактировать
+        # уже после прогона, и тогда экран показывал бы не то.
+        "survey_asked": list(asked or []),
         "narrative": [],
         "themes": [],
         "disagreements": [],

@@ -83,6 +83,11 @@ class PipelineState(TypedDict, total=False):
     survey: dict[str, Any] | None
     replication_count: int
     persona_answers: list[dict[str, Any]]
+    #: Вопросы, которые действительно ушли в промпт персоны: [{id, label, type}].
+    #: Не копия анкеты: список собирается из готового промпта, поэтому по нему
+    #: видно и то, что анкета доехала, и то, о чём именно спрашивали — анкету
+    #: могли отредактировать уже после прогона.
+    survey_asked: list[dict[str, Any]]
 
     # ── QA и аналитика (#19, #20) ───────────────────────────────────────────
     qa_flags: list[dict[str, Any]]
@@ -146,6 +151,7 @@ def new_state(
         survey=survey,
         replication_count=replication_count,
         persona_answers=[],
+        survey_asked=[],
         qa_flags=[],
         report=None,
         status=STATUS_QUEUED,

@@ -188,6 +188,48 @@ def _render_questions(survey: Any) -> str:
     return "\n".join(lines) if lines else "(анкета пуста)"
 
 
+def _asked_questions(user_prompt: str, survey: Any) -> list[dict[str, Any]]:
+    """
+    Какие вопросы действительно оказались в промпте. Иначе — отказ.
+
+    Читается из собранной строки, а не из анкеты: смысл поля именно в том,
+    чтобы поймать случай «анкета есть, в промпте её нет». Список, собранный из
+    аргумента, подтвердил бы сам себя.
+
+    Пустая анкета — законное состояние: прогон идёт по пяти базовым критериям
+    из формата ответа. Поэтому пусто здесь значит пусто, а не отказ.
+    """
+    questions = survey_questions(survey)
+    if not questions:
+        return []
+
+    missing = [q for q in questions if question_label(q) not in user_prompt]
+    if missing:
+        ids = ", ".join(str(q.get("id", "?")) for q in missing)
+        hint = (
+            "в шаблоне нет метки {{survey_questions}} — подстановка строкой "
+            "молча не сработала"
+            if "{{survey_questions}}" not in user_prompt
+            and "(анкета пуста)" not in user_prompt
+            else "формулировки не дошли до промпта"
+        )
+        raise ValueError(
+            f"анкета не доехала до персоны ({hint}); не заданы вопросы: {ids}. "
+            f"Прогон остановлен до первого обращения к модели: персоны заполнили бы "
+            f"survey_answers по формату ответа, придумав вопросы сами, и отчёт "
+            f"выглядел бы обычным."
+        )
+
+    return [
+        {
+            "id": q.get("id"),
+            "label": question_label(q),
+            "type": q.get("type", "открытый"),
+        }
+        for q in questions
+    ]
+
+
 # ─── Разбор ответа ───────────────────────────────────────────────────────────
 
 _FENCE = re.compile(r"^```[a-zA-Z]*\n|\n```$")
@@ -221,6 +263,13 @@ class SurveyOutcome:
     failures: int = 0
     failure_reasons: list[str] = field(default_factory=list)
     diversity: dict[str, Any] = field(default_factory=dict)
+    #: Вопросы, которые действительно ушли в промпт: [{id, label, type}].
+    #:
+    #: Не копия анкеты из аргумента, а то, что найдено в собранном user-промпте.
+    #: Разница существенна ровно в том случае, ради которого поле заведено:
+    #: анкета есть, а в промпт она не попала. И отдельно — анкету могли
+    #: отредактировать после прогона, а отчёт обязан показывать заданное тогда.
+    asked: list[dict[str, Any]] = field(default_factory=list)
 
 
 # ─── Прогон ──────────────────────────────────────────────────────────────────
@@ -256,6 +305,25 @@ def run_survey(
         )
 
     outcome = SurveyOutcome()
+
+    # ── Анкета доехала до промпта? Проверяется ДО первого вызова модели ──────
+    #
+    # Подстановка идёт строкой: нет метки — `str.replace` молча ничего не
+    # делает. Прогон при этом проходит целиком и стоит полную цену, а персоны
+    # заполняют `survey_answers` по формату ответа, придумав вопросы сами.
+    # Отличить такой отчёт от честного по его содержимому нельзя.
+    #
+    # Поэтому здесь отказ, а не деградация: непотраченные деньги и внятная
+    # причина лучше правдоподобного отчёта ни о чём. Проверка на первой персоне
+    # — шаблон и анкета для всех одни, а разбирать шестьсот промптов ради
+    # свойства шаблона незачем.
+    if personas:
+        probe_system, probe_user = build_slice(
+            personas[0], pack, survey,
+            system_template=system_template, user_template=user_template,
+        )
+        _ = probe_system
+        outcome.asked = _asked_questions(probe_user, survey)
 
     # Порядок обхода: персона за персоной, репликация за репликацией, партиями
     # по BATCH_SIZE. Партия — единица прогресса и единица отказоустойчивости.
@@ -300,6 +368,11 @@ def run_survey(
                     "failures": outcome.failures,
                     "failure_reasons": outcome.failure_reasons,
                     "diversity": outcome.diversity,
+                    # Заданные вопросы лежат рядом с ответами, а не берутся из
+                    # анкеты при чтении отчёта: анкету можно отредактировать
+                    # после прогона, и тогда отчёт показывал бы не то, что
+                    # спрашивали.
+                    "asked": outcome.asked,
                 },
                 ensure_ascii=False,
                 indent=2,

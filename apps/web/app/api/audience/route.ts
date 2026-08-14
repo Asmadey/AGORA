@@ -37,19 +37,10 @@ import { enqueueAudience } from "@/lib/server/queue";
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
-interface GenerationResult {
-  personas: Record<string, unknown>[];
-  /** Имена персон отдельным списком: DNA описана закрытой схемой (#4). */
-  names?: string[];
-  /** Для каждой персоны: "model" или "template". */
-  sources?: string[];
-  meta?: {
-    enriched: boolean;
-    llm_calls: number;
-    cache_hits: number;
-    degraded_reason?: string | null;
-  };
-}
+// Тип ответа подпроцесса генерации (GenerationResult) убран вместе с самим
+// подпроцессом: маршрут больше не ждёт персон, он ставит задачу в очередь.
+// Оставленный тип описывал бы контракт, которого нет, — и первый же читатель
+// решил бы, что маршрут по-прежнему возвращает персоны.
 
 export async function POST(request: Request) {
   try {
@@ -171,7 +162,7 @@ export async function POST(request: Request) {
     }
 
     // 202: набор заведён, персон в нём ещё нет. Отвечать 200 значило бы
-    // сказать «готово» про то, что只 началось.
+    // сказать «готово» про то, что только началось.
     return Response.json(
       {
         generated: true,
