@@ -30,8 +30,11 @@ SKIP = "SKIP"
 results = []
 
 def check(name, ok, detail=""):
+    # Пояснение печатается только к упавшей проверке. К зелёной оно читается как
+    # описание дефекта, которого нет: «OK … миграции [] трогают prompts.template,
+    # но не подходят под маску» — фраза про пустой список, набранная как жалоба.
     results.append((name, PASS if ok else FAIL, detail))
-    print(f"  {'OK  ' if ok else 'FAIL'}  {name}" + (f"  →  {detail}" if detail else ""))
+    print(f"  {'OK  ' if ok else 'FAIL'}  {name}" + (f"  →  {detail}" if detail and not ok else ""))
 
 def skip(name, reason):
     results.append((name, SKIP, reason))
@@ -43,6 +46,25 @@ print("== Статический уровень ==")
 # 1. Migration exists and is idempotent
 #: Полный текст всех засевов — по нему проверяется покрытие ключей.
 seed_text = "\n".join(sp.read_text("utf-8") for sp in SEED_PATHS)
+
+# ─── Маска засевов — несущая деталь, и её нарушение невидимо ────────────────
+#
+# SEED_PATHS собирается по маске `*prompts_seed*.sql`. Миграция, названная иначе,
+# в сверку не попадает: проверка «тексты в засеве совпадают с файлами» тихо
+# сравнивает файл с ПРЕДЫДУЩЕЙ версией засева и краснеет с формулировкой
+# «разошёлся», не называя настоящей причины — что новой миграции она просто не
+# видела.
+#
+# Так и случилось с `19_prompts_frame_no_panel.sql`. Поэтому здесь проверяется
+# не текст, а покрытие: всякая миграция, трогающая `prompts.template`, обязана
+# попадать под маску.
+_ALL_MIGRATIONS = sorted((REPO / "infra" / "postgres" / "init").glob("*.sql"))
+_TOUCHES_PROMPTS = [
+    m for m in _ALL_MIGRATIONS
+    if "prompts" in m.read_text("utf-8") and "template" in m.read_text("utf-8")
+    and ("SET template" in m.read_text("utf-8") or "INTO prompts" in m.read_text("utf-8"))
+]
+_UNCOVERED = [m.name for m in _TOUCHES_PROMPTS if m not in SEED_PATHS]
 
 migration_text = ""
 if MIGRATION_PATH.exists():
@@ -109,6 +131,14 @@ _assignments = [
 latest_template: dict[str, str] = {
     key: tpl for _, key, tpl in sorted(_assignments, key=lambda a: a[0])
 }
+
+check(
+    "все миграции промптов попадают под маску засевов",
+    not _UNCOVERED,
+    f"миграции {_UNCOVERED} трогают prompts.template, но не подходят под маску "
+    f"*prompts_seed*.sql — сверка текстов их не увидит и покраснеет с неверной "
+    f"причиной. Переименуйте по образцу 16_prompts_seed_frame_scene.sql",
+)
 
 texts_match = True
 mismatch_detail = ""
