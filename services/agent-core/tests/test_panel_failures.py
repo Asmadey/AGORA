@@ -150,3 +150,38 @@ def test_cache_is_not_poisoned_by_a_failure():
     analyze_panels(panels(3), client=Moderated({1}), prompt=PROMPT, cache=cache)
 
     assert len(cache.store) == 2, "в кэш попали только успешные разборы"
+
+
+# ─── Стык с упаковкой ────────────────────────────────────────────────────────
+
+
+def test_scene_without_description_survives_packing():
+    """
+    Сцена, которую провайдер не разобрал, не роняет сборку пакета.
+
+    Стык двух правок: терпимость к отказам оставляет сцену без
+    `scene_description`, а компактная форма брала это поле напрямую и падала
+    `KeyError` — посреди оплаченного прогона, уже после разбора и опроса
+    персон. Прежде такие сцены до сжатия не доживали, потому что потолок
+    ключевых сцен отсекал их раньше; после перехода потолка на бюджет знаков
+    стали доживать.
+    """
+    from agent_core.content.pack import build_pack
+
+    pack = build_pack(
+        transcript=[{"start": 1.0, "end": 3.0, "text": "достаточно длинная реплика"}],
+        speakers=[],
+        scenes=[
+            {"panel_index": 0, "timestamp_sec": 0.0, "end_sec": 5.0,
+             "scene_description": "первая сцена", "mood": "спокойное"},
+            {"panel_index": 1, "timestamp_sec": 5.0, "end_sec": 10.0,
+             "analysis_failed": True, "reason": "провайдер отказал"},
+        ],
+        duration_sec=10.0, mode="short", title="t",
+    )
+
+    compact = pack.compact()
+    # Сцена без описания в компактную форму не попала: показывать нечего.
+    assert all(s["scene_description"] for s in compact["scenes"])
+    # Но в полном таймлайне её отрезок остался — иначе в материале была бы дыра.
+    assert any(c["start"] == 5.0 for c in pack.full()["timeline"])
