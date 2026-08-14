@@ -11,6 +11,7 @@ import {
   UsersRound,
   BookUser,
   BookOpen,
+  Database,
   Plus,
   SlidersHorizontal,
   Settings,
@@ -49,6 +50,10 @@ const NAV = [
   { href: "/surveys", label: "Анкеты", icon: ClipboardList },
   { href: "/personas", label: "Персоны", icon: Users },
   { href: "/portraits", label: "Портреты аудиторий", icon: BookUser },
+  // Корпус — то, на чём стоит заземление: из него считаются доли, по которым
+  // сэмплируются персоны. До этапа Е он лежал файлом в репозитории, то есть
+  // принадлежал разработчику, а не исследователю.
+  { href: "/corpus", label: "Корпус", icon: Database },
   { href: "/prompts", label: "Промпт-студия", icon: SlidersHorizontal },
   { href: "/settings", label: "Настройки", icon: Settings },
   // Страница /api-docs существовала с задачи #26, но попасть на неё можно

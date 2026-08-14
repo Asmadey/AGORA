@@ -80,6 +80,7 @@ def generate_audience(self: Any, payload: dict[str, Any]) -> dict[str, Any]:
     set_id = str(payload["persona_set_id"])
     tenant_id = str(payload["tenant_id"])
     raw_config = payload.get("config") or {}
+    snapshot_id = payload.get("corpus_snapshot_id")
 
     def fail(reason: str) -> dict[str, Any]:
         _update(
@@ -93,7 +94,15 @@ def generate_audience(self: Any, payload: dict[str, Any]) -> dict[str, Any]:
     # ── Скелеты ──────────────────────────────────────────────────────────────
     try:
         config = GenerationConfig(**raw_config)
-        gen = PersonaGenerator.from_corpus()
+        # Слепок корпуса, снятый при создании аудитории, — главнее файла в
+        # образе. Файл остаётся запасным путём для наборов, созданных до того,
+        # как корпус переехал в базу; молча предпочитать его слепку значило бы
+        # собирать персон не по тому корпусу, который выбрал пользователь.
+        gen = (
+            PersonaGenerator.from_snapshot(str(snapshot_id), tenant_id)
+            if snapshot_id
+            else PersonaGenerator.from_corpus()
+        )
         named = gen.generate_named(config)
     except Exception as exc:  # noqa: BLE001 — причина обязана дойти до экрана
         return fail(f"{type(exc).__name__}: {exc}")

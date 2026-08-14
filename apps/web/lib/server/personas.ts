@@ -143,13 +143,23 @@ export async function createPersonaSet(
    * По умолчанию `ready`, потому что так набор создаётся вручную и из тестов.
    */
   status: "generating" | "ready" = "ready",
+  /**
+   * Слепок корпуса, по которому собирается набор.
+   *
+   * `null` — набор создан не из корпуса базы (ручной вызов, тесты, прогоны до
+   * этапа Е). Читается как «версия корпуса неизвестна», а не как «первая»:
+   * подставлять сюда что-то по умолчанию значило бы утверждать
+   * воспроизводимость, которой нет.
+   */
+  corpusSnapshotId: string | null = null,
 ): Promise<PersonaSet> {
   const { rows } = await client.query<PersonaSetRow>(
-    `INSERT INTO persona_sets (tenant_id, name, size, generation_config, seed, status)
-     VALUES (app.current_tenant(), $1, $2, $3::jsonb, $4, $5)
+    `INSERT INTO persona_sets (tenant_id, name, size, generation_config, seed, status,
+                               corpus_snapshot_id)
+     VALUES (app.current_tenant(), $1, $2, $3::jsonb, $4, $5, $6)
      RETURNING id, name, size, generation_config, seed, created_at, status,
                generated_count, error, 0::bigint AS persona_count`,
-    [name, size, JSON.stringify(generationConfig), seed, status],
+    [name, size, JSON.stringify(generationConfig), seed, status, corpusSnapshotId],
   );
   return toSet(rows[0]);
 }

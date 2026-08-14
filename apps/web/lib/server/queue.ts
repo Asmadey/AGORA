@@ -126,6 +126,14 @@ export interface AudiencePayload {
   persona_set_id: string;
   tenant_id: string;
   config: Record<string, unknown>;
+  /**
+   * Слепок корпуса, по которому сэмплировать персон.
+   *
+   * `null` — корпуса в базе нет, воркер берёт файл из образа. Это прежнее
+   * поведение, и оно законно; невыясненным оно быть не должно, поэтому поле
+   * передаётся всегда, а не опускается.
+   */
+  corpus_snapshot_id?: string | null;
 }
 
 /**

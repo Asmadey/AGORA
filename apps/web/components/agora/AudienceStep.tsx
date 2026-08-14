@@ -45,6 +45,20 @@ interface Grounding {
   ungroundedDimensions: string[];
 }
 
+/**
+ * Датасет корпуса — то, на чём заземляется аудитория.
+ *
+ * Датасетов бывает несколько: исследование про сериалы и исследование про
+ * рекламу опираются на разные выборки респондентов, и считать доли по чужим
+ * значило бы заземлить персон на посторонних людей.
+ */
+interface CorpusDatasetSummary {
+  id: string;
+  name: string;
+  description: string | null;
+  recordsCount: number;
+}
+
 interface PersonaSetSummary {
   id: string;
   name: string;
@@ -120,6 +134,12 @@ export function AudienceStep({
   const [generated, setGenerated] = useState<GenerationOutcome | null>(null);
   const [grounding, setGrounding] = useState<Grounding | null>(null);
   const [sets, setSets] = useState<PersonaSetSummary[] | null>(null);
+  /**
+   * Датасеты корпуса и выбранный. Слепок выбранного снимается при создании
+   * аудитории — именно он потом определяет, по каким долям сэмплируются персоны.
+   */
+  const [datasets, setDatasets] = useState<CorpusDatasetSummary[] | null>(null);
+  const [datasetId, setDatasetId] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
 
   const reuse = personaSetId !== null;
@@ -135,13 +155,23 @@ export function AudienceStep({
     let alive = true;
     void (async () => {
       try {
-        const [g, s] = await Promise.all([
+        const [g, s, c] = await Promise.all([
           fetch("/api/audience").then((r) => (r.ok ? r.json() : null)),
           fetch("/api/persona-sets").then((r) => (r.ok ? r.json() : null)),
+          fetch("/api/corpus").then((r) => (r.ok ? r.json() : null)),
         ]);
         if (!alive) return;
         if (g) setGrounding(g as Grounding);
         if (s) setSets((s as { personaSets: PersonaSetSummary[] }).personaSets);
+        if (c) {
+          const list = (c as { datasets: CorpusDatasetSummary[] }).datasets ?? [];
+          setDatasets(list);
+          // Единственный датасет выбирается сам: заставлять выбирать из одного
+          // значит просить подтвердить очевидное. Из нескольких — выбор
+          // обязателен, и маршрут это требует: заземлить аудиторию на выборку,
+          // которой не просили, хуже, чем отказать.
+          if (list.length === 1) setDatasetId(list[0].id);
+        }
       } catch (e) {
         // Отказ загрузки не должен ломать шаг: критерии выбираются и без пометок,
         // просто без подсказки о заземлении. Но молчать нельзя — иначе
@@ -201,7 +231,7 @@ export function AudienceStep({
         // Тело плоское: parseAudienceChoice читает size/ageGroups/geos/genders
         // с верхнего уровня и различает ветки по наличию personaSetId, а не по
         // полю-дискриминатору.
-        body: JSON.stringify(criteria),
+        body: JSON.stringify({ ...criteria, datasetId }),
       });
       const data = (await res.json()) as Record<string, unknown>;
       if (!res.ok) {
@@ -455,10 +485,47 @@ export function AudienceStep({
             )}
           </div>
 
+          {/* Датасет: на чём заземлять.
+              Стоит вплотную к кнопке, а не в начале формы, потому что отвечает
+              на последний вопрос перед оплатой генерации — «по какому корпусу».
+              Слепок выбранного снимается в момент нажатия и живёт на наборе:
+              правка корпуса после этого прежнюю аудиторию не меняет. */}
+          {datasets !== null && datasets.length > 0 && (
+            <div className="border-t border-hairline pt-6">
+              <label className="block text-sm font-medium">Датасет</label>
+              <p className="mt-0.5 text-xs text-slate">
+                Корпус, по долям которого сэмплируются персоны. Слепок снимается
+                сейчас — правка корпуса позже эту аудиторию не изменит
+              </p>
+              <select
+                value={datasetId ?? ""}
+                onChange={(e) => setDatasetId(e.target.value || null)}
+                className="mt-3 w-full rounded-md border border-hairline bg-background px-3 py-2 text-sm"
+              >
+                {datasets.length > 1 && <option value="">Выберите датасет</option>}
+                {datasets.map((d) => (
+                  <option key={d.id} value={d.id}>
+                    {d.name} — {d.recordsCount} записей
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          {datasets !== null && datasets.length === 0 && (
+            // Пустой раздел корпуса — не повод молчать: генерация в этом случае
+            // пойдёт по файлу из образа воркера, и знать об этом надо заранее.
+            <p className="border-t border-hairline pt-6 text-xs text-slate">
+              Корпус в базе пуст: персоны будут собраны по файлу из образа
+              воркера, и версия корпуса у этой аудитории останется неизвестной.
+              Заполнить корпус — раздел «Корпус».
+            </p>
+          )}
+
           <div className="border-t border-hairline pt-6">
             <button
               onClick={generate}
-              disabled={isGenerating}
+              disabled={isGenerating || (datasets !== null && datasets.length > 1 && !datasetId)}
               className="flex w-full items-center justify-center gap-2 rounded-md bg-foreground px-4 py-3 text-sm font-medium text-background transition-opacity hover:opacity-90 disabled:opacity-40"
             >
               {isGenerating && <Loader2 className="h-4 w-4 animate-spin" />}

@@ -1,5 +1,6 @@
 import { parseAudienceChoice, toGenerationConfig } from "@/lib/audience";
 import { audienceGrounding, warningsFor } from "@/lib/audience-grounding";
+import { createSnapshot, listDatasets } from "@/lib/server/corpus-db";
 import { withTenant } from "@/lib/server/db";
 import { requireSession, toResponse } from "@/lib/server/guard";
 import {
@@ -127,6 +128,49 @@ export async function POST(request: Request) {
     //
     // Теперь строка набора появляется в списке немедленно, со статусом
     // `generating` и счётчиком «сделано из заказанного».
+    // ── Слепок корпуса снимается ЗДЕСЬ ─────────────────────────────────────
+    //
+    // Корпус читается ровно один раз — когда генератор сэмплирует персон по его
+    // долям. Слепок в момент запуска исследования опоздал бы: персоны к тому
+    // времени собраны, и слепок описывал бы корпус, по которому их не собирали.
+    //
+    // Датасет выбирается на шаге «Аудитория». Если не выбран — берётся
+    // единственный; если их несколько, выбор обязателен: молча взять первый
+    // значило бы заземлить аудиторию на выборку, которой не просили.
+    const requestedDataset = (body as { datasetId?: unknown }).datasetId;
+    let snapshotId: string | null = null;
+    let snapshotError: string | null = null;
+
+    try {
+      snapshotId = await withTenant(tenantId, async (client) => {
+        const datasets = await listDatasets(client);
+        if (datasets.length === 0) return null;
+
+        const chosen =
+          typeof requestedDataset === "string"
+            ? datasets.find((d) => d.id === requestedDataset)
+            : datasets.length === 1
+              ? datasets[0]
+              : undefined;
+
+        if (!chosen) {
+          throw new Error(
+            typeof requestedDataset === "string"
+              ? "датасет не найден"
+              : `датасетов ${datasets.length}: выберите, на каком заземлять аудиторию`,
+          );
+        }
+        const snapshot = await createSnapshot(client, chosen.id);
+        return snapshot.id;
+      });
+    } catch (e) {
+      snapshotError = (e as Error).message;
+    }
+
+    if (snapshotError) {
+      return Response.json({ error: snapshotError, warnings }, { status: 400 });
+    }
+
     const set = await withTenant(tenantId, (client) =>
       createPersonaSet(
         client,
@@ -136,6 +180,7 @@ export async function POST(request: Request) {
         config,
         seed,
         "generating",
+        snapshotId,
       ),
     );
 
@@ -144,6 +189,9 @@ export async function POST(request: Request) {
         persona_set_id: set.id,
         tenant_id: tenantId,
         config: config as Record<string, unknown>,
+        // По слепку воркер сэмплирует персон. null — корпуса в базе нет, и
+        // генератор берёт файл образа: прежнее поведение, честно названное.
+        corpus_snapshot_id: snapshotId,
       });
     } catch (e) {
       // Набор создан, но воркер о нём не знает. Молчать нельзя: строка висела
