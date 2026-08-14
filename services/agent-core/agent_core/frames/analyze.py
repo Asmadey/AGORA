@@ -200,6 +200,10 @@ class AnalysisResult:
     #: Слить их в один счётчик значит потерять способность понять, за что
     #: заплачено и почему у двух сцен одинаковое описание.
     deduped: int = 0
+    #: Панели, которые провайдер отказался разбирать. Сцена остаётся в таймлайне
+    #: со своими границами и признаком отказа — см. analyze_panels.
+    failures: int = 0
+    failure_reasons: list[str] = field(default_factory=list)
 
 
 class VlmClient(Protocol):
@@ -282,12 +286,48 @@ def analyze_panels(
                 remaining=len(panels) - len(result.scenes),
             )
 
-        analysis = client.analyze(image=panel.image, prompt=_render(prompt, panel))
+        # ── Отказ на одной панели не отменяет разбор ролика ─────────────────
+        #
+        # Провайдер отвергает вход по модерации («data_inspection_failed») на
+        # отдельных кадрах — и один такой отказ уносил весь прогон, уже
+        # оплативший скачивание, прокси, звук, транскрипцию и часть панелей.
+        #
+        # Выбор тот же, что для опроса персон: панель — независимое наблюдение,
+        # и девятнадцать разобранных сцен полезнее, чем ноль. Но сцена остаётся
+        # в таймлайне со своими границами: без неё в материале появилась бы
+        # дыра, и следующая сцена молча растянулась бы на чужой кусок.
+        #
+        # Описание при этом НЕ выдумывается. Пустое честнее правдоподобного:
+        # персона сошлётся на то, чего не видела, а судья справедливо забракует
+        # её ответ.
+        try:
+            analysis = client.analyze(image=panel.image, prompt=_render(prompt, panel))
+        except Exception as exc:  # noqa: BLE001 — причина обязана дойти до отчёта
+            result.failures += 1
+            reason = (
+                f"{panel.timestamp_sec:.2f}–{(getattr(panel, 'end_sec', 0.0) or 0.0):.2f} с: "
+                f"{type(exc).__name__}: {exc}"
+            )
+            result.failure_reasons.append(reason)
+            result.scenes.append(_stamp({"analysis_failed": True, "reason": reason}, panel))
+            # В кэш отказ не кладётся: иначе повторный прогон получил бы пустое
+            # описание бесплатно и не сделал бы ни одной попытки — дефект стал бы
+            # постоянным и потому незаметным.
+            continue
+
         result.calls_made += 1
         if cache:
             cache.set(key, analysis)
         result.scenes.append(_stamp(analysis, panel))
         previous_hash, previous_analysis = current_hash, analysis
+
+    # Ноль разобранных сцен — отказ, а не деградация: персонам показывать нечего,
+    # и отчёт получился бы по ролику, которого никто не смотрел.
+    if panels and result.failures == len(panels):
+        raise RuntimeError(
+            f"не разобрано ни одной панели из {len(panels)}: "
+            f"{'; '.join(result.failure_reasons[:3])}"
+        )
 
     return result
 

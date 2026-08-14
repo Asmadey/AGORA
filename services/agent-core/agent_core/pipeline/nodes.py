@@ -334,8 +334,20 @@ def analyze_chunks(state: PipelineState) -> dict[str, Any]:
     out.write_text(json.dumps(result.scenes, ensure_ascii=False), "utf-8")
 
     update: dict[str, Any] = {"chunk_analyses_ref": str(out)}
-    if degraded:
-        update["degraded"] = [degraded]
+    reasons: list[str] = [degraded] if degraded else []
+
+    # Панели, которые провайдер отказался разбирать, обязаны быть названы в
+    # отчёте. Иначе «модель не заметила финал» объясняется свойствами ролика, а
+    # не отказом модерации, — и опровергнуть это будет нечем: к моменту разбора
+    # отчёта исходное видео удалено по политике хранения.
+    if result.failures:
+        reasons.append(
+            f"разбор кадров: провайдер отказал на {result.failures} панелях из "
+            f"{len(panels)} — эти отрезки персоны не видели. "
+            f"{'; '.join(result.failure_reasons[:3])}"
+        )
+    if reasons:
+        update["degraded"] = reasons
     return update
 
 
