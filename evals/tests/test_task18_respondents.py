@@ -206,32 +206,44 @@ if run_survey is not None:
               f"ответов {len(outcome.answers)}, ожидалось {len(people) * 2}")
 
         # ── Главная проверка cdd ────────────────────────────────────────────
-        # Промпты персоны A исключаются из поиска: маркер там законно.
-        others = [
-            (s, u) for i, (s, u) in enumerate(client.prompts)
-            if outcome.answers[i]["persona_id"] != "p0"
+        #
+        # Считается ЧИСЛО промптов с маркером, а не «маркер в чужих промптах».
+        # Разница появилась, когда персоны внутри пачки поехали одновременно:
+        # порядок записи промптов перестал совпадать с порядком ответов, и
+        # сопоставление по индексу стало приписывать промпт персоны A соседу.
+        # Проверка начала падать через раз — на исправном коде.
+        #
+        # Инвариант, не зависящий от порядка: маркер лежит в промптах персоны A
+        # и только в них, то есть встречается ровно столько раз, сколько у неё
+        # обращений (по одному на репликацию). Больше — утечка.
+        expected_marker_hits = 2  # replication_count
+        with_marker = [
+            i for i, (s, u) in enumerate(client.prompts) if MARKER in s or MARKER in u
         ]
-        leaked = [i for i, (s, u) in enumerate(others) if MARKER in s or MARKER in u]
-        check(ISO_CASES[1], not leaked,
-              f"маркер персоны p0 найден в {len(leaked)} промптах других персон")
+        check(ISO_CASES[1], len(with_marker) == expected_marker_hits,
+              f"маркер персоны p0 найден в {len(with_marker)} промптах, "
+              f"а обращений у неё {expected_marker_hits}")
 
-        # Ни одного чужого имени в промпте — более широкая сеть, чем один маркер.
+        # Ни одного промпта, где встретились бы ДВЕ персоны сразу — более широкая
+        # сеть, чем один маркер, и тоже без опоры на порядок: срез одной персоны
+        # не может законно содержать имя другой.
         cross = []
         for i, (s, u) in enumerate(client.prompts):
-            own = outcome.answers[i]["persona_id"]
             blob = s + u
-            for p in people:
-                if p["id"] != own and p["name"] in blob:
-                    cross.append((own, p["id"]))
-        check(ISO_CASES[2], not cross, f"чужие персоны в срезе: {cross[:4]}")
+            present = [p["id"] for p in people if p["name"] in blob]
+            if len(present) > 1:
+                cross.append((i, present))
+        check(ISO_CASES[2], not cross, f"в одном срезе несколько персон: {cross[:4]}")
 
-        # Ответ предыдущей персоны в промпте следующей — вторая форма утечки.
-        answered_marks = [a["answer"]["verbatims"]["why_impression"] for a in outcome.answers]
+        # Ответ одной персоны в промпте другой — вторая форма утечки. Порядок
+        # снова не при чём: ни одна реплика из ответов не должна встречаться ни в
+        # одном промпте вообще, потому что промпты собираются до ответов.
+        answered_marks = {a["answer"]["verbatims"]["why_impression"] for a in outcome.answers}
         echo = [
-            i for i, (s, u) in enumerate(client.prompts[1:], start=1)
-            if any(m and m in (s + u) for m in answered_marks[:i])
+            i for i, (s, u) in enumerate(client.prompts)
+            if any(m and m in (s + u) for m in answered_marks)
         ]
-        check(ISO_CASES[3], not echo, f"ответы других персон в срезе: {len(echo)} промптов")
+        check(ISO_CASES[3], not echo, f"ответы персон в срезе: {len(echo)} промптов")
 
         # Сверяется с самими фикстурами, а не с набранной руками подстрокой:
         # первая версия искала «спор на кухне» при фикстуре «Двое спорят на

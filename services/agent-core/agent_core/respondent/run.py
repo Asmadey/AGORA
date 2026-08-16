@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import json
 import re
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
@@ -333,28 +334,56 @@ def run_survey(
         for rep in range(replication_count)
     ]
 
+    def ask(persona: dict[str, Any], rep: int) -> dict[str, Any]:
+        """Один ответ. Чистая работа: ничего общего с соседями по пачке."""
+        system, user = build_slice(
+            persona, pack, survey,
+            system_template=system_template, user_template=user_template,
+        )
+        return {
+            "persona_id": persona.get("id"),
+            "persona_name": persona.get("name"),
+            "replication": rep,
+            "segment": _segment_of(persona),
+            "answer": parse_answer(client.complete(system=system, user=user)),
+        }
+
+    # ── Пачка опрашивается одновременно ──────────────────────────────────────
+    #
+    # Раньше цикл внутри пачки шёл последовательно, и двенадцать персон занимали
+    # 366 секунд из 754 — больше всего в прогоне после того, как расшифровка
+    # поехала параллельно. При этом каждая персона независима: её срез
+    # собирается из собственной DNA, материала и анкеты, ответы друг на друга не
+    # влияют.
+    #
+    # Изоляция от потоков не страдает и не требует ничего нового: `build_slice`
+    # — чистая функция, она ничего не хранит между вызовами и ничего не меняет
+    # во входных объектах. Общего изменяемого состояния, в котором могли бы
+    # смешаться две персоны, просто нет — см. модульный докстринг.
+    #
+    # Пачка остаётся потолком одновременных обращений. Без потолка пятьсот
+    # персон ушли бы к провайдеру разом: это 429 на большей части и оплаченные
+    # повторы. Из «единицы прогресса и отказоустойчивости» она стала ещё и
+    # единицей нагрузки.
     for start in range(0, len(tasks), BATCH_SIZE):
-        for persona, rep in tasks[start:start + BATCH_SIZE]:
-            system, user = build_slice(
-                persona, pack, survey,
-                system_template=system_template, user_template=user_template,
-            )
-            try:
-                raw = client.complete(system=system, user=user)
-                answer = parse_answer(raw)
-            except Exception as exc:
-                outcome.failures += 1
-                outcome.failure_reasons.append(
-                    f"{persona.get('id', '?')} (повтор {rep}): {type(exc).__name__}: {exc}"
-                )
-                continue
-            outcome.answers.append({
-                "persona_id": persona.get("id"),
-                "persona_name": persona.get("name"),
-                "replication": rep,
-                "segment": _segment_of(persona),
-                "answer": answer,
-            })
+        chunk = tasks[start:start + BATCH_SIZE]
+        with ThreadPoolExecutor(max_workers=BATCH_SIZE, thread_name_prefix="ask") as pool:
+            futures = [(pool.submit(ask, persona, rep), persona, rep)
+                       for persona, rep in chunk]
+
+            # Результаты забираются В ПОРЯДКЕ ОТПРАВКИ, а не по мере готовности:
+            # иначе два прогона на одних входах дали бы разный порядок карточек,
+            # и сравнить их построчно было бы нельзя — а сравнение прогонов и
+            # есть смысл перезапуска исследования (#30).
+            for future, persona, rep in futures:
+                try:
+                    outcome.answers.append(future.result())
+                except Exception as exc:  # noqa: BLE001
+                    outcome.failures += 1
+                    outcome.failure_reasons.append(
+                        f"{persona.get('id', '?')} (повтор {rep}): "
+                        f"{type(exc).__name__}: {exc}"
+                    )
 
     outcome.diversity = diversity_report(outcome.answers)
 
