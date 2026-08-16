@@ -67,6 +67,10 @@ class PipelineState(TypedDict, total=False):
     transcript_raw: list[dict[str, Any]]
     speaker_turns: list[dict[str, Any]]
     transcript_diarized: list[dict[str, Any]]
+    #: Длительность половин узла `transcribe_and_diarize`: {"transcribe": …,
+    #: "diarize": …}. На уровне графа это один узел, а разбивка — ровно то, что
+    #: показало, куда уходит время прогона.
+    stage_timings: dict[str, float]
 
     # ── Кадры и разбор (#16, #17) ───────────────────────────────────────────
     #: Панели на диске: [{"path": …, "timestamp_sec": …}]. В состоянии лежат
@@ -151,6 +155,7 @@ def new_state(
         transcript_raw=[],
         speaker_turns=[],
         transcript_diarized=[],
+        stage_timings={},
         panel_refs=[],
         chunk_analyses_ref=None,
         video_understanding=None,

@@ -63,7 +63,12 @@ def _set_task_status(task_id: str, tenant_id: str, status: str, error: str | Non
         )
 
 
-def _save_timings(task_id: str, tenant_id: str, timings: list[dict[str, Any]]) -> None:
+def _save_timings(
+    task_id: str,
+    tenant_id: str,
+    timings: list[dict[str, Any]],
+    stages: dict[str, float] | None = None,
+) -> None:
     """
     Складывает замеры этапов в `tasks.progress`.
 
@@ -90,7 +95,16 @@ def _save_timings(task_id: str, tenant_id: str, timings: list[dict[str, Any]]) -
         with psycopg.connect(dsn) as conn, tenant_scope(conn, tenant_id) as cur:
             cur.execute(
                 "UPDATE tasks SET progress = %s WHERE id = %s::uuid",
-                (_json.dumps({"timings": timings}, ensure_ascii=False), task_id),
+                (
+                    _json.dumps(
+                        # Половины transcribe_and_diarize кладутся рядом с
+                        # узлами: на уровне графа это один узел, а разбивка —
+                        # то, чем объясняется его длительность.
+                        {"timings": timings, "stages": stages or {}},
+                        ensure_ascii=False,
+                    ),
+                    task_id,
+                ),
             )
     except Exception:  # noqa: BLE001 — см. докстринг
         pass
@@ -196,7 +210,11 @@ def run_pipeline(self: Any, payload: dict[str, Any]) -> dict[str, Any]:
     snapshot = progress.emit(
         "pipeline", STATUS_REPORT_READY, degraded=final.get("degraded") or []
     )
-    _save_timings(task_id, tenant_id, snapshot.get("timings") or [])
+    _save_timings(
+        task_id, tenant_id,
+        snapshot.get("timings") or [],
+        final.get("stage_timings") or {},
+    )
     return {
         "task_id": task_id,
         "status": STATUS_REPORT_READY,

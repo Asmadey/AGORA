@@ -188,10 +188,19 @@ def build_graph(
     graph.add_edge("extract_audio", "detect_speech")
 
     # Параллельно: распознавание и диаризация по одним и тем же участкам речи.
-    graph.add_edge("detect_speech", "transcribe")
-    graph.add_edge("detect_speech", "diarize")
-    graph.add_edge("transcribe", "merge_transcript")
-    graph.add_edge("diarize", "merge_transcript")
+    # Расшифровка и диаризация — один узел, а не две ветки.
+    #
+    # Ветки были объявлены параллельными по PRD §8 и исполнялись по очереди:
+    # синхронный Pregel проходит суперступень узел за узлом, и замер показал
+    # 245 с + 228 с подряд при гейте в 600 с на весь прогон. Параллелизм был
+    # структурным (разные каналы состояния, чтобы LangGraph не отверг
+    # одновременную запись), но не временным.
+    #
+    # Внутри узла обе работы разведены по потокам явно — см.
+    # nodes.transcribe_and_diarize, там же о том, почему не асинхронный запуск
+    # графа.
+    graph.add_edge("detect_speech", "transcribe_and_diarize")
+    graph.add_edge("transcribe_and_diarize", "merge_transcript")
 
     graph.add_conditional_edges(
         "merge_transcript",

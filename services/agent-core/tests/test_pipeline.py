@@ -149,7 +149,9 @@ def test_degraded_accumulates_across_nodes():
     """Отметки о деградации складываются: обычный канал оставил бы только последнюю."""
     valkey = FakeValkey()
     nodes = stub_nodes([], None, {"on": False})
-    nodes["diarize"] = lambda s: {"degraded": ["diarize: нет токена"]}
+    # Диаризация живёт внутри transcribe_and_diarize с тех пор, как обе половины
+    # развели по потокам: по очереди они съедали 473 секунды из восьмисот.
+    nodes["transcribe_and_diarize"] = lambda s: {"degraded": ["diarize: нет токена"]}
     nodes["analyze_chunks"] = lambda s: {"degraded": ["analyze_chunks: кап исчерпан"]}
 
     final = build_graph(checkpointer=ValkeyCheckpointSaver(valkey), nodes=nodes).invoke(

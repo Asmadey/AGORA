@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from pathlib import Path
 from typing import Any
 
@@ -173,6 +174,13 @@ def segment_video(state: PipelineState) -> dict[str, Any]:
 
 
 def transcribe(state: PipelineState) -> dict[str, Any]:
+    """
+    Расшифровка. Отдельно от диаризации — для прямых вызовов и проверок.
+
+    В графе обе половины исполняет `transcribe_and_diarize`: по очереди они
+    съедали 473 секунды из восьмисот, и гейт #22 (600 с) не выполнялся из-за
+    этого, а не из-за разбора кадров.
+    """
     from ..asr.transcribe import transcribe as run
 
     segments = run(str(state["audio_ref"]))
@@ -181,6 +189,88 @@ def transcribe(state: PipelineState) -> dict[str, Any]:
             {"start": s.start, "end": s.end, "text": s.text} for s in segments
         ]
     }
+
+
+def transcribe_and_diarize(state: PipelineState) -> dict[str, Any]:
+    """
+    Расшифровка и диаризация одновременно.
+
+    ─── Почему одним узлом ─────────────────────────────────────────────────
+    PRD §8 объявляет их параллельными, и граф это отражал: `detect_speech`
+    ветвился на два узла, оба сходились в `merge_transcript`. Параллелизм
+    оказался структурным, а не временным — разные каналы состояния, чтобы
+    LangGraph не отверг одновременную запись, — но исполнялись ветки по очереди:
+    синхронный Pregel проходит суперступень узел за узлом. Замер: 245 с и 228 с
+    подряд.
+
+    Асинхронный запуск графа развёл бы ветки по потокам сам, но чекпоинтер
+    прогона реализует только синхронные `put` и `get_tuple`, а именно он даёт
+    прогону пережить перезапуск воркера посреди транскрипции. Менять его ради
+    параллелизма — менять то, что работает, ради того, что можно получить проще.
+
+    Поэтому потоки заводятся здесь явно. И CTranslate2 (whisper), и torch
+    (pyannote) отпускают GIL на время счёта, так что перекрытие настоящее: на
+    восьми ядрах при OMP_NUM_THREADS=4 каждая половина занимает четыре, вместе
+    они занимают машину целиком.
+
+    ─── Разные права на отказ ──────────────────────────────────────────────
+    Диаризация может не состояться: транскрипт без ярлыков спикеров остаётся
+    полезным, и `DiarizationUnavailable` уходит в `degraded`. Расшифровка — нет:
+    содержание речи больше взять неоткуда, разбор кадров описывает картинку.
+    Отчёт по немому ролику выглядел бы полноценным.
+    """
+    from concurrent.futures import ThreadPoolExecutor
+
+    from ..asr.diarize import DiarizationUnavailable
+    from ..asr.diarize import diarize as run_diarize
+    from ..asr.transcribe import transcribe as run_transcribe
+
+    audio = str(state["audio_ref"])
+    spans = [(a, b) for a, b in state.get("speech_regions", [])]
+    stage_timings: dict[str, float] = {}
+
+    def timed(name: str, fn: Any) -> Any:
+        started = time.monotonic()
+        try:
+            return fn()
+        finally:
+            # Замер снимается и на отказе: «на чём встало и через сколько» —
+            # самый нужный при разборе случай, и терять его незачем.
+            stage_timings[name] = round(time.monotonic() - started, 3)
+
+    with ThreadPoolExecutor(max_workers=2, thread_name_prefix="asr") as pool:
+        transcription = pool.submit(timed, "transcribe", lambda: run_transcribe(audio))
+        diarization = pool.submit(
+            timed, "diarize", lambda: run_diarize(audio, spans=spans or None)
+        )
+
+        # Расшифровка забирается первой: её отказ отменяет прогон, и ждать ради
+        # него ещё и диаризацию незачем. Пул при выходе из with всё равно
+        # дождётся второго потока — бросить его на середине нельзя, он держит
+        # модель.
+        segments = transcription.result()
+
+        degraded: list[str] = []
+        try:
+            turns = diarization.result()
+        except DiarizationUnavailable as exc:
+            turns = []
+            degraded.append(f"diarize: {exc}")
+
+    update: dict[str, Any] = {
+        "transcript_raw": [
+            {"start": s.start, "end": s.end, "text": s.text} for s in segments
+        ],
+        "speaker_turns": [
+            {"start": t.start, "end": t.end, "speaker": t.speaker} for t in turns
+        ],
+        # Длительность каждой половины по отдельности. На уровне графа это теперь
+        # один узел, а разбивка — ровно то, что показало, куда уходит время.
+        "stage_timings": stage_timings,
+    }
+    if degraded:
+        update["degraded"] = degraded
+    return update
 
 
 def diarize(state: PipelineState) -> dict[str, Any]:
@@ -761,8 +851,10 @@ DEFAULT_NODES = {
     "probe_and_normalize": probe_and_normalize,
     "extract_audio": extract_audio,
     "detect_speech": detect_speech,
-    "transcribe": transcribe,
-    "diarize": diarize,
+    # Один узел вместо двух: обе половины идут в потоках внутри него.
+    # `transcribe` и `diarize` остаются функциями модуля — их зовут прямые
+    # проверки и CDD-тесты #15, которым нужна одна половина без другой.
+    "transcribe_and_diarize": transcribe_and_diarize,
     "merge_transcript": merge_transcript,
     "segment_video": segment_video,
     "sample_frames": sample_frames,

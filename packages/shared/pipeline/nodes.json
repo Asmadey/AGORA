@@ -17,14 +17,9 @@
       "detail": "Silero VAD: тишину и музыку дальше не гоним"
     },
     {
-      "name": "transcribe",
-      "label": "Распознавание речи",
-      "detail": "Whisper large-v3 на CPU — самый долгий этап прогона"
-    },
-    {
-      "name": "diarize",
-      "label": "Разделение говорящих",
-      "detail": "pyannote по участкам речи; без токена этап пропускается"
+      "name": "transcribe_and_diarize",
+      "label": "Расшифровка и спикеры",
+      "detail": "Whisper и pyannote одновременно, в двух потоках. По очереди они съедали 473 секунды из восьмисот: параллельность по PRD §8 была структурной, а не временной"
     },
     {
       "name": "merge_transcript",
