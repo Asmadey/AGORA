@@ -113,6 +113,21 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
           </section>
         )}
 
+        {/* Разбор материала: плеер и таймлайн — первым, сразу под шапкой.
+            Прежде он стоял ниже чисел, и порядок чтения был «сколько → что
+            видела персона». На практике читатель начинает с ролика: числа без
+            материала не с чем сопоставить, а ссылку персоны на момент нельзя
+            проверить, не посмотрев этот момент. Теперь сначала «что именно
+            видели», потом «сколько», потом «кто что сказал». */}
+        <section>
+          <h2 className="mb-1 text-sm font-semibold">Материал</h2>
+          <p className="mb-4 text-xs text-slate">
+            То, что видели персоны: описание сцены и реплики на её отрезке. Клик по
+            сцене перематывает ролик
+          </p>
+          <Timeline runId={id} />
+        </section>
+
         {/* Сводные метрики.
             «Досмотрят до конца» и «Досмотрено» — две разные величины, и стоят
             рядом намеренно. Первая считается по retention_intent: он
@@ -271,13 +286,31 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
                 Показаны группы от {view.minSegmentPersonas} персон: средняя по меньшей
                 группе неотличима на вид от средней по сотне, а держится на нескольких ответах
               </p>
-              <div className="space-y-6">
+              {/*
+                Измерения кладутся в две колонки, а не столбиком: «Пол» с двумя
+                значениями занимал целую строку рядом с пустотой, хотя рядом
+                стоял «Тип населённого пункта» такой же высоты.
+
+                Самое широкое измерение (больше всего значений) растягивается на
+                обе колонки, остальные встают парами. Правило по числу значений,
+                а не по имени: список измерений задаётся данными прогона, и
+                зашитый порядок разъехался бы на первой же анкете с другим
+                срезом.
+              */}
+              <div className="grid gap-6 lg:grid-cols-2">
                 {view.segments.map((dim) => (
-                  <div key={dim.key}>
+                  <div
+                    key={dim.key}
+                    className={
+                      dim.rows.length === Math.max(...view.segments.map((d) => d.rows.length))
+                        ? "lg:col-span-2"
+                        : undefined
+                    }
+                  >
                     <h3 className="mb-2 text-xs uppercase tracking-wide text-slate">
                       {dim.label}
                     </h3>
-                    <div className="grid gap-3 md:grid-cols-3">
+                    <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
                       {dim.rows.map((row) => (
                         <div
                           key={row.value}
@@ -379,19 +412,6 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
             )}
           </section>
         )}
-
-        {/* Разбор материала: плеер и таймлайн.
-            Стоит выше персон и ниже чисел: сначала «сколько», потом «что именно
-            видела персона», потом «кто что сказал». Без этой секции ни одну
-            ссылку персоны на материал проверить нельзя — остаётся верить. */}
-        <section>
-          <h2 className="mb-1 text-sm font-semibold">Материал</h2>
-          <p className="mb-4 text-xs text-slate">
-            То, что видели персоны: описание сцены и реплики на её отрезке. Клик по
-            сцене перематывает ролик
-          </p>
-          <Timeline runId={id} />
-        </section>
 
         {/* Проверка ответов.
             Панель называет вещи своими именами: «исключено из агрегата», а не
@@ -498,7 +518,7 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
             {envelope.audienceSize > answers.length &&
               ` · показаны первые ${answers.length} из ${envelope.audienceSize}`}
           </p>
-          <PersonaAccordion answers={answers} runId={id} />
+          <PersonaAccordion answers={answers} runId={id} asked={view.asked} />
         </section>
 
         {view.disclaimer && (

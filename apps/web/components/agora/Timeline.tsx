@@ -79,8 +79,14 @@ export function Timeline({ runId }: { runId: string }) {
   };
 
   return (
-    <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,22rem)]">
-      <div className="space-y-3">
+    /*
+      Две области с подложкой и зазором между ними, а не один сплошной блок:
+      слева смотрят, справа выбирают, и по общему фону это читалось как одна
+      панель, где список — продолжение плеера. Скругление 5px намеренно мельче
+      карточек отчёта (8px): это рабочая поверхность, а не карточка с выводом.
+    */
+    <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,22rem)]">
+      <div className="space-y-3 rounded-[5px] bg-secondary/50 p-3">
         {data.video ? (
           /*
             Высота ограничена, ширина подстраивается — ролики бывают и 16:9, и
@@ -121,7 +127,7 @@ export function Timeline({ runId }: { runId: string }) {
         </dl>
       </div>
 
-      <ol className="max-h-[600px] space-y-1 overflow-y-auto pr-1">
+      <ol className="max-h-[600px] space-y-1 overflow-y-auto rounded-[5px] bg-secondary/50 p-3">
         {cells.map((cell, index) => (
           <Cell
             key={`${cell.start}-${index}`}

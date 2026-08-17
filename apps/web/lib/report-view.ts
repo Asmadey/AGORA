@@ -70,7 +70,7 @@ export interface ReportView {
    * пять базовых критериев живут в формате ответа). Различать эти два случая
    * экран не пытается — он просто не показывает секцию.
    */
-  asked: { id: string; label: string; type: string }[];
+  asked: AskedQuestion[];
   /**
    * Средняя готовность рекомендовать, 1–10.
    *
@@ -104,6 +104,19 @@ export interface Quote {
   timecode: string | null;
 }
 
+/**
+ * Вопрос анкеты в том виде, в каком его ЗАДАЛИ персонам.
+ *
+ * Берётся из снимка `survey_asked` прогона, а не из анкеты на момент чтения
+ * отчёта: анкету правят между прогонами, и показать сегодняшние вопросы под
+ * вчерашними ответами значило бы соврать о том, что персону спрашивали.
+ */
+export interface AskedQuestion {
+  id: string;
+  label: string;
+  type: string;
+}
+
 export interface AnswerView {
   personaId: string;
   personaName: string;
@@ -120,6 +133,18 @@ export interface AnswerView {
   verbatim: string | null;
   groundingRefs: { timecode: string; note: string }[];
   qaFlags: string[];
+  /**
+   * Ответы на анкету, как их дала персона: ключ — идентификатор вопроса ЛИБО
+   * его текст (промпт разрешает и то, и другое).
+   *
+   * Хранится сырым словарём, а не готовым списком: сопоставление с заданными
+   * вопросами делает карточка, потому что только там известен порядок анкеты.
+   * Собранный здесь список пришлось бы пересобирать при каждом изменении
+   * анкеты, а он один на все карточки прогона.
+   */
+  surveyAnswers: Record<string, string>;
+  /** Свободные ответы: почему такое впечатление, что запомнилось, о героях. */
+  verbatims: Record<string, string>;
 }
 
 const SEGMENT_LABELS: Record<string, string> = {
@@ -147,6 +172,31 @@ function obj(value: unknown): Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : {};
+}
+
+/**
+ * Словарь произвольных значений → словарь строк, годных для показа.
+ *
+ * Ответ на вопрос анкеты бывает числом (шкала), массивом (эмоции, ценности) и
+ * логическим значением — тип задаёт вопрос, а не персона. Показывать их надо
+ * все, поэтому приведение здесь, а не в разметке: `String(["интерес","скука"])`
+ * дал бы «интерес,скука» без пробела, а `String({})` — «[object Object]».
+ *
+ * Пустые значения отбрасываются: пустая строка в карточке неотличима от
+ * «вопрос задан, ответа нет», а это разные вещи.
+ */
+function flatten(source: Record<string, unknown>): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [key, value] of Object.entries(source)) {
+    if (value === null || value === undefined) continue;
+    const text = Array.isArray(value)
+      ? value.map((v) => String(v)).filter(Boolean).join(", ")
+      : typeof value === "object"
+        ? JSON.stringify(value)
+        : String(value);
+    if (text.trim()) out[key] = text;
+  }
+  return out;
 }
 
 /**
@@ -368,5 +418,7 @@ export function parseAnswer(card: {
       const reason = str(f.reason) ?? str(f.verdict);
       return reason ? [reason] : [];
     }),
+    surveyAnswers: flatten(obj(body.survey_answers)),
+    verbatims: flatten(verbatims),
   };
 }

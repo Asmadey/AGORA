@@ -233,10 +233,15 @@ def generate_audience(self: Any, payload: dict[str, Any]) -> dict[str, Any]:
                 # претензий нет» обязательно: иначе набор, созданный без фазы
                 # валидации, выглядел бы прошедшим проверку, которой не было.
                 verdict = verdicts[index].to_json() if index < len(verdicts) else {}
+                # Автор наследуется от набора подзапросом, а не приезжает в
+                # payload: в очереди он мог бы разойтись со строкой набора, если
+                # набор пересоздали, — а истина о том, чья это аудитория, живёт
+                # в базе, не в сообщении.
                 cur.execute(
                     "INSERT INTO personas (tenant_id, persona_set_id, name, dna, "
-                    "                      narrative, seed, validation) "
-                    "VALUES (app.current_tenant(), %s::uuid, %s, %s, %s, %s, %s)",
+                    "                      narrative, seed, validation, created_by) "
+                    "VALUES (app.current_tenant(), %s::uuid, %s, %s, %s, %s, %s, "
+                    "        (SELECT created_by FROM persona_sets WHERE id = %s::uuid))",
                     (
                         set_id,
                         name,
@@ -244,6 +249,7 @@ def generate_audience(self: Any, payload: dict[str, Any]) -> dict[str, Any]:
                         dna.get("narrative"),
                         dna.get("seed"),
                         json.dumps(verdict, ensure_ascii=False),
+                        set_id,
                     ),
                 )
             cur.execute(

@@ -46,7 +46,7 @@ export const runtime = "nodejs";
 
 export async function POST(request: Request) {
   try {
-    const { tenantId } = await requireSession();
+    const { tenantId, userId } = await requireSession();
 
     let body: unknown;
     try {
@@ -182,6 +182,7 @@ export async function POST(request: Request) {
         seed,
         "generating",
         snapshotId,
+        userId,
       ),
     );
 

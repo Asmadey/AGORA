@@ -45,7 +45,7 @@ import { ThemeToggle } from "@/components/ThemeToggle";
  */
 
 const NAV = [
-  { href: "/", label: "Исследования", icon: ListChecks },
+  { href: "/researches", label: "Исследования", icon: ListChecks },
   { href: "/projects", label: "Проекты", icon: FolderKanban },
   { href: "/audience", label: "Аудитории", icon: UsersRound },
   { href: "/surveys", label: "Анкеты", icon: ClipboardList },
@@ -100,7 +100,12 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
           <nav className="flex-1 space-y-0.5 overflow-y-auto p-3">
             {NAV.map(({ href, label, icon: Icon }) => {
-              const active = href === "/" ? pathname === "/" : pathname.startsWith(href);
+              // Отчёт прогона живёт на /runs/<id>, но принадлежит разделу
+              // «Исследования»: без этой связи открытый отчёт гасил подсветку
+              // целиком, и по меню выходило, что пользователь нигде.
+              const active =
+                pathname.startsWith(href) ||
+                (href === "/researches" && pathname.startsWith("/runs"));
               return (
                 <Link
                   key={href}

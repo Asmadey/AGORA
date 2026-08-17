@@ -54,6 +54,8 @@ export interface Persona {
   narrative: string | null;
   seed: number | null;
   createdAt: string;
+  /** Имя или адрес автора набора. null — автор неизвестен либо удалён. */
+  author: string | null;
 }
 
 interface PersonaSetRow {
@@ -77,6 +79,7 @@ interface PersonaRow {
   narrative: string | null;
   seed: string | number | null;
   created_at: Date;
+  author?: string | null;
 }
 
 /** bigint приезжает из pg строкой: JS не может представить его безопасно как number. */
@@ -109,6 +112,7 @@ function toPersona(row: PersonaRow): Persona {
     narrative: row.narrative,
     seed: toNumber(row.seed),
     createdAt: row.created_at.toISOString(),
+    author: row.author ?? null,
   };
 }
 
@@ -152,16 +156,48 @@ export async function createPersonaSet(
    * воспроизводимость, которой нет.
    */
   corpusSnapshotId: string | null = null,
+  /**
+   * Кто заказал генерацию. Наследуется персонами набора при записи.
+   *
+   * `null` законен: ручной вызов и тесты сессии не имеют. Читается как «автор
+   * неизвестен» — в команде из нескольких человек это единственный способ
+   * понять, чья аудитория, прежде чем её удалять.
+   */
+  createdBy: string | null = null,
 ): Promise<PersonaSet> {
   const { rows } = await client.query<PersonaSetRow>(
     `INSERT INTO persona_sets (tenant_id, name, size, generation_config, seed, status,
-                               corpus_snapshot_id)
-     VALUES (app.current_tenant(), $1, $2, $3::jsonb, $4, $5, $6)
+                               corpus_snapshot_id, created_by)
+     VALUES (app.current_tenant(), $1, $2, $3::jsonb, $4, $5, $6, $7)
      RETURNING id, name, size, generation_config, seed, created_at, status,
                generated_count, error, 0::bigint AS persona_count`,
-    [name, size, JSON.stringify(generationConfig), seed, status, corpusSnapshotId],
+    [name, size, JSON.stringify(generationConfig), seed, status, corpusSnapshotId, createdBy],
   );
   return toSet(rows[0]);
+}
+
+/**
+ * Удаляет персон по списку идентификаторов. Возвращает, сколько удалено.
+ *
+ * Чужие идентификаторы просто не находятся: RLS не покажет строку другого
+ * арендатора, и `DELETE` по ней удалит ноль. Отдельной проверки на владение не
+ * нужно — и это лучше проверки, потому что её нельзя забыть.
+ *
+ * Персона, на ответах которой стоит отчёт, удаляется вместе со своей карточкой
+ * в реестре, но не из отчёта: карточки ответов живут в Mongo и ссылаются на
+ * идентификатор, а не на строку. Прежний отчёт остаётся читаемым — иначе
+ * уборка в реестре задним числом меняла бы уже принятые решения.
+ */
+export async function deletePersonas(
+  client: PoolClient,
+  ids: string[],
+): Promise<number> {
+  if (ids.length === 0) return 0;
+  const { rowCount } = await client.query(
+    "DELETE FROM personas WHERE id = ANY($1::uuid[])",
+    [ids],
+  );
+  return rowCount ?? 0;
 }
 
 // ─── Персоны ───────────────────────────────────────────────────────────────
@@ -171,10 +207,11 @@ export async function listPersonas(
   personaSetId?: string,
 ): Promise<Persona[]> {
   const { rows } = await client.query<PersonaRow>(
-    `SELECT id, persona_set_id, name, dna, narrative, seed, created_at
-       FROM personas
-      WHERE ($1::uuid IS NULL OR persona_set_id = $1::uuid)
-      ORDER BY created_at DESC`,
+    `SELECT p.id, p.persona_set_id, p.name, p.dna, p.narrative, p.seed, p.created_at,
+            (SELECT COALESCE(u.name, u.email) FROM users u WHERE u.id = p.created_by) AS author
+       FROM personas p
+      WHERE ($1::uuid IS NULL OR p.persona_set_id = $1::uuid)
+      ORDER BY p.created_at DESC`,
     [personaSetId ?? null],
   );
   return rows.map(toPersona);

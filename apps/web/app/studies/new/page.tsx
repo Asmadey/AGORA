@@ -496,7 +496,7 @@ export default function NewStudyPage() {
                 </p>
                 <div className="mt-3 flex flex-wrap gap-2">
                   <Link
-                    href="/"
+                    href="/researches"
                     className="rounded-full bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-ink/90"
                   >
                     К списку исследований
