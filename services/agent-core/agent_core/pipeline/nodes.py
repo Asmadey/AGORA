@@ -69,6 +69,38 @@ def _temperatures(state: PipelineState) -> Any:
     return TemperatureConfig.for_task(state.get("settings_snapshot"))
 
 
+def _model_config(state: PipelineState) -> Any:
+    """
+    Конфигурация моделей прогона: выбор из снимка поверх окружения.
+
+    Как и температуры, берётся из снимка задачи, а не из настроек на лету: смена
+    модели, пока задача стоит в очереди, дала бы отчёт, у которого в карточке
+    одна модель, а считала его другая.
+    """
+    from ..config import ModelConfig
+
+    return ModelConfig.for_task(state.get("settings_snapshot"))
+
+
+def _models_used(state: PipelineState) -> dict[str, str]:
+    """
+    Какими моделями считался прогон — для карточки отчёта.
+
+    Берётся из той же конфигурации, по которой шли вызовы, а не из окружения на
+    момент чтения: модель меняется из интерфейса, и отчёт, называющий текущую
+    вместо использованной, врал бы тем убедительнее, чем чаще её меняют.
+
+    Ключа здесь нет: отчёт живёт долго и уезжает в Mongo, а секрет, попавший
+    туда, не отозвать.
+    """
+    config = _model_config(state)
+    return {
+        "text": config.text_model,
+        "vision": config.vlm_model,
+        "judge": config.judge_model_or_text,
+    }
+
+
 def _prompt(name: str, state: PipelineState) -> tuple[str, str | None]:
     """
     Шаблон промпта: сначала запиннённая версия прогона, потом файл.
@@ -418,7 +450,7 @@ def analyze_chunks(state: PipelineState) -> dict[str, Any]:
 
     result = analyze_panels(
         panels,
-        client=QwenVlmClient(),
+        client=QwenVlmClient(config=_model_config(state)),
         prompt=template,
         # Кэш и кап были написаны и не подключены: разбор платил заново за уже
         # разобранные панели, а жёсткий кап из Настроек (#27) не действовал
@@ -625,7 +657,10 @@ def evaluate_personas(state: PipelineState) -> dict[str, Any]:
         personas=personas,
         pack=state.get("content_pack_compact") or {},
         survey=state.get("survey") or {},
-        client=QwenRespondentClient(temperature=_temperatures(state).responseSimulation),
+        client=QwenRespondentClient(
+            config=_model_config(state),
+            temperature=_temperatures(state).responseSimulation,
+        ),
         replication_count=int(state.get("replication_count") or 1),
         artifact_path=workdir(state) / "persona_answers.json",
         system_template=system_template,
@@ -729,7 +764,10 @@ def qa(state: PipelineState) -> dict[str, Any]:
     try:
         from ..qa.judge import QwenJudgeClient
 
-        judge = QwenJudgeClient(temperature=_temperatures(state).answerJudge)
+        judge = QwenJudgeClient(
+            config=_model_config(state),
+            temperature=_temperatures(state).answerJudge,
+        )
     except ConfigError as exc:
         degraded.append(f"qa: судья не поднят ({exc}); проверены только правила")
 
@@ -804,7 +842,10 @@ def analytics(state: PipelineState) -> dict[str, Any]:
     try:
         from ..analytics.report import QwenAnalystClient
 
-        model = QwenAnalystClient(temperature=_temperatures(state).aggregation)
+        model = QwenAnalystClient(
+            config=_model_config(state),
+            temperature=_temperatures(state).aggregation,
+        )
     except ConfigError as exc:
         degraded.append(f"analytics: аналитик не поднят ({exc}); собран только агрегат")
 
@@ -823,6 +864,7 @@ def analytics(state: PipelineState) -> dict[str, Any]:
         artifact_path=workdir(state) / "report.json",
         asked=state.get("survey_asked") or [],
         qa_summary=state.get("qa_summary") or {},
+        models_used=_models_used(state),
         # Запасной источник среза для посегментного разреза. Ответы нового
         # прогона несут срез сами, и тогда реестр не читается вовсе.
         personas=_personas_for_segments(state, degraded),

@@ -183,6 +183,21 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
           />
           {/* Прочерк, а не ноль: прогоны до появления замеров не знают своей
               длительности, и «0 с» утверждало бы, что обработка была мгновенной. */}
+          {/* Какими моделями считался прогон. Отдельной карточкой, а не
+              строкой в подвале: доля отбраковок и тон ответов зависят от
+              модели не меньше, чем от материала, и сравнивать два отчёта, не
+              зная модели, значит сравнивать не то. */}
+          {view.modelsUsed && (
+            <StatCard
+              label="Модель зрения"
+              value={view.modelsUsed.vision || "—"}
+              hint={
+                view.modelsUsed.judge && view.modelsUsed.judge !== view.modelsUsed.text
+                  ? `рассуждение ${view.modelsUsed.text} · судья ${view.modelsUsed.judge}`
+                  : `рассуждение и проверка ${view.modelsUsed.text}`
+              }
+            />
+          )}
           <StatCard
             label="Время обработки"
             value={timing.totalSec === null ? "—" : formatDuration(timing.totalSec)}

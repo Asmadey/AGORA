@@ -3,6 +3,11 @@
 import { useEffect, useState } from "react";
 import { Check, Loader2, AlertCircle } from "lucide-react";
 import { PageHeader } from "@/components/AppShell";
+import {
+  ModelPicker,
+  ReasoningControls,
+  useProviderModels,
+} from "@/components/agora/ModelControls";
 import { cn } from "@/lib/utils";
 import {
   DEFAULT_SETTINGS,
@@ -35,6 +40,7 @@ export default function SettingsPage() {
   const [draft, setDraft] = useState<TenantSettings>(DEFAULT_SETTINGS);
   const [loading, setLoading] = useState(true);
   const [save, setSave] = useState<SaveState>({ kind: "idle" });
+  const provider = useProviderModels();
 
   const dirty = !settingsEqual(saved, draft);
 
@@ -254,24 +260,88 @@ export default function SettingsPage() {
 
         <section className="rounded-lg border border-hairline bg-card p-6">
           <h2 className="text-sm font-semibold">Провайдер моделей</h2>
-          <dl className="mt-4 space-y-2 text-sm">
-            <div className="flex justify-between gap-4">
-              <dt className="text-slate">Модель</dt>
-              <dd className="font-mono">qwen3.6</dd>
-            </div>
-            <div className="flex justify-between gap-4">
-              <dt className="text-slate">Endpoint</dt>
-              <dd className="font-mono text-xs">api.timeweb.cloud/v1</dd>
-            </div>
-            <div className="flex justify-between gap-4">
-              <dt className="text-slate">Ключ</dt>
-              <dd className="text-slate">задан в окружении сервера</dd>
-            </div>
-          </dl>
-          <p className="mt-4 text-xs text-slate">
-            Ключи не хранятся в базе и не редактируются из интерфейса — только через
-            переменные окружения.
+          <p className="mt-1 text-xs leading-relaxed text-slate">
+            Список моделей приходит от провайдера живым запросом, а не зашит в код:
+            зашитый устаревает молча — так у нас годами предлагались две модели
+            транскрипции, а в образе лежала одна.
           </p>
+
+          {provider?.error && (
+            <p className="mt-3 rounded-md bg-warning-soft/60 px-3 py-2 text-xs text-warning">
+              {provider.error}. Модель можно вписать в поле руками.
+            </p>
+          )}
+
+          <div className="mt-4 space-y-5">
+            <ModelPicker
+              label="Модель рассуждения"
+              hint="Отвечает за персон, аналитику и портреты сегментов."
+              value={draft.models.text}
+              onChange={(id) => patch({ models: { ...draft.models, text: id } })}
+              info={provider}
+              kind="text"
+              fallback={provider?.current.text ?? ""}
+            />
+
+            <ModelPicker
+              label="Модель зрения"
+              hint="Разбирает кадры видео. Текстовая модель картинку не примет — один общий выбор сломал бы разбор кадров молча, уже после расшифровки."
+              value={draft.models.vision}
+              onChange={(id) => patch({ models: { ...draft.models, vision: id } })}
+              info={provider}
+              kind="vision"
+              fallback={provider?.current.vision ?? ""}
+            />
+
+            {provider?.guessed && (
+              <p className="text-xs text-slate">
+                Провайдер не сообщает модальность модели — зрение опознано по имени.
+                Если нужной модели нет в списке, впишите её имя в окружение сервера.
+              </p>
+            )}
+
+            <div>
+              <label className="block text-sm font-medium">Endpoint</label>
+              <p className="mt-1 text-xs text-slate">
+                Пусто — брать из окружения сервера
+                {provider?.current.endpoint ? ` (${provider.current.endpoint})` : ""}.
+              </p>
+              <input
+                value={draft.endpoint}
+                onChange={(e) => patch({ endpoint: e.target.value })}
+                placeholder={provider?.current.endpoint || "https://…/v1"}
+                className="mt-2 w-full rounded-md border border-hairline bg-background px-3 py-2 font-mono text-sm"
+              />
+            </div>
+
+            <div>
+              <p className="text-sm font-medium">Ключ</p>
+              <p className="mt-1 font-mono text-sm">{provider?.current.keyMask ?? "—"}</p>
+              {/*
+                Поля для ввода ключа здесь нет намеренно, и это отступление от
+                просьбы — с причиной. Ключ, положенный в настройки, попадёт в
+                резервные копии базы и в снимок каждой задачи, а снимок живёт
+                столько же, сколько отчёт. Отозвать его оттуда нечем. В
+                окружении он в одном месте, и смена — это одна правка .env
+                плюс перезапуск.
+              */}
+              <p className="mt-2 text-xs leading-relaxed text-slate">
+                Задаётся в окружении сервера и здесь только показан маской. В базе
+                ключ не хранится: оттуда он разошёлся бы по резервным копиям и по
+                снимкам задач, а снимок живёт столько же, сколько отчёт.
+              </p>
+            </div>
+          </div>
+
+          <div className="mt-6 border-t border-hairline pt-5">
+            <h3 className="text-sm font-medium">Рассуждение</h3>
+            <div className="mt-3">
+              <ReasoningControls
+                value={draft.reasoning}
+                onChange={(reasoning) => patch({ reasoning })}
+              />
+            </div>
+          </div>
         </section>
       </div>
 

@@ -12,6 +12,7 @@ import {
   BookUser,
   BookOpen,
   Database,
+  ShieldCheck,
   UserCog,
   Plus,
   SlidersHorizontal,
@@ -56,6 +57,9 @@ const NAV = [
   // принадлежал разработчику, а не исследователю.
   { href: "/corpus", label: "Корпус", icon: Database },
   { href: "/prompts", label: "Промпт-студия", icon: SlidersHorizontal },
+  // Судья стоит отдельным разделом, а не блоком в Настройках: настройки
+  // отвечают «как считать», а этот раздел — «кому верить».
+  { href: "/qa-judge", label: "QA судья", icon: ShieldCheck },
   { href: "/users", label: "Пользователи", icon: UserCog },
   { href: "/settings", label: "Настройки", icon: Settings },
   // Страница /api-docs существовала с задачи #26, но попасть на неё можно

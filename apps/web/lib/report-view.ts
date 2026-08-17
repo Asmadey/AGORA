@@ -72,6 +72,14 @@ export interface ReportView {
    */
   asked: AskedQuestion[];
   /**
+   * Модели, которыми считался прогон: рассуждение, зрение, судья.
+   *
+   * Пустой объект — прогон сделан до того, как выбор моделей стал настройкой.
+   * Отличать это от «модель неизвестна» нужно: первое означает «тогда была одна
+   * на всех», второе — что запись потерялась.
+   */
+  modelsUsed: { text: string; vision: string; judge: string } | null;
+  /**
    * Средняя готовность рекомендовать, 1–10.
    *
    * Рядом с NPS, а не вместо него. NPS — доля промоутеров минус доля критиков,
@@ -337,6 +345,14 @@ export function parseReport(raw: Record<string, unknown>): ReportView {
     weaknesses: strings(raw.weaknesses),
     recommendation: num(agg.recommendation_mean),
     qa: qaOf(raw.qa_summary),
+    modelsUsed: (() => {
+      const m = obj(raw.models_used);
+      const text = str(m.text);
+      const vision = str(m.vision);
+      const judge = str(m.judge);
+      if (!text && !vision && !judge) return null;
+      return { text: text ?? "—", vision: vision ?? "—", judge: judge ?? "—" };
+    })(),
     asked: (Array.isArray(raw.survey_asked) ? raw.survey_asked : []).flatMap((rawQ) => {
       const q = obj(rawQ);
       const label = str(q.label);

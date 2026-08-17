@@ -105,6 +105,49 @@ export const DEFAULT_TEMPERATURES: Temperatures = Object.fromEntries(
   TEMPERATURE_STAGES.map((s) => [s.key, s.default]),
 ) as Temperatures;
 
+/**
+ * ─── Выбор моделей ─────────────────────────────────────────────────────────
+ *
+ * Три роли, а не одна. Разбор кадра идёт в модель ЗРЕНИЯ, и текстовая модель
+ * картинку не примет: один общий селектор сломал бы разбор кадров молча —
+ * прогон дошёл бы до него после расшифровки и упал бы на каждой панели.
+ *
+ * Судья вынесен отдельно намеренно: его задача — не соглашаться с проверяемым,
+ * и одна модель в обеих ролях склонна признавать собственную работу верной.
+ * Пустая строка означает «та же, что текстовая» — это законный режим и
+ * умолчание, потому что второй агент есть не у всех.
+ */
+export interface ModelSelection {
+  text: string;
+  vision: string;
+  /** "" — судить той же моделью, что отвечает. */
+  judge: string;
+}
+
+/** Усилия рассуждения. Значения — те, что понимает `chat_template_kwargs`. */
+export const REASONING_EFFORTS = ["low", "medium", "high", "max"] as const;
+export type ReasoningEffort = (typeof REASONING_EFFORTS)[number];
+
+export interface Reasoning {
+  /**
+   * Размышление перед ответом.
+   *
+   * Уезжает ключом `enable_thinking`, а не `thinking`: замер на боевом ключе
+   * 17.08.2026 показал, что `thinking: false` шлюз ИГНОРИРУЕТ — 480 токенов
+   * вывода против 4 при `enable_thinking: false`. Ключ из документации
+   * провайдера здесь не работает, и переключатель, повешенный на него, был бы
+   * ручкой, которая ничего не крутит.
+   */
+  thinking: boolean;
+  /**
+   * Текущий endpoint этот параметр ИГНОРИРУЕТ — замер там же: с
+   * `enable_thinking: false` результат одинаков при `max` и без параметра
+   * вовсе. Поле хранится и отправляется, чтобы заработать само при смене
+   * провайдера, и подписано в интерфейсе честно.
+   */
+  effort: ReasoningEffort;
+}
+
 export interface TenantSettings {
   costCap: CostCapMode;
   /** Потолок вызовов модели. Осмыслен только при costCap === "hard". */
@@ -112,7 +155,23 @@ export interface TenantSettings {
   whisperModel: WhisperModel;
   defaultReplication: ReplicationCount;
   temperatures: Temperatures;
+  models: ModelSelection;
+  reasoning: Reasoning;
+  /** Рассуждение судьи — отдельно от основного: у проверки другая цена ошибки. */
+  judgeReasoning: Reasoning;
+  /**
+   * Адрес провайдера. Пустая строка — брать из окружения сервера.
+   *
+   * Ключ здесь НЕ хранится и не редактируется. Он живёт в окружении, откуда его
+   * читает воркер; положив его в настройки, мы бы размножили его по резервным
+   * копиям базы и по снимкам задач — а снимок задачи живёт столько же, сколько
+   * отчёт. Интерфейс показывает маску, чтобы было видно, какой ключ действует.
+   */
+  endpoint: string;
 }
+
+export const DEFAULT_MODELS: ModelSelection = { text: "", vision: "", judge: "" };
+export const DEFAULT_REASONING: Reasoning = { thinking: false, effort: "max" };
 
 export const DEFAULT_SETTINGS: TenantSettings = {
   costCap: "auto",
@@ -120,6 +179,13 @@ export const DEFAULT_SETTINGS: TenantSettings = {
   whisperModel: "large-v3",
   defaultReplication: 1,
   temperatures: DEFAULT_TEMPERATURES,
+  // Пустые строки означают «как задано в окружении сервера». Подставлять сюда
+  // конкретные имена нельзя: они разъедутся с .env при первой же смене, и
+  // интерфейс станет показывать модель, по которой прогон не идёт.
+  models: DEFAULT_MODELS,
+  reasoning: DEFAULT_REASONING,
+  judgeReasoning: DEFAULT_REASONING,
+  endpoint: "",
 };
 
 export const COST_CAP_BOUNDS = { min: 100, max: 5000, step: 100 } as const;
@@ -200,6 +266,68 @@ export function parseSettings(input: unknown): { ok: true; value: TenantSettings
     }
   }
 
+  // ─── Модели и рассуждение ─────────────────────────────────────────────────
+  //
+  // Имена моделей не сверяются со списком: список живой, его отдаёт провайдер,
+  // и зашитый перечень устарел бы молча — ровно так уже вышло с моделями
+  // Whisper, где интерфейс предлагал две, а в образе лежала одна. Проверяется
+  // только форма: строка разумной длины без пробелов по краям.
+  const models: ModelSelection = { ...DEFAULT_MODELS };
+  const rawModels = raw.models;
+  if (rawModels !== undefined) {
+    if (typeof rawModels !== "object" || rawModels === null) {
+      errors.push("models: ожидается объект");
+    } else {
+      for (const role of ["text", "vision", "judge"] as const) {
+        const value = (rawModels as Record<string, unknown>)[role];
+        if (value === undefined) continue;
+        if (typeof value !== "string" || value.length > 200) {
+          errors.push(`models.${role}: строка не длиннее 200 символов`);
+          continue;
+        }
+        models[role] = value.trim();
+      }
+    }
+  }
+
+  function parseReasoning(source: unknown, field: string): Reasoning {
+    const out: Reasoning = { ...DEFAULT_REASONING };
+    if (source === undefined) return out;
+    if (typeof source !== "object" || source === null) {
+      errors.push(`${field}: ожидается объект`);
+      return out;
+    }
+    const r = source as Record<string, unknown>;
+    if (r.thinking !== undefined) {
+      if (typeof r.thinking !== "boolean") errors.push(`${field}.thinking: ожидается true или false`);
+      else out.thinking = r.thinking;
+    }
+    if (r.effort !== undefined) {
+      if (!REASONING_EFFORTS.includes(r.effort as ReasoningEffort)) {
+        errors.push(`${field}.effort: ожидается ${REASONING_EFFORTS.join(" | ")}`);
+      } else out.effort = r.effort as ReasoningEffort;
+    }
+    return out;
+  }
+
+  const reasoning = parseReasoning(raw.reasoning, "reasoning");
+  const judgeReasoning = parseReasoning(raw.judgeReasoning, "judgeReasoning");
+
+  let endpoint = "";
+  if (raw.endpoint !== undefined) {
+    if (typeof raw.endpoint !== "string" || raw.endpoint.length > 500) {
+      errors.push("endpoint: строка не длиннее 500 символов");
+    } else {
+      endpoint = raw.endpoint.trim();
+      // Пустая строка законна — «как в окружении». Непустая обязана быть
+      // адресом: опечатка здесь проявилась бы отказом посреди прогона, уже
+      // после расшифровки и разбора кадров.
+      if (endpoint && !/^https?:\/\/\S+$/.test(endpoint)) {
+        errors.push("endpoint: ожидается http(s)-адрес либо пусто");
+      }
+    }
+  }
+
   if (errors.length > 0) return { ok: false, errors };
 
   return {
@@ -210,8 +338,16 @@ export function parseSettings(input: unknown): { ok: true; value: TenantSettings
       whisperModel: whisperModel as WhisperModel,
       defaultReplication: defaultReplication as ReplicationCount,
       temperatures,
+      models,
+      reasoning,
+      judgeReasoning,
+      endpoint,
     },
   };
+}
+
+function reasoningEqual(a: Reasoning, b: Reasoning): boolean {
+  return a.thinking === b.thinking && a.effort === b.effort;
 }
 
 export function settingsEqual(a: TenantSettings, b: TenantSettings): boolean {
@@ -220,6 +356,12 @@ export function settingsEqual(a: TenantSettings, b: TenantSettings): boolean {
     a.costCapValue === b.costCapValue &&
     a.whisperModel === b.whisperModel &&
     a.defaultReplication === b.defaultReplication &&
+    a.endpoint === b.endpoint &&
+    a.models.text === b.models.text &&
+    a.models.vision === b.models.vision &&
+    a.models.judge === b.models.judge &&
+    reasoningEqual(a.reasoning, b.reasoning) &&
+    reasoningEqual(a.judgeReasoning, b.judgeReasoning) &&
     TEMPERATURE_STAGES.every((s) => a.temperatures[s.key] === b.temperatures[s.key])
   );
 }

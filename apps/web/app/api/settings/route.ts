@@ -1,7 +1,10 @@
 import {
+  DEFAULT_MODELS,
+  DEFAULT_REASONING,
   DEFAULT_SETTINGS,
   DEFAULT_TEMPERATURES,
   parseSettings,
+  REASONING_EFFORTS,
   TEMPERATURE_STAGES,
   type TenantSettings,
 } from "@/lib/settings";
@@ -51,7 +54,8 @@ interface SettingsRow {
  * отсекается там же, где мусор из HTTP.
  */
 function rowToSettings(row: SettingsRow): TenantSettings {
-  const stored = (row.provider_config ?? {}) as { temperatures?: unknown };
+  const stored = (row.provider_config ?? {}) as Record<string, unknown>;
+
   const temperatures = { ...DEFAULT_TEMPERATURES };
   const raw = stored.temperatures;
   if (raw && typeof raw === "object") {
@@ -63,12 +67,37 @@ function rowToSettings(row: SettingsRow): TenantSettings {
     }
   }
 
+  const models = { ...DEFAULT_MODELS };
+  const rawModels = stored.models;
+  if (rawModels && typeof rawModels === "object") {
+    for (const role of ["text", "vision", "judge"] as const) {
+      const value = (rawModels as Record<string, unknown>)[role];
+      if (typeof value === "string") models[role] = value;
+    }
+  }
+
+  function reasoningOf(key: string): TenantSettings["reasoning"] {
+    const source = stored[key];
+    const out = { ...DEFAULT_REASONING };
+    if (!source || typeof source !== "object") return out;
+    const r = source as Record<string, unknown>;
+    if (typeof r.thinking === "boolean") out.thinking = r.thinking;
+    if (REASONING_EFFORTS.includes(r.effort as never)) {
+      out.effort = r.effort as TenantSettings["reasoning"]["effort"];
+    }
+    return out;
+  }
+
   return {
     costCap: row.cost_cap_calls === null ? "auto" : "hard",
     costCapValue: row.cost_cap_calls ?? DEFAULT_SETTINGS.costCapValue,
     whisperModel: row.whisper_model,
     defaultReplication: row.default_replication_count as TenantSettings["defaultReplication"],
     temperatures,
+    models,
+    reasoning: reasoningOf("reasoning"),
+    judgeReasoning: reasoningOf("judgeReasoning"),
+    endpoint: typeof stored.endpoint === "string" ? stored.endpoint : "",
   };
 }
 
@@ -135,7 +164,13 @@ export async function PUT(request: Request) {
           costCapCalls,
           value.whisperModel,
           value.defaultReplication,
-          JSON.stringify({ temperatures: value.temperatures }),
+          JSON.stringify({
+            temperatures: value.temperatures,
+            models: value.models,
+            reasoning: value.reasoning,
+            judgeReasoning: value.judgeReasoning,
+            endpoint: value.endpoint,
+          }),
         ],
       );
       return rowToSettings(rows[0]);

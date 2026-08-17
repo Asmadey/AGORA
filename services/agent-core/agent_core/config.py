@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import os
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 
@@ -85,6 +85,20 @@ class ModelConfig:
     #: `none` — выключить везде, `all` — включить везде.
     thinking_roles: frozenset[str] = frozenset({"respondent"})
 
+    #: Модель судьи. Пусто — судить той же, что отвечает (`judge_model_or_text`).
+    #:
+    #: Отдельное поле, а не второй адрес: провайдер, под которого писался
+    #: `escalation_base_url`, выбирал модель адресом агента, а нынешний —
+    #: полем `model`. Подстановка идентификатора в сегмент `/agents/<id>` на
+    #: адресе Cloud.ru падает: такого сегмента там нет.
+    judge_model: str = ""
+
+    #: Режим рассуждения из настроек: {"thinking": bool, "effort": str}.
+    #: Пустой словарь — брать поведение из `thinking_roles`, как было до
+    #: появления настроек.
+    reasoning: dict[str, Any] = field(default_factory=dict)
+    judge_reasoning: dict[str, Any] = field(default_factory=dict)
+
     @property
     def default_headers(self) -> dict[str, str]:
         """Передаётся в OpenAI(..., default_headers=...) — иначе запрос отклонят."""
@@ -92,6 +106,61 @@ class ModelConfig:
 
     #: Роли, которые вообще бывают. Список закрытый намеренно — см. extra_body.
     ROLES = ("respondent", "frames", "qa", "analytics", "persona", "portrait")
+
+    @classmethod
+    def for_task(
+        cls, settings_snapshot: dict[str, Any] | None, base: ModelConfig | None = None
+    ) -> ModelConfig:
+        """
+        Конфигурация прогона: выбор моделей и адрес из снимка настроек.
+
+        Пустая строка в снимке означает «как в окружении», а не «без модели»:
+        так выглядят все прогоны до первого захода в настройки, и подставлять
+        туда конкретное имя нельзя — оно разъедется с `.env` при первой смене, и
+        отчёт станет называть модель, по которой прогон не шёл.
+
+        Ключа в снимке нет и не должно быть. Снимок живёт столько же, сколько
+        отчёт, и копия ключа в каждой строке `tasks` — это секрет, размноженный
+        по резервным копиям базы без единого способа его отозвать.
+        """
+        config = base or cls.from_env()
+        stored = settings_snapshot or {}
+        models = stored.get("models") or {}
+
+        def pick(role: str, fallback: str) -> str:
+            value = models.get(role)
+            return value.strip() if isinstance(value, str) and value.strip() else fallback
+
+        endpoint = stored.get("endpoint")
+        base_url = (
+            endpoint.strip()
+            if isinstance(endpoint, str) and endpoint.strip()
+            else config.base_url
+        )
+
+        return replace(
+            config,
+            base_url=base_url,
+            # vlm_base_url следует за основным, если не задан отдельно: он
+            # заведён под провайдера, у которого «другая модель» означала
+            # «другой агент», то есть другой адрес. Там, где модель выбирается
+            # полем `model`, второй адрес не нужен.
+            vlm_base_url=(
+                config.vlm_base_url
+                if config.vlm_base_url != config.base_url
+                else base_url
+            ),
+            text_model=pick("text", config.text_model),
+            vlm_model=pick("vision", config.vlm_model),
+            judge_model=pick("judge", ""),
+            reasoning=_reasoning_of(stored.get("reasoning")),
+            judge_reasoning=_reasoning_of(stored.get("judgeReasoning")),
+        )
+
+    @property
+    def judge_model_or_text(self) -> str:
+        """Модель судьи либо текстовая. Пусто = судить тем же, чем отвечали."""
+        return self.judge_model or self.text_model
 
     def extra_body(self, role: str) -> dict[str, object]:
         """
@@ -111,6 +180,22 @@ class ModelConfig:
             raise ValueError(
                 f"неизвестная роль модели {role!r}; ожидается одна из {', '.join(self.ROLES)}"
             )
+
+        # Настройки арендатора главнее умолчания по ролям: `thinking_roles`
+        # описывает, где размышление полезно ВООБЩЕ, а настройка — чего хочет
+        # команда на своих прогонах. Пустой словарь означает «настройки не
+        # трогали», и тогда работает прежнее правило.
+        settings = self.judge_reasoning if role == "qa" else self.reasoning
+        if settings:
+            kwargs: dict[str, object] = {"enable_thinking": bool(settings.get("thinking"))}
+            effort = settings.get("effort")
+            if effort:
+                # Текущий шлюз параметр игнорирует (замер 17.08.2026), но
+                # отправляется он всё равно: заработает при смене провайдера, а
+                # молча выбрасывать выбор пользователя нельзя.
+                kwargs["reasoning_effort"] = effort
+            return {"chat_template_kwargs": kwargs}
+
         if role in self.thinking_roles:
             return {}
         return {"chat_template_kwargs": {"enable_thinking": False}}
@@ -155,6 +240,25 @@ DEFAULT_ESCALATION_CONFIDENCE = 0.6
 #: «другая модель» означает «другой агент», а не другое значение поля model:
 #: поле model этим endpoint игнорируется.
 _AGENT_SEGMENT = re.compile(r"(/agents/)[^/]+(/|$)")
+
+
+def _reasoning_of(source: Any) -> dict[str, Any]:
+    """
+    Режим рассуждения из снимка. Мусор отбрасывается молча.
+
+    Молча — потому что снимок читает воркер посреди прогона, и падать здесь
+    значило бы терять оплаченную расшифровку из-за поля, у которого есть
+    осмысленное умолчание.
+    """
+    if not isinstance(source, dict):
+        return {}
+    out: dict[str, Any] = {}
+    if isinstance(source.get("thinking"), bool):
+        out["thinking"] = source["thinking"]
+    effort = source.get("effort")
+    if isinstance(effort, str) and effort in ("low", "medium", "high", "max"):
+        out["effort"] = effort
+    return out
 
 
 @dataclass(frozen=True)

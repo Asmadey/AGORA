@@ -101,7 +101,10 @@ class QwenJudgeClient:
             extra["max_tokens"] = MAX_TOKENS["judge"]
 
         response = client.chat.completions.create(
-            model=self.config.text_model,
+            # Модель судьи, если выбрана; иначе та же, что отвечала. Одна модель
+            # в обеих ролях склонна признавать собственную работу верной, и доля
+            # отбраковок тогда говорит о согласии модели с собой.
+            model=self.config.judge_model_or_text,
             messages=[
                 {"role": "system", "content": system},
                 {"role": "user", "content": user},

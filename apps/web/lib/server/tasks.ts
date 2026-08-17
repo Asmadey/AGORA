@@ -143,15 +143,38 @@ export async function buildSettingsSnapshot(
   // персоны созданы под одной температурой, опрошены под другой, а разница в
   // разбросе ответов выглядела бы свойством материала, а не настройки.
   const temperatures = normalizeTemperatures(row?.provider_config);
-  if (!row) return { costCap: "auto", temperatures };
+  // Выбор моделей и режим рассуждения пиннятся вместе с остальным: сменив
+  // модель, пока задача стоит в очереди, команда получила бы отчёт, у которого
+  // в карточке одна модель, а считала его другая.
+  const provider = pickProvider(row?.provider_config);
+  if (!row) return { costCap: "auto", temperatures, ...provider };
   return row.cost_cap_calls === null
-    ? { costCap: "auto", whisperModel: row.whisper_model, temperatures }
+    ? { costCap: "auto", whisperModel: row.whisper_model, temperatures, ...provider }
     : {
         costCap: "hard",
         costCapValue: row.cost_cap_calls,
         whisperModel: row.whisper_model,
         temperatures,
+        ...provider,
       };
+}
+
+/**
+ * Поля провайдера для снимка: модели, рассуждение, адрес.
+ *
+ * Ключа здесь нет и быть не должно. Снимок живёт столько же, сколько отчёт, и
+ * копия ключа в каждой строке `tasks` — это тот же секрет, размноженный по
+ * резервным копиям базы без единого способа его отозвать.
+ */
+function pickProvider(
+  providerConfig: Record<string, unknown> | null | undefined,
+): Record<string, unknown> {
+  const stored = providerConfig ?? {};
+  const out: Record<string, unknown> = {};
+  for (const key of ["models", "reasoning", "judgeReasoning", "endpoint"]) {
+    if (stored[key] !== undefined) out[key] = stored[key];
+  }
+  return out;
 }
 
 /**

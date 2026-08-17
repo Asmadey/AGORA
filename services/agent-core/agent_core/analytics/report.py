@@ -117,6 +117,7 @@ def build_report(
     personas: list[dict[str, Any]] | None = None,
     asked: list[dict[str, Any]] | None = None,
     qa_summary: dict[str, Any] | None = None,
+    models_used: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """Отчёт: посчитанный агрегат, точки риска и отсеянный по опорам синтез."""
     degraded: list[str] = []
@@ -148,6 +149,11 @@ def build_report(
         # по источнику вердикта. Экран называет вещи своими именами — «исключено
         # из агрегата», а не «пересоздано»: перегенерации в системе нет.
         "qa_summary": dict(qa_summary or {}),
+        # Какими моделями считался прогон. Без этого отчёт нельзя сравнить с
+        # соседним: доля отбраковок и тон ответов зависят от модели не меньше,
+        # чем от материала, а выбор модели теперь меняется из интерфейса.
+        # Ключа провайдера здесь нет и быть не должно — отчёт живёт долго.
+        "models_used": dict(models_used or {}),
         "narrative": [],
         "themes": [],
         "disagreements": [],
