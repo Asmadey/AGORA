@@ -8,6 +8,8 @@ import {
   DEFAULT_SETTINGS,
   COST_CAP_BOUNDS,
   REPLICATION_VALUES,
+  TEMPERATURE_BOUNDS,
+  TEMPERATURE_STAGES,
   settingsEqual,
   type TenantSettings,
   type ReplicationCount,
@@ -198,6 +200,56 @@ export default function SettingsPage() {
               </button>
             ))}
           </div>
+        </section>
+
+        <section className="rounded-lg border border-hairline bg-card p-6">
+          <h2 className="text-sm font-semibold">Температура</h2>
+          <p className="mt-1 text-xs leading-relaxed text-slate">
+            Насколько модель отклоняется от самого вероятного продолжения. Ноль —
+            всегда самый вероятный вариант, то есть повторяемость; выше — разброс
+            формулировок. Одного значения на весь конвейер быть не может: персона
+            обязана получиться непохожей на соседнюю, а проверяющий и аналитик —
+            повторяемыми.
+          </p>
+          <div className="mt-4 space-y-4">
+            {TEMPERATURE_STAGES.map((stage) => (
+              <div key={stage.key}>
+                <div className="flex items-baseline justify-between gap-4">
+                  <label htmlFor={`t-${stage.key}`} className="text-sm">
+                    {stage.label}
+                  </label>
+                  <span className="shrink-0 text-sm tabular-nums">
+                    {draft.temperatures[stage.key].toFixed(1)}
+                  </span>
+                </div>
+                <input
+                  id={`t-${stage.key}`}
+                  type="range"
+                  min={TEMPERATURE_BOUNDS.min}
+                  max={TEMPERATURE_BOUNDS.max}
+                  step={TEMPERATURE_BOUNDS.step}
+                  value={draft.temperatures[stage.key]}
+                  onChange={(e) =>
+                    patch({
+                      temperatures: {
+                        ...draft.temperatures,
+                        [stage.key]: Number(e.target.value),
+                      },
+                    })
+                  }
+                  className="mt-2 w-full accent-foreground"
+                />
+                <p className="mt-1 text-xs leading-relaxed text-slate">
+                  Рекомендуемое значение {stage.recommended}. {stage.hint}
+                </p>
+              </div>
+            ))}
+          </div>
+          <p className="mt-4 text-xs leading-relaxed text-slate">
+            Значения фиксируются в задаче на момент запуска. Иначе персоны были бы
+            созданы под одной температурой, а опрошены под другой, и разница в
+            разбросе ответов выглядела бы свойством материала.
+          </p>
         </section>
 
         <section className="rounded-lg border border-hairline bg-card p-6">

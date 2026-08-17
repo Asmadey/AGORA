@@ -55,6 +55,20 @@ def workdir(state: PipelineState) -> Path:
     return path
 
 
+def _temperatures(state: PipelineState) -> Any:
+    """
+    Температуры прогона из снимка настроек задачи.
+
+    Снимок, а не текущие настройки арендатора: пока задача стоит в очереди,
+    команда может сменить значение, и тогда персоны созданы под одной
+    температурой, а опрошены под другой — разница в разбросе ответов выглядела
+    бы свойством материала. Тот же приём, что у капа вызовов и модели Whisper.
+    """
+    from ..config import TemperatureConfig
+
+    return TemperatureConfig.for_task(state.get("settings_snapshot"))
+
+
 def _prompt(name: str, state: PipelineState) -> tuple[str, str | None]:
     """
     Шаблон промпта: сначала запиннённая версия прогона, потом файл.
@@ -611,7 +625,7 @@ def evaluate_personas(state: PipelineState) -> dict[str, Any]:
         personas=personas,
         pack=state.get("content_pack_compact") or {},
         survey=state.get("survey") or {},
-        client=QwenRespondentClient(),
+        client=QwenRespondentClient(temperature=_temperatures(state).responseSimulation),
         replication_count=int(state.get("replication_count") or 1),
         artifact_path=workdir(state) / "persona_answers.json",
         system_template=system_template,
@@ -715,7 +729,7 @@ def qa(state: PipelineState) -> dict[str, Any]:
     try:
         from ..qa.judge import QwenJudgeClient
 
-        judge = QwenJudgeClient()
+        judge = QwenJudgeClient(temperature=_temperatures(state).answerJudge)
     except ConfigError as exc:
         degraded.append(f"qa: судья не поднят ({exc}); проверены только правила")
 
@@ -790,7 +804,7 @@ def analytics(state: PipelineState) -> dict[str, Any]:
     try:
         from ..analytics.report import QwenAnalystClient
 
-        model = QwenAnalystClient()
+        model = QwenAnalystClient(temperature=_temperatures(state).aggregation)
     except ConfigError as exc:
         degraded.append(f"analytics: аналитик не поднят ({exc}); собран только агрегат")
 

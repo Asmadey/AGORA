@@ -5,6 +5,7 @@ import { createHash } from "node:crypto";
 import type { PoolClient } from "pg";
 
 import { listActivePromptsByStage } from "@/lib/server/prompts";
+import { DEFAULT_TEMPERATURES, TEMPERATURE_STAGES } from "@/lib/settings";
 
 /**
  * Запуск исследования (задача #11).
@@ -132,18 +133,48 @@ export async function buildSettingsSnapshot(
   const { rows } = await client.query<{
     cost_cap_calls: number | null;
     whisper_model: string;
+    provider_config: Record<string, unknown> | null;
   }>(
-    "SELECT cost_cap_calls, whisper_model FROM settings WHERE tenant_id = current_setting('app.tenant_id')::uuid",
+    "SELECT cost_cap_calls, whisper_model, provider_config FROM settings WHERE tenant_id = current_setting('app.tenant_id')::uuid",
   );
   const row = rows[0];
-  if (!row) return { costCap: "auto" };
+  // Температуры пиннятся на прогон по той же причине, что кап вызовов и версии
+  // промптов: пока задача стоит в очереди, команда может их сменить. Тогда
+  // персоны созданы под одной температурой, опрошены под другой, а разница в
+  // разбросе ответов выглядела бы свойством материала, а не настройки.
+  const temperatures = normalizeTemperatures(row?.provider_config);
+  if (!row) return { costCap: "auto", temperatures };
   return row.cost_cap_calls === null
-    ? { costCap: "auto", whisperModel: row.whisper_model }
+    ? { costCap: "auto", whisperModel: row.whisper_model, temperatures }
     : {
         costCap: "hard",
         costCapValue: row.cost_cap_calls,
         whisperModel: row.whisper_model,
+        temperatures,
       };
+}
+
+/**
+ * Температуры из `provider_config`, дополненные умолчаниями.
+ *
+ * Снимок обязан быть ПОЛНЫМ: воркер читает стадию по имени, и отсутствующее
+ * поле там означало бы «умолчание воркера», а не «умолчание настроек». Два
+ * умолчания в разных местах — это ровно тот случай, когда они однажды
+ * разойдутся, и никто не поймёт, какое из них действовало.
+ */
+function normalizeTemperatures(
+  providerConfig: Record<string, unknown> | null | undefined,
+): Record<string, number> {
+  const stored = (providerConfig ?? {}) as { temperatures?: unknown };
+  const raw = (stored.temperatures ?? {}) as Record<string, unknown>;
+  const result: Record<string, number> = { ...DEFAULT_TEMPERATURES };
+  for (const stage of TEMPERATURE_STAGES) {
+    const value = raw[stage.key];
+    if (typeof value === "number" && Number.isFinite(value)) {
+      result[stage.key] = value;
+    }
+  }
+  return result;
 }
 
 /**

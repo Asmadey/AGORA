@@ -162,11 +162,22 @@ class QwenTextClient:
     нельзя, потому что отсутствие ключа это штатное состояние CI.
     """
 
-    def __init__(self, config: Any | None = None, model: str | None = None):
-        from ..config import ModelConfig
+    def __init__(self, config: Any | None = None, model: str | None = None,
+                 temperature: float | None = None):
+        from ..config import ModelConfig, TemperatureConfig
 
         self.config = config or ModelConfig.from_env()
         self.model = model or self.config.text_model
+        # Стадия personaCreation. Прежде здесь стоял жёсткий ноль как условие
+        # воспроизводимости CDD #5 — но атрибуты DNA сэмплирует генератор через
+        # random.Random(seed) и модель к ним не прикасается, а этот вызов
+        # переписывает только narrative. Умолчание 0.9 даёт портретам различие
+        # формулировок; воспроизводимость narrative держит кэш.
+        self.temperature = (
+            TemperatureConfig.defaults().personaCreation
+            if temperature is None
+            else temperature
+        )
 
     def complete(self, *, prompt: str) -> str:
         from openai import OpenAI
@@ -180,10 +191,7 @@ class QwenTextClient:
         response = client.chat.completions.create(
             model=self.model,
             messages=[{"role": "user", "content": prompt}],
-            # temperature=0 — не «поменьше фантазии», а условие воспроизводимости
-            # CDD #5. Провайдер вправе его не соблюсти полностью, поэтому вторым
-            # эшелоном стоит кэш.
-            temperature=0,
+            temperature=self.temperature,
             # Размышление выключено: см. ModelConfig.thinking — замер и причина.
             extra_body=self.config.extra_body("persona"),
         )
@@ -262,6 +270,7 @@ def enrich_personas(
     cache: Cache | None = None,
     model: str | None = None,
     on_progress: Callable[[int, int], None] | None = None,
+    temperature: float | None = None,
 ) -> EnrichResult:
     """
     Переписывает narrative каждой персоны моделью, оставляя скелет нетронутым.
@@ -295,7 +304,8 @@ def enrich_personas(
 
     if client is None:
         try:
-            client = QwenTextClient(model=model_name)
+            # Стадия personaCreation: разброс формулировок портрета.
+            client = QwenTextClient(model=model_name, temperature=temperature)
         except Exception as exc:  # ConfigError и всё, что зависит от среды
             return EnrichResult(
                 personas=copy.deepcopy(personas),

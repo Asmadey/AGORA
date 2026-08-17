@@ -324,6 +324,7 @@ def distill_portrait_llm(
     api_key: str | None = None,
     base_url: str | None = None,
     model: str | None = None,
+    temperature: float | None = None,
 ) -> str | None:
     """Call LLM with portrait.distill prompt to generate .md portrait.
 
@@ -349,14 +350,21 @@ def distill_portrait_llm(
     prompt = prompt_template.replace("{{segment}}", segment_label)
     prompt = prompt.replace("{{segment_records}}", segment_records)
 
-    from ..config import ModelConfig
+    from ..config import ModelConfig, TemperatureConfig
+
+    # Стадия segmentPortraits, умолчание 0.3.
+    stage_temperature = (
+        TemperatureConfig.defaults().segmentPortraits
+        if temperature is None
+        else temperature
+    )
 
     try:
         client = OpenAI(api_key=key, base_url=url)
         response = client.chat.completions.create(
             model=mdl,
             messages=[{"role": "user", "content": prompt}],
-            temperature=0.3,
+            temperature=stage_temperature,
             # Размышление выключено: см. ModelConfig.thinking — замер и причина.
             # Здесь функция, а не метод клиента, поэтому конфигурация читается
             # на месте: ключ и адрес выше берутся из окружения тем же способом.

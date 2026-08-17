@@ -1,4 +1,10 @@
-import { DEFAULT_SETTINGS, parseSettings, type TenantSettings } from "@/lib/settings";
+import {
+  DEFAULT_SETTINGS,
+  DEFAULT_TEMPERATURES,
+  parseSettings,
+  TEMPERATURE_STAGES,
+  type TenantSettings,
+} from "@/lib/settings";
 import { withTenant } from "@/lib/server/db";
 import { requireOwner, requireSession, toResponse } from "@/lib/server/guard";
 
@@ -32,14 +38,37 @@ interface SettingsRow {
   cost_cap_calls: number | null;
   whisper_model: TenantSettings["whisperModel"];
   default_replication_count: number;
+  provider_config: Record<string, unknown> | null;
 }
 
+/**
+ * Температуры лежат в `provider_config`, а не в собственных колонках.
+ *
+ * Колонка заведена схемой с самого начала и до сих пор не использовалась ничем.
+ * Шесть новых колонок под шесть стадий означали бы миграцию на каждую будущую
+ * стадию конвейера — а стадии добавляются: этим же планом добавляется валидация
+ * персон. Разбор всё равно идёт через `parseSettings`, поэтому мусор в jsonb
+ * отсекается там же, где мусор из HTTP.
+ */
 function rowToSettings(row: SettingsRow): TenantSettings {
+  const stored = (row.provider_config ?? {}) as { temperatures?: unknown };
+  const temperatures = { ...DEFAULT_TEMPERATURES };
+  const raw = stored.temperatures;
+  if (raw && typeof raw === "object") {
+    for (const stage of TEMPERATURE_STAGES) {
+      const value = (raw as Record<string, unknown>)[stage.key];
+      if (typeof value === "number" && Number.isFinite(value)) {
+        temperatures[stage.key] = value;
+      }
+    }
+  }
+
   return {
     costCap: row.cost_cap_calls === null ? "auto" : "hard",
     costCapValue: row.cost_cap_calls ?? DEFAULT_SETTINGS.costCapValue,
     whisperModel: row.whisper_model,
     defaultReplication: row.default_replication_count as TenantSettings["defaultReplication"],
+    temperatures,
   };
 }
 
@@ -49,7 +78,7 @@ export async function GET() {
 
     const settings = await withTenant(tenantId, async (client) => {
       const { rows } = await client.query<SettingsRow>(
-        "SELECT cost_cap_calls, whisper_model, default_replication_count FROM settings WHERE tenant_id = $1",
+        "SELECT cost_cap_calls, whisper_model, default_replication_count, provider_config FROM settings WHERE tenant_id = $1",
         [tenantId],
       );
       // Строки может не быть: команда заведена, настройки ни разу не сохранялись.
@@ -87,15 +116,27 @@ export async function PUT(request: Request) {
 
     const settings = await withTenant(tenantId, async (client) => {
       const { rows } = await client.query<SettingsRow>(
-        `INSERT INTO settings (tenant_id, cost_cap_calls, whisper_model, default_replication_count)
-         VALUES ($1, $2, $3, $4)
+        `INSERT INTO settings (tenant_id, cost_cap_calls, whisper_model,
+                               default_replication_count, provider_config)
+         -- При вставке сливать не с чем: строки ещё нет, и ссылка на
+         -- settings.provider_config здесь была бы неразрешимой.
+         VALUES ($1, $2, $3, $4, $5::jsonb)
          ON CONFLICT (tenant_id) DO UPDATE SET
            cost_cap_calls            = EXCLUDED.cost_cap_calls,
            whisper_model             = EXCLUDED.whisper_model,
            default_replication_count = EXCLUDED.default_replication_count,
+           -- Слияние, а не замена: в provider_config со временем лягут и другие
+           -- настройки провайдера, и запись температур не должна стирать соседей.
+           provider_config           = COALESCE(settings.provider_config, '{}'::jsonb) || $5::jsonb,
            updated_at                = now()
-         RETURNING cost_cap_calls, whisper_model, default_replication_count`,
-        [tenantId, costCapCalls, value.whisperModel, value.defaultReplication],
+         RETURNING cost_cap_calls, whisper_model, default_replication_count, provider_config`,
+        [
+          tenantId,
+          costCapCalls,
+          value.whisperModel,
+          value.defaultReplication,
+          JSON.stringify({ temperatures: value.temperatures }),
+        ],
       );
       return rowToSettings(rows[0]);
     });

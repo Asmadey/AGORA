@@ -50,16 +50,20 @@ class QwenJudgeClient:
     """Боевой судья: OpenAI-совместимый endpoint TimeWeb (Decision Log #1)."""
 
     def __init__(self, config: Any | None = None, base_url: str | None = None,
-                 temperature: float = 0.0):
-        from ..config import ModelConfig
+                 temperature: float | None = None):
+        from ..config import ModelConfig, TemperatureConfig
 
         self.config = config or ModelConfig.from_env()
         self.base_url = base_url or self.config.base_url
-        # Ноль, в отличие от 0.9 у респондента (#18). Там высокая температура —
-        # условие метрики: персоны обязаны отличаться друг от друга. Здесь
-        # наоборот: два прогона QA по одному ответу должны давать один вердикт,
-        # иначе «ответ забракован» перестаёт быть свойством ответа.
-        self.temperature = temperature
+        # Стадия answerJudge, умолчание 0. Ноль, в отличие от респондента: там
+        # разброс — условие метрики, персоны обязаны отличаться друг от друга.
+        # Здесь наоборот, два прогона QA по одному ответу должны давать один
+        # вердикт, иначе «ответ забракован» перестаёт быть свойством ответа.
+        self.temperature = (
+            TemperatureConfig.defaults().answerJudge
+            if temperature is None
+            else temperature
+        )
 
     def complete(self, *, system: str, user: str) -> str:
         from openai import OpenAI

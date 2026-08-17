@@ -9,6 +9,7 @@ import {
   listPersonas,
 } from "@/lib/server/personas";
 import { enqueueAudience } from "@/lib/server/queue";
+import { buildSettingsSnapshot } from "@/lib/server/tasks";
 
 /**
  * Шаг «Аудитория» визарда (задача #9).
@@ -184,6 +185,15 @@ export async function POST(request: Request) {
       ),
     );
 
+    // Настройки пиннятся на задание генерации так же, как на прогон: пока
+    // набор считается, команда может сменить температуру создания персон, и
+    // тогда часть аудитории получилась бы под одним разбросом формулировок, а
+    // часть под другим — внутри одного набора, который потом сравнивают как
+    // целое.
+    const settings = await withTenant(tenantId, (client) =>
+      buildSettingsSnapshot(client),
+    );
+
     try {
       await enqueueAudience({
         persona_set_id: set.id,
@@ -192,6 +202,7 @@ export async function POST(request: Request) {
         // По слепку воркер сэмплирует персон. null — корпуса в базе нет, и
         // генератор берёт файл образа: прежнее поведение, честно названное.
         corpus_snapshot_id: snapshotId,
+        settings_snapshot: settings,
       });
     } catch (e) {
       // Набор создан, но воркер о нём не знает. Молчать нельзя: строка висела

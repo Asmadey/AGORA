@@ -110,6 +110,15 @@ def generate_audience(self: Any, payload: dict[str, Any]) -> dict[str, Any]:
     names = [n for n, _ in named]
     personas = [dna for _, dna in named]
 
+    # Температуры снимаются из снимка настроек, положенного в задание при
+    # постановке в очередь, а не читаются из настроек на лету: пока набор
+    # считается, значение можно сменить, и тогда часть аудитории получилась бы
+    # под одним разбросом формулировок, а часть под другим — внутри набора,
+    # который потом сравнивают как целое.
+    from ..config import TemperatureConfig
+
+    temperatures = TemperatureConfig.for_task(payload.get("settings_snapshot"))
+
     # ── Обогащение с прогрессом ──────────────────────────────────────────────
     meta: dict[str, Any] = {"enriched": False, "llm_calls": 0, "cache_hits": 0}
     if config.use_llm:
@@ -125,7 +134,11 @@ def generate_audience(self: Any, payload: dict[str, Any]) -> dict[str, Any]:
             )
 
         try:
-            outcome = enrich_personas(personas, on_progress=report)
+            outcome = enrich_personas(
+                personas,
+                on_progress=report,
+                temperature=temperatures.personaCreation,  # стадия personaCreation
+            )
         except Exception as exc:  # noqa: BLE001
             return fail(f"обогащение не удалось: {type(exc).__name__}: {exc}")
 
@@ -136,6 +149,62 @@ def generate_audience(self: Any, payload: dict[str, Any]) -> dict[str, Any]:
             "cache_hits": outcome.cache_hits,
             "degraded_reason": outcome.degraded_reason,
         }
+
+    # ── Фаза 2: проверка связности ───────────────────────────────────────────
+    # Идёт только после обогащения: проверять нечего, пока narrative скелетный —
+    # он собран из тех же атрибутов механически и разойтись с ними не может.
+    #
+    # Пересоздание берёт ДРУГОЙ seed, а не повторяет вызов модели на тех же
+    # атрибутах: расхождение могло прийти и от самих атрибутов — редкое
+    # сочетание, которое связным текстом не описывается.
+    verdicts: list[Any] = []
+    validation_meta: dict[str, Any] = {"checked": 0, "regenerated": 0, "failed": 0}
+    if config.use_llm and personas:
+        from .enrich import QwenTextClient, enrich_personas
+        from .validate import validate_set
+
+        def regenerate(index: int, attempt: int) -> dict[str, Any] | None:
+            """Пересоздаёт одну персону с другим seed и заново обогащает её."""
+            try:
+                shifted = GenerationConfig(
+                    **{
+                        **raw_config,
+                        "size": 1,
+                        # Сдвиг по попытке И по позиции: без позиции две
+                        # непрошедшие персоны получили бы на одной попытке
+                        # одинаковый seed, то есть одну и ту же замену.
+                        "seed": (config.seed or 0) + 10_000 * attempt + index,
+                    }
+                )
+                fresh = gen.generate(shifted)
+                if not fresh:
+                    return None
+                return enrich_personas(
+                    fresh, temperature=temperatures.personaCreation
+                ).personas[0]
+            except Exception:  # noqa: BLE001 — не сумели пересоздать, не отказ фазы
+                return None
+
+        try:
+            validation = validate_set(
+                personas,
+                client=QwenTextClient(temperature=temperatures.personaValidation),
+                regenerate=regenerate,
+            )
+            personas = validation.personas
+            verdicts = validation.verdicts
+            validation_meta = {
+                "checked": validation.checked,
+                "regenerated": validation.regenerated,
+                "failed": validation.failed,
+                "calls": validation.calls,
+            }
+        except Exception as exc:  # noqa: BLE001
+            # Проверка — улучшение качества, а не условие работоспособности:
+            # сорвать из-за неё оплаченную генерацию значит поменять надёжный
+            # результат на аккуратный.
+            validation_meta = {"checked": 0, "regenerated": 0, "failed": 0,
+                               "degraded_reason": f"{type(exc).__name__}: {exc}"}
 
     # ── Запись персон одной транзакцией ──────────────────────────────────────
     # Все или ни одной: наполовину записанный набор выглядит готовым и даёт
@@ -148,16 +217,22 @@ def generate_audience(self: Any, payload: dict[str, Any]) -> dict[str, Any]:
         with psycopg.connect(os.environ["DATABASE_URL"]) as conn, tenant_scope(
             conn, tenant_id
         ) as cur:
-            for name, dna in zip(names, personas, strict=False):
+            for index, (name, dna) in enumerate(zip(names, personas, strict=False)):
+                # Пустой объект — «не проверялась». Отличать это от «проверена,
+                # претензий нет» обязательно: иначе набор, созданный без фазы
+                # валидации, выглядел бы прошедшим проверку, которой не было.
+                verdict = verdicts[index].to_json() if index < len(verdicts) else {}
                 cur.execute(
-                    "INSERT INTO personas (tenant_id, persona_set_id, name, dna, narrative, seed) "
-                    "VALUES (app.current_tenant(), %s::uuid, %s, %s, %s, %s)",
+                    "INSERT INTO personas (tenant_id, persona_set_id, name, dna, "
+                    "                      narrative, seed, validation) "
+                    "VALUES (app.current_tenant(), %s::uuid, %s, %s, %s, %s, %s)",
                     (
                         set_id,
                         name,
                         json.dumps(dna, ensure_ascii=False),
                         dna.get("narrative"),
                         dna.get("seed"),
+                        json.dumps(verdict, ensure_ascii=False),
                     ),
                 )
             cur.execute(
@@ -173,4 +248,5 @@ def generate_audience(self: Any, payload: dict[str, Any]) -> dict[str, Any]:
         "status": "ready",
         "size": len(personas),
         "enrichment": meta,
+        "validation": validation_meta,
     }

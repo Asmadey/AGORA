@@ -8,6 +8,7 @@ from __future__ import annotations
 import os
 import re
 from dataclasses import dataclass
+from typing import Any
 
 
 class ConfigError(RuntimeError):
@@ -240,6 +241,99 @@ class StorageConfig:
             mongodb_url=_required("MONGODB_URL"),
             valkey_url=_required("VALKEY_URL"),
         )
+
+
+@dataclass(frozen=True)
+class TemperatureConfig:
+    """
+    Температура по стадиям конвейера.
+
+    ─── Почему не одно значение ───────────────────────────────────────────
+    Стадии требуют противоположного. Персона обязана получиться непохожей на
+    соседнюю — это условие метрики `response_diversity`, и низкая температура
+    здесь даёт mode collapse: двадцать почти совпадающих портретов вместо
+    аудитории. Проверяющий и аналитик обязаны быть повторяемыми: вердикт,
+    меняющийся от прогона к прогону, перестаёт быть свойством проверяемого.
+
+    До появления этого класса значения стояли числами прямо в клиентах, и
+    поменять их можно было только правкой кода с пересборкой образа.
+
+    ─── Имена полей ──────────────────────────────────────────────────────
+    Совпадают с ключами `TEMPERATURE_STAGES` в apps/web/lib/settings.ts, и это
+    не косметика: снимок задачи приезжает оттуда как есть. Разойдясь на одну
+    букву, стороны дадут настройку, которая выставляется и не применяется, —
+    обе выглядят исправными, а расхождение видно только по счёту от провайдера
+    и по доле отбраковок. Совпадение держит test_temperature_config.py.
+    """
+
+    #: Обогащение портрета персоны (`persona/enrich.py`).
+    personaCreation: float = 0.9
+    #: Проверка созданной персоны на связность с её же DNA.
+    personaValidation: float = 0.1
+    #: Ответы персон на анкету (`respondent/run.py`).
+    responseSimulation: float = 0.3
+    #: Сборка нарратива отчёта (`analytics/report.py`).
+    aggregation: float = 0.1
+    #: Вердикты QA по ответам (`qa/judge.py`).
+    answerJudge: float = 0.0
+    #: Сводные портреты сегментов (`portraits/distill.py`).
+    segmentPortraits: float = 0.3
+
+    #: Порядок стадий. Отдельной константой, чтобы обход не зависел от
+    #: `dataclasses.fields` — от него зависит проверка стыка с интерфейсом.
+    STAGES = (
+        "personaCreation",
+        "personaValidation",
+        "responseSimulation",
+        "aggregation",
+        "answerJudge",
+        "segmentPortraits",
+    )
+
+    #: Диапазон, который принимает OpenAI-совместимый endpoint.
+    MIN = 0.0
+    MAX = 2.0
+
+    @classmethod
+    def defaults(cls) -> TemperatureConfig:
+        return cls()
+
+    @classmethod
+    def for_task(cls, settings_snapshot: dict[str, Any] | None) -> TemperatureConfig:
+        """
+        Температуры конкретного прогона из снимка настроек.
+
+        Снимок кладётся в задачу при создании и не перечитывается на лету — по
+        той же причине, что модель Whisper и версии промптов: пока задача стоит
+        в очереди, команда может сменить настройку, и тогда персоны созданы под
+        одной температурой, а опрошены под другой. Разница в разбросе ответов
+        выглядела бы свойством материала, а не настройки.
+
+        Пропущенная стадия берёт умолчание, а не ноль. Ноль здесь не «значения
+        нет», а «полная детерминированность»: на создании персон он означал бы
+        mode collapse.
+        """
+        raw = ((settings_snapshot or {}).get("temperatures") or {})
+        values: dict[str, float] = {}
+        for stage in cls.STAGES:
+            if stage not in raw:
+                continue
+            try:
+                value = float(raw[stage])
+            except (TypeError, ValueError) as exc:
+                raise ValueError(
+                    f"температура стадии {stage} не число: {raw[stage]!r}"
+                ) from exc
+            if not cls.MIN <= value <= cls.MAX:
+                # Отвергаем здесь, а не у провайдера: его отказ придёт посреди
+                # оплаченного прогона — после расшифровки и разбора кадров — и
+                # будет выглядеть сбоем сети, а не опечаткой в настройках.
+                raise ValueError(
+                    f"температура стадии {stage} = {value} вне диапазона "
+                    f"{cls.MIN}..{cls.MAX}"
+                )
+            values[stage] = value
+        return cls(**values)
 
 
 #: Модели транскрипции. Список закрыт и продублирован в apps/web/lib/settings.ts —

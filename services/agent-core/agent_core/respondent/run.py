@@ -76,17 +76,29 @@ class QwenRespondentClient:
     """Боевой клиент: OpenAI-совместимый endpoint TimeWeb (Decision Log #1)."""
 
     def __init__(self, config: Any | None = None, model: str | None = None,
-                 temperature: float = 0.9):
-        from ..config import ModelConfig
+                 temperature: float | None = None):
+        from ..config import ModelConfig, TemperatureConfig
 
         self.config = config or ModelConfig.from_env()
         self.model = model or self.config.text_model
-        # Высокая температура здесь — не небрежность, а условие метрики
-        # response_diversity. При temperature=0 двадцать персон с похожей DNA
-        # дают почти совпадающий текст, и mode collapse становится свойством
-        # настройки, а не модели. Воспроизводимость прогона обеспечивается
-        # снимком промптов и seed персоны, а не детерминизмом ответа.
-        self.temperature = temperature
+        # Стадия responseSimulation, умолчание 0.3.
+        #
+        # Прежде здесь стояло 0.9 как условие метрики response_diversity: при
+        # температуре около нуля двадцать персон с похожей DNA дают почти
+        # совпадающий текст, и mode collapse становится свойством настройки, а
+        # не модели. Это по-прежнему верно, и потому значение вынесено в
+        # настройки, а не заменено молча: у понижения есть цена, и платить её
+        # должен тот, кто выбирает. Правило `diversity` в QA бракует
+        # схлопнувшиеся ответы группами — если доля выживших упадёт после
+        # понижения, причину искать здесь.
+        #
+        # Воспроизводимость прогона держится снимком промптов и seed персоны, а
+        # не детерминизмом ответа.
+        self.temperature = (
+            TemperatureConfig.defaults().responseSimulation
+            if temperature is None
+            else temperature
+        )
 
     def complete(self, *, system: str, user: str) -> str:
         from openai import OpenAI

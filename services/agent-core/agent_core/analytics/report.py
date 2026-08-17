@@ -62,14 +62,19 @@ class AnalystClient(Protocol):
 class QwenAnalystClient:
     """Боевой клиент аналитика: тот же endpoint, что у респондентов (#18)."""
 
-    def __init__(self, config: Any | None = None, temperature: float = 0.3):
-        from ..config import ModelConfig
+    def __init__(self, config: Any | None = None, temperature: float | None = None):
+        from ..config import ModelConfig, TemperatureConfig
 
         self.config = config or ModelConfig.from_env()
-        # Ниже, чем у персон (0.9), и выше, чем у судьи (0.0). Нарратив должен
-        # читаться как текст, а не как протокол, но два прогона по одному
-        # набору не должны давать разные выводы.
-        self.temperature = temperature
+        # Стадия aggregation, умолчание 0.1: два прогона по одному набору
+        # ответов не должны давать разные выводы. Нарратив здесь пересказывает
+        # уже собранные числа и реплики, и «творческий» пересказ — это ровно
+        # искажение того, что сказали персоны.
+        self.temperature = (
+            TemperatureConfig.defaults().aggregation
+            if temperature is None
+            else temperature
+        )
 
     def complete(self, *, system: str, user: str) -> str:
         from openai import OpenAI
