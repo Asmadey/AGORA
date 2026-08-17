@@ -104,6 +104,11 @@ services:
       MONGODB_URL: ${MONGODB_URL:?MONGODB_URL обязателен (managed или local-db)}
       VALKEY_URL: ${VALKEY_URL:?VALKEY_URL обязателен (managed или local-db)}
       OPENAI_API_KEY: ${OPENAI_API_KEY:?OPENAI_API_KEY обязателен}
+      # Ключ шифрования секретов арендатора (ключ провайдера, заданный из
+      # интерфейса). Обязан СОВПАДАТЬ у web и worker: веб шифрует, воркер
+      # расшифровывает. Пусто — интерфейс откажется принимать ключ и скажет
+      # почему, вместо того чтобы сохранить его открытым.
+      SETTINGS_SECRET: ${SETTINGS_SECRET:-}
       OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.timeweb.cloud/v1}
       AI_MODEL: ${AI_MODEL:-qwen3.6}
       # Presigned upload выдаёт web, а не worker: маршрут /api/upload/presign
@@ -159,6 +164,11 @@ services:
       MONGODB_URL: ${MONGODB_URL:?MONGODB_URL обязателен (managed или local-db)}
       VALKEY_URL: ${VALKEY_URL:?VALKEY_URL обязателен (managed или local-db)}
       OPENAI_API_KEY: ${OPENAI_API_KEY:?OPENAI_API_KEY обязателен}
+      # Ключ шифрования секретов арендатора (ключ провайдера, заданный из
+      # интерфейса). Обязан СОВПАДАТЬ у web и worker: веб шифрует, воркер
+      # расшифровывает. Пусто — интерфейс откажется принимать ключ и скажет
+      # почему, вместо того чтобы сохранить его открытым.
+      SETTINGS_SECRET: ${SETTINGS_SECRET:-}
       OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.timeweb.cloud/v1}
       # Обязательный заголовок агента TimeWeb: помечен required в OpenAPI,
       # но OpenAI SDK его не шлёт — без него запрос отклоняется до модели.

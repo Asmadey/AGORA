@@ -10,6 +10,7 @@ import {
 } from "@/lib/settings";
 import { withTenant } from "@/lib/server/db";
 import { requireOwner, requireSession, toResponse } from "@/lib/server/guard";
+import { encryptSecret, maskSecret, secretsAvailable } from "@/lib/server/secrets";
 
 /**
  * Настройки арендатора (задача #27), этап 2 из 2.
@@ -42,6 +43,7 @@ interface SettingsRow {
   whisper_model: TenantSettings["whisperModel"];
   default_replication_count: number;
   provider_config: Record<string, unknown> | null;
+  provider_api_key_hint: string | null;
 }
 
 /**
@@ -98,7 +100,16 @@ function rowToSettings(row: SettingsRow): TenantSettings {
     reasoning: reasoningOf("reasoning"),
     judgeReasoning: reasoningOf("judgeReasoning"),
     endpoint: typeof stored.endpoint === "string" ? stored.endpoint : "",
+    // Только маска. Сам ключ не покидает сервер ни в одном ответе: даже
+    // владельцу — потому что ответ уезжает в браузер, в его историю и в любой
+    // прокси по дороге, а отозвать его оттуда нечем.
+    apiKeyMask: row.provider_api_key_hint ?? envKeyMask(),
   };
+}
+
+/** Маска ключа из окружения — он действует, пока свой не задан. */
+function envKeyMask(): string {
+  return maskSecret(process.env.OPENAI_API_KEY ?? "");
 }
 
 export async function GET() {
@@ -107,7 +118,7 @@ export async function GET() {
 
     const settings = await withTenant(tenantId, async (client) => {
       const { rows } = await client.query<SettingsRow>(
-        "SELECT cost_cap_calls, whisper_model, default_replication_count, provider_config FROM settings WHERE tenant_id = $1",
+        "SELECT cost_cap_calls, whisper_model, default_replication_count, provider_config, provider_api_key_hint FROM settings WHERE tenant_id = $1",
         [tenantId],
       );
       // Строки может не быть: команда заведена, настройки ни разу не сохранялись.
@@ -143,13 +154,40 @@ export async function PUT(request: Request) {
     const value = parsed.value;
     const costCapCalls = value.costCap === "auto" ? null : value.costCapValue;
 
+    // ─── Ключ провайдера ──────────────────────────────────────────────────
+    //
+    // Приходит отдельным полем и только на запись: в ответе его нет никогда.
+    // Пустое или отсутствующее поле означает «не менять» — иначе сохранение
+    // любой соседней настройки стирало бы ключ, и заметили бы это на первом же
+    // прогоне, уже потратив расшифровку.
+    const rawKey = (body as { apiKey?: unknown })?.apiKey;
+    let encryptedKey: Buffer | null = null;
+    let keyHint: string | null = null;
+    if (typeof rawKey === "string" && rawKey.trim()) {
+      if (!secretsAvailable()) {
+        return Response.json(
+          {
+            error:
+              "SETTINGS_SECRET не задан в окружении: ключ негде зашифровать. " +
+              "Задайте переменную одинаковой для web и worker — иначе воркер не " +
+              "расшифрует то, что сохранит интерфейс",
+          },
+          { status: 400 },
+        );
+      }
+      const plain = rawKey.trim();
+      encryptedKey = encryptSecret(plain);
+      keyHint = maskSecret(plain);
+    }
+
     const settings = await withTenant(tenantId, async (client) => {
       const { rows } = await client.query<SettingsRow>(
         `INSERT INTO settings (tenant_id, cost_cap_calls, whisper_model,
-                               default_replication_count, provider_config)
+                               default_replication_count, provider_config,
+                               provider_api_key, provider_api_key_hint)
          -- При вставке сливать не с чем: строки ещё нет, и ссылка на
          -- settings.provider_config здесь была бы неразрешимой.
-         VALUES ($1, $2, $3, $4, $5::jsonb)
+         VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7)
          ON CONFLICT (tenant_id) DO UPDATE SET
            cost_cap_calls            = EXCLUDED.cost_cap_calls,
            whisper_model             = EXCLUDED.whisper_model,
@@ -157,8 +195,14 @@ export async function PUT(request: Request) {
            -- Слияние, а не замена: в provider_config со временем лягут и другие
            -- настройки провайдера, и запись температур не должна стирать соседей.
            provider_config           = COALESCE(settings.provider_config, '{}'::jsonb) || $5::jsonb,
+           -- COALESCE: пустое поле означает «не менять ключ». Иначе сохранение
+           -- любой соседней настройки стирало бы его, и заметили бы это на
+           -- первом же прогоне, уже потратив расшифровку.
+           provider_api_key          = COALESCE($6, settings.provider_api_key),
+           provider_api_key_hint     = COALESCE($7, settings.provider_api_key_hint),
            updated_at                = now()
-         RETURNING cost_cap_calls, whisper_model, default_replication_count, provider_config`,
+         RETURNING cost_cap_calls, whisper_model, default_replication_count, provider_config,
+                   provider_api_key_hint`,
         [
           tenantId,
           costCapCalls,
@@ -171,6 +215,8 @@ export async function PUT(request: Request) {
             judgeReasoning: value.judgeReasoning,
             endpoint: value.endpoint,
           }),
+          encryptedKey,
+          keyHint,
         ],
       );
       return rowToSettings(rows[0]);

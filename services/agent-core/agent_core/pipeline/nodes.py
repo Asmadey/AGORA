@@ -77,9 +77,23 @@ def _model_config(state: PipelineState) -> Any:
     модели, пока задача стоит в очереди, дала бы отчёт, у которого в карточке
     одна модель, а считала его другая.
     """
-    from ..config import ModelConfig
+    from dataclasses import replace
 
-    return ModelConfig.for_task(state.get("settings_snapshot"))
+    from ..config import ModelConfig
+    from ..secrets import tenant_api_key
+
+    config = ModelConfig.for_task(state.get("settings_snapshot"))
+
+    # Ключ читается из настроек арендатора В МОМЕНТ ПРОГОНА, а не из снимка:
+    # снимок живёт столько же, сколько отчёт, и копия секрета в каждой строке
+    # `tasks` — это тот же секрет, размноженный по резервным копиям базы без
+    # единого способа его отозвать.
+    #
+    # Отсутствие своего ключа — самый частый случай и не ошибка: работает ключ
+    # окружения. А вот ошибка расшифровки наружу выходит, а не превращается в
+    # откат: прогон под чужим ключом заметить было бы нечем.
+    own = tenant_api_key(str(state.get("tenant_id") or ""))
+    return replace(config, api_key=own) if own else config
 
 
 def _models_used(state: PipelineState) -> dict[str, str]:

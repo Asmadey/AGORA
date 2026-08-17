@@ -159,15 +159,14 @@ export interface TenantSettings {
   reasoning: Reasoning;
   /** Рассуждение судьи — отдельно от основного: у проверки другая цена ошибки. */
   judgeReasoning: Reasoning;
-  /**
-   * Адрес провайдера. Пустая строка — брать из окружения сервера.
-   *
-   * Ключ здесь НЕ хранится и не редактируется. Он живёт в окружении, откуда его
-   * читает воркер; положив его в настройки, мы бы размножили его по резервным
-   * копиям базы и по снимкам задач — а снимок задачи живёт столько же, сколько
-   * отчёт. Интерфейс показывает маску, чтобы было видно, какой ключ действует.
-   */
+  /** Адрес провайдера. Пустая строка — брать из окружения сервера. */
   endpoint: string;
+  /**
+   * Маска действующего ключа — только для показа. Приходит с сервера, обратно
+   * не принимается: сам ключ отправляется отдельным полем `apiKey` и наружу не
+   * возвращается никогда.
+   */
+  apiKeyMask: string;
 }
 
 export const DEFAULT_MODELS: ModelSelection = { text: "", vision: "", judge: "" };
@@ -186,6 +185,7 @@ export const DEFAULT_SETTINGS: TenantSettings = {
   reasoning: DEFAULT_REASONING,
   judgeReasoning: DEFAULT_REASONING,
   endpoint: "",
+  apiKeyMask: "не задан",
 };
 
 export const COST_CAP_BOUNDS = { min: 100, max: 5000, step: 100 } as const;
@@ -342,6 +342,9 @@ export function parseSettings(input: unknown): { ok: true; value: TenantSettings
       reasoning,
       judgeReasoning,
       endpoint,
+      // Маска приходит с сервера и на вход не принимается: сам ключ едет
+      // отдельным полем `apiKey`, а обратно не возвращается никогда.
+      apiKeyMask: "",
     },
   };
 }

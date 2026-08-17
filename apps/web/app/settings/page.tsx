@@ -41,8 +41,13 @@ export default function SettingsPage() {
   const [loading, setLoading] = useState(true);
   const [save, setSave] = useState<SaveState>({ kind: "idle" });
   const provider = useProviderModels();
+  // Ключ живёт отдельно от черновика настроек: он передаётся только на запись
+  // и никогда не приходит с сервера, поэтому в `settingsEqual` ему места нет.
+  const [apiKey, setApiKey] = useState("");
 
-  const dirty = !settingsEqual(saved, draft);
+  // Введённый ключ тоже делает форму «грязной»: без этого кнопка сохранения
+  // осталась бы неактивной, и ключ было бы некуда отправить.
+  const dirty = !settingsEqual(saved, draft) || apiKey.trim().length > 0;
 
   useEffect(() => {
     let cancelled = false;
@@ -83,7 +88,9 @@ export default function SettingsPage() {
       const res = await fetch("/api/settings", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(draft),
+        // Ключ отправляется отдельным полем и только при вводе: пустое
+        // значение на сервере означает «не менять».
+        body: JSON.stringify(apiKey.trim() ? { ...draft, apiKey: apiKey.trim() } : draft),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -315,20 +322,37 @@ export default function SettingsPage() {
             </div>
 
             <div>
-              <p className="text-sm font-medium">Ключ</p>
-              <p className="mt-1 font-mono text-sm">{provider?.current.keyMask ?? "—"}</p>
+              <label className="block text-sm font-medium">Ключ провайдера</label>
+              <p className="mt-1 text-xs text-slate">
+                Действует: <span className="font-mono">{draft.apiKeyMask}</span>
+              </p>
+              <input
+                type="password"
+                value={apiKey}
+                onChange={(e) => {
+                  setApiKey(e.target.value);
+                  setSave({ kind: "idle" });
+                }}
+                placeholder="вставьте новый ключ, чтобы заменить"
+                autoComplete="off"
+                className="mt-2 w-full rounded-md border border-hairline bg-background px-3 py-2 font-mono text-sm"
+              />
               {/*
-                Поля для ввода ключа здесь нет намеренно, и это отступление от
-                просьбы — с причиной. Ключ, положенный в настройки, попадёт в
-                резервные копии базы и в снимок каждой задачи, а снимок живёт
-                столько же, сколько отчёт. Отозвать его оттуда нечем. В
-                окружении он в одном месте, и смена — это одна правка .env
-                плюс перезапуск.
+                Пустое поле означает «не менять», а не «стереть»: иначе
+                сохранение соседней настройки убивало бы ключ, и заметили бы это
+                на первом же прогоне, уже потратив расшифровку.
+
+                Введённый ключ уходит на сервер один раз и обратно не
+                возвращается никогда — даже владельцу: ответ уезжает в браузер,
+                в его историю и в любой прокси по дороге.
               */}
               <p className="mt-2 text-xs leading-relaxed text-slate">
-                Задаётся в окружении сервера и здесь только показан маской. В базе
-                ключ не хранится: оттуда он разошёлся бы по резервным копиям и по
-                снимкам задач, а снимок живёт столько же, сколько отчёт.
+                Пустое поле — оставить прежний ключ. Введённый шифруется AES-256-GCM
+                и хранится в базе только в зашифрованном виде; обратно он не
+                отдаётся ни в одном ответе — показывается лишь маска. Ключ
+                шифрования живёт в окружении обоих сервисов
+                (<code className="font-mono">SETTINGS_SECRET</code>) и в резервную
+                копию базы не попадает.
               </p>
             </div>
           </div>
