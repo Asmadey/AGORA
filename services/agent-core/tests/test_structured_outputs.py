@@ -30,6 +30,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from agent_core.schemas.responses import (
@@ -39,6 +41,8 @@ from agent_core.schemas.responses import (
     assert_strict,
     response_format,
 )
+
+REPO = Path(__file__).resolve().parents[3]
 
 ALL_SCHEMAS = {
     "frame_analysis": FRAME_ANALYSIS,
@@ -150,6 +154,53 @@ def test_respondent_answers_are_a_list_of_pairs():
     assert answers["type"] == "array"
     item = answers["items"]
     assert set(item["required"]) == {"question", "answer"}
+
+
+# ─── Схема не ходит без потолка токенов ──────────────────────────────────────
+
+
+def test_every_schema_has_a_token_ceiling():
+    """
+    У каждой схемы объявлен потолок вывода.
+
+    Замер на боевом ключе: один и тот же запрос ответа персоны без схемы занял
+    1.6 секунды и 121 токен, со схемой без потолка — 214 секунд и 32768 токенов,
+    то есть предел контекста. Ответ при этом оборвался на полуслове и JSON'ом не
+    являлся: схема без потолка не просто медленнее отсутствия схемы, она
+    БЕСПОЛЕЗНЕЕ — гарантирует форму, которую сама же не даёт дописать.
+
+    Причина в грамматике: массивы (`survey_answers`, `grounding_refs`,
+    `actions`) не ограничены по длине, и модель выдаёт их элементы, пока есть
+    куда. На клиенте это выглядело зависанием — 214 секунд больше таймаута в
+    120, и узел уходил в круг повторов.
+    """
+    from agent_core.schemas.responses import MAX_TOKENS
+
+    assert set(MAX_TOKENS) == {"frame_analysis", "respondent", "judge", "persona_validation"}
+    for role, ceiling in MAX_TOKENS.items():
+        assert 200 <= ceiling <= 8000, f"{role}: потолок {ceiling} вне разумного"
+
+
+def test_schema_and_ceiling_are_passed_together():
+    """
+    Каждый вызов со схемой передаёт и потолок.
+
+    Проверка по исходникам, а не по вызову: клиенты ходят в сеть, и поймать
+    здесь можно только то, что видно в коде. Ищется связка — `response_format`
+    без `max_tokens` рядом означает повторение ровно того дефекта, который стоил
+    зависшего прогона.
+    """
+    core = REPO / "services" / "agent-core" / "agent_core"
+    offenders: list[str] = []
+    for path in core.rglob("*.py"):
+        source = path.read_text("utf-8")
+        if "response_format=" not in source:
+            continue
+        # Грубо, но по делу: оба ключа обязаны встречаться в одном файле, и
+        # число вхождений response_format не должно превышать max_tokens.
+        if source.count("response_format=") > source.count("max_tokens"):
+            offenders.append(str(path.relative_to(REPO)))
+    assert not offenders, f"схема без потолка токенов: {offenders}"
 
 
 # ─── Приведение ответов анкеты ───────────────────────────────────────────────

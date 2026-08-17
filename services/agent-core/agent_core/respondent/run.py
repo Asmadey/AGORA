@@ -103,7 +103,7 @@ class QwenRespondentClient:
     def complete(self, *, system: str, user: str) -> str:
         from openai import OpenAI
 
-        from ..schemas.responses import RESPONDENT, response_format
+        from ..schemas.responses import MAX_TOKENS, RESPONDENT, response_format
 
         client = OpenAI(
             api_key=self.config.api_key,
@@ -123,6 +123,10 @@ class QwenRespondentClient:
             # режим закрывает их по построению: токены вне грамматики просто не
             # сэмплируются.
             response_format=response_format("RespondentAnswer", RESPONDENT),
+            # Потолок обязателен при схеме — см. MAX_TOKENS: без него грамматика
+            # уводит модель в генерацию до предела контекста, 214 секунд против
+            # шести, и ответ обрывается на полуслове.
+            max_tokens=MAX_TOKENS["respondent"],
             # Размышление выключено: см. ModelConfig.thinking — замер и причина.
             extra_body=self.config.extra_body("respondent"),
         )

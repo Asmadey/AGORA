@@ -68,7 +68,7 @@ class QwenJudgeClient:
     def complete(self, *, system: str, user: str, schema_key: str | None = None) -> str:
         from openai import OpenAI
 
-        from ..schemas.responses import JUDGE_SCHEMAS, response_format
+        from ..schemas.responses import JUDGE_SCHEMAS, MAX_TOKENS, response_format
 
         client = OpenAI(
             api_key=self.config.api_key,
@@ -89,6 +89,11 @@ class QwenJudgeClient:
         if schema is not None:
             name = (schema_key or "").split(".")[-1].capitalize() + "Verdict"
             extra["response_format"] = response_format(name, schema)
+            # Потолок ставится ВМЕСТЕ со схемой, а не рядом с ней — см.
+            # MAX_TOKENS: схема без потолка уводит модель в генерацию до предела
+            # контекста, и связка «одно без другого» это ровно та ошибка,
+            # которую легко повторить в следующем клиенте.
+            extra["max_tokens"] = MAX_TOKENS["judge"]
 
         response = client.chat.completions.create(
             model=self.config.text_model,

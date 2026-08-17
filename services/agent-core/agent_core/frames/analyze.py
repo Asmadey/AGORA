@@ -420,7 +420,7 @@ class QwenVlmClient:
             default_headers=self.config.default_headers,
             timeout=REQUEST_TIMEOUT_SEC,
         )
-        from ..schemas.responses import FRAME_ANALYSIS, response_format
+        from ..schemas.responses import FRAME_ANALYSIS, MAX_TOKENS, response_format
 
         data_url = "data:image/jpeg;base64," + base64.b64encode(image).decode("ascii")
         response = client.chat.completions.create(
@@ -436,6 +436,8 @@ class QwenVlmClient:
             # прозой, и вся эта проза уезжала в scene_description под флагом
             # parse_failed — то есть в таймлайн, который видит персона.
             response_format=response_format("SceneAnalysis", FRAME_ANALYSIS),
+            # Потолок обязателен при схеме — см. MAX_TOKENS.
+            max_tokens=MAX_TOKENS["frame_analysis"],
             # Размышление выключено — здесь особенно очевидно: разбор кадра это
             # описание увиденного, а не вывод. См. ModelConfig.thinking.
             extra_body=self.config.extra_body("frames"),
