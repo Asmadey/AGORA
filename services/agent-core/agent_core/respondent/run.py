@@ -103,7 +103,12 @@ class QwenRespondentClient:
     def complete(self, *, system: str, user: str) -> str:
         from openai import OpenAI
 
-        from ..schemas.responses import MAX_TOKENS, RESPONDENT, response_format
+        from ..schemas.responses import (
+            MAX_TOKENS,
+            RESPONDENT,
+            content_of,
+            response_format,
+        )
 
         client = OpenAI(
             api_key=self.config.api_key,
@@ -130,7 +135,7 @@ class QwenRespondentClient:
             # Размышление выключено: см. ModelConfig.thinking — замер и причина.
             extra_body=self.config.extra_body("respondent"),
         )
-        return (response.choices[0].message.content or "").strip()
+        return content_of(response, role="respondent")
 
 
 # ─── Сборка среза ────────────────────────────────────────────────────────────

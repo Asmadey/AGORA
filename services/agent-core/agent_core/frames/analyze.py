@@ -420,7 +420,12 @@ class QwenVlmClient:
             default_headers=self.config.default_headers,
             timeout=REQUEST_TIMEOUT_SEC,
         )
-        from ..schemas.responses import FRAME_ANALYSIS, MAX_TOKENS, response_format
+        from ..schemas.responses import (
+            FRAME_ANALYSIS,
+            MAX_TOKENS,
+            content_of,
+            response_format,
+        )
 
         data_url = "data:image/jpeg;base64," + base64.b64encode(image).decode("ascii")
         response = client.chat.completions.create(
@@ -442,7 +447,7 @@ class QwenVlmClient:
             # описание увиденного, а не вывод. См. ModelConfig.thinking.
             extra_body=self.config.extra_body("frames"),
         )
-        return _parse_json(response.choices[0].message.content or "")
+        return _parse_json(content_of(response, role="frame_analysis"))
 
 
 def _parse_json(text: str) -> dict[str, Any]:

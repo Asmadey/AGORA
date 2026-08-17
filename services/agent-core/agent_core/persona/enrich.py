@@ -190,7 +190,7 @@ class QwenTextClient:
     def complete(self, *, prompt: str) -> str:
         from openai import OpenAI
 
-        from ..schemas.responses import response_format
+        from ..schemas.responses import content_of, response_format
 
         client = OpenAI(
             api_key=self.config.api_key,
@@ -212,7 +212,13 @@ class QwenTextClient:
             extra_body=self.config.extra_body("persona"),
             **extra,
         )
-        return (response.choices[0].message.content or "").strip()
+        # Роль зависит от задачи клиента: со схемой он проверяет персон, без
+        # схемы — переписывает портрет. Обрыв по потолку важен в обоих случаях,
+        # но назвать его надо тем именем, под которым стоит потолок.
+        return content_of(
+            response,
+            role="persona_validation" if self.response_schema else "persona_enrich",
+        )
 
 
 # ─── Результат ───────────────────────────────────────────────────────────────

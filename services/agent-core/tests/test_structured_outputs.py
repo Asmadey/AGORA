@@ -181,6 +181,43 @@ def test_every_schema_has_a_token_ceiling():
         assert 200 <= ceiling <= 8000, f"{role}: потолок {ceiling} вне разумного"
 
 
+def test_truncated_answer_is_named_as_truncated():
+    """
+    Обрыв по потолку сообщается отдельно от плохого ответа.
+
+    Три сквозных прогона подряд упали с двенадцатью отказами «ответ не
+    разобран». Причина была в потолке — 2000 токенов при расходе 1331–1783, —
+    но по сообщению этого понять было нельзя: обрезанный JSON и плохой JSON
+    ломаются одинаково. Диагноз пришлось добывать, воспроизводя запрос вручную,
+    хотя провайдер сообщает его сам полем `finish_reason`.
+    """
+    from agent_core.schemas.responses import content_of
+
+    class Truncated:
+        choices = [type("C", (), {
+            "finish_reason": "length",
+            "message": type("M", (), {"content": '{"scores": {"overall'})(),
+        })()]
+        usage = type("U", (), {"completion_tokens": 2000})()
+
+    with pytest.raises(ValueError, match="оборван потолком"):
+        content_of(Truncated(), role="respondent")
+
+
+def test_complete_answer_passes_through():
+    """Законченный ответ возвращается как есть, без лишних проверок."""
+    from agent_core.schemas.responses import content_of
+
+    class Complete:
+        choices = [type("C", (), {
+            "finish_reason": "stop",
+            "message": type("M", (), {"content": '  {"ok": true}  '})(),
+        })()]
+        usage = type("U", (), {"completion_tokens": 12})()
+
+    assert content_of(Complete(), role="respondent") == '{"ok": true}'
+
+
 def test_schema_and_ceiling_are_passed_together():
     """
     Каждый вызов со схемой передаёт и потолок.

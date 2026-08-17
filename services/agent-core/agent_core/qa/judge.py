@@ -68,7 +68,12 @@ class QwenJudgeClient:
     def complete(self, *, system: str, user: str, schema_key: str | None = None) -> str:
         from openai import OpenAI
 
-        from ..schemas.responses import JUDGE_SCHEMAS, MAX_TOKENS, response_format
+        from ..schemas.responses import (
+            JUDGE_SCHEMAS,
+            MAX_TOKENS,
+            content_of,
+            response_format,
+        )
 
         client = OpenAI(
             api_key=self.config.api_key,
@@ -106,7 +111,7 @@ class QwenJudgeClient:
             extra_body=self.config.extra_body("qa"),
             **extra,
         )
-        return (response.choices[0].message.content or "").strip()
+        return content_of(response, role="judge")
 
 
 def escalation_client(policy: Any, config: Any | None = None) -> QwenJudgeClient:
