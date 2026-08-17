@@ -103,6 +103,8 @@ class QwenRespondentClient:
     def complete(self, *, system: str, user: str) -> str:
         from openai import OpenAI
 
+        from ..schemas.responses import RESPONDENT, response_format
+
         client = OpenAI(
             api_key=self.config.api_key,
             base_url=self.config.base_url,
@@ -116,6 +118,11 @@ class QwenRespondentClient:
                 {"role": "user", "content": user},
             ],
             temperature=self.temperature,
+            # Схема, а не уговоры в промпте. Два из трёх остаточных дефектов
+            # golden-сета были пропуском обязательного поля анкеты — строгий
+            # режим закрывает их по построению: токены вне грамматики просто не
+            # сэмплируются.
+            response_format=response_format("RespondentAnswer", RESPONDENT),
             # Размышление выключено: см. ModelConfig.thinking — замер и причина.
             extra_body=self.config.extra_body("respondent"),
         )
@@ -262,7 +269,42 @@ def parse_answer(text: str) -> dict[str, Any]:
     parsed = json.loads(body)
     if not isinstance(parsed, dict):
         raise ValueError("ответ персоны не является объектом")
+    # Только если поле есть: подставлять пустой словарь там, где модель ничего
+    # не вернула, значит стирать разницу между «ответов нет» и «поля нет», а
+    # правило покрытия эти случаи различает.
+    if "survey_answers" in parsed:
+        parsed["survey_answers"] = _answers_to_map(parsed["survey_answers"])
     return parsed
+
+
+def _answers_to_map(raw: Any) -> dict[str, Any]:
+    """
+    Приводит ответы анкеты к словарю «вопрос → ответ».
+
+    По схеме строгого режима они приезжают СПИСКОМ ПАР: словарь с произвольными
+    ключами там невыразим — `additionalProperties: false` и «ключи заранее
+    неизвестны» противоречат друг другу.
+
+    Приведение стоит здесь, сразу после разбора, чтобы всё ниже по течению —
+    правила покрытия в `qa/checks.py`, карточка персоны в отчёте — устройства
+    не заметило. Иначе смена формата ответа расползлась бы по трём слоям ради
+    ограничения провайдера.
+
+    Словарь на входе принимается как есть: так отвечали персоны до перехода на
+    схему, и перечитывание старых прогонов (#30) не должно на этом падать.
+    """
+    if isinstance(raw, dict):
+        return raw
+    if not isinstance(raw, list):
+        return {}
+    out: dict[str, Any] = {}
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        question = str(item.get("question") or "").strip()
+        if question:
+            out[question] = item.get("answer")
+    return out
 
 
 # ─── Результат ───────────────────────────────────────────────────────────────

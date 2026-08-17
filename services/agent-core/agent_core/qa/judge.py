@@ -43,7 +43,7 @@ _FENCE = re.compile(r"^```[a-zA-Z]*\n|\n```$")
 class JudgeClient(Protocol):
     """Тот же шов, что у RespondentClient (#18): system и user раздельно."""
 
-    def complete(self, *, system: str, user: str) -> str: ...
+    def complete(self, *, system: str, user: str, schema_key: str | None = None) -> str: ...
 
 
 class QwenJudgeClient:
@@ -65,8 +65,10 @@ class QwenJudgeClient:
             else temperature
         )
 
-    def complete(self, *, system: str, user: str) -> str:
+    def complete(self, *, system: str, user: str, schema_key: str | None = None) -> str:
         from openai import OpenAI
+
+        from ..schemas.responses import JUDGE_SCHEMAS, response_format
 
         client = OpenAI(
             api_key=self.config.api_key,
@@ -74,6 +76,20 @@ class QwenJudgeClient:
             default_headers=self.config.default_headers,
             timeout=REQUEST_TIMEOUT_SEC,
         )
+
+        # Схема у каждой проверки своя: у трёх промптов общего ровно два поля —
+        # verdict и confidence, — а профильные разные. Одна схема на всех
+        # заставила бы модель заполнять поля чужой проверки.
+        #
+        # Незнакомый ключ — не отказ: вердикт без схемы всё ещё вердикт, а
+        # уронить проверку из-за опечатки в имени значило бы потерять уже
+        # оплаченные ответы персон.
+        extra: dict[str, Any] = {}
+        schema = JUDGE_SCHEMAS.get(schema_key or "")
+        if schema is not None:
+            name = (schema_key or "").split(".")[-1].capitalize() + "Verdict"
+            extra["response_format"] = response_format(name, schema)
+
         response = client.chat.completions.create(
             model=self.config.text_model,
             messages=[
@@ -83,6 +99,7 @@ class QwenJudgeClient:
             temperature=self.temperature,
             # Размышление выключено: см. ModelConfig.thinking — замер и причина.
             extra_body=self.config.extra_body("qa"),
+            **extra,
         )
         return (response.choices[0].message.content or "").strip()
 

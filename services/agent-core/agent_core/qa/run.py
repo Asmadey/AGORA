@@ -277,7 +277,11 @@ def _judge_into(
         outcome.failure_reasons.append(f"{kind}: шаблон промпта пуст")
         return
     try:
-        raw = judge.complete(system=JUDGE_ROLE, user=render(template, variables))
+        raw = judge.complete(
+            system=JUDGE_ROLE,
+            user=render(template, variables),
+            schema_key=f"qa.{kind}",
+        )
         parsed = parse_verdict(raw)
     except Exception as exc:  # noqa: BLE001
         outcome.failures += 1
@@ -347,7 +351,11 @@ def _escalate(
     if not template:
         return
     try:
-        raw = big.complete(system=JUDGE_ROLE, user=render(template, variables))
+        raw = big.complete(
+            system=JUDGE_ROLE,
+            user=render(template, variables),
+            schema_key=f"qa.{kind}",
+        )
         parsed = parse_verdict(raw)
     except Exception as exc:  # noqa: BLE001
         outcome.failures += 1

@@ -334,7 +334,7 @@ class RecordingJudge:
         self.verdict = verdict
         self.by_marker = by_marker or {}
 
-    def complete(self, *, system: str, user: str) -> str:
+    def complete(self, *, system: str, user: str, schema_key: str | None = None) -> str:  # noqa: ARG002
         self.prompts.append((system, user))
         confidence = self.confidence
         for marker, value in self.by_marker.items():
