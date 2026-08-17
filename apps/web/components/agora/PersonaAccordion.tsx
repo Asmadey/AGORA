@@ -6,6 +6,7 @@ import { ChevronDown, MessageCircle, AlertTriangle } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { CRITERIA, CRITERIA_LABELS } from "@/lib/agora-types";
 import type { AnswerView } from "@/lib/report-view";
+import { PersonaDialog } from "./PersonaDialog";
 import { TimecodeRef } from "./Primitives";
 
 /**
@@ -49,34 +50,47 @@ export function PersonaAccordion({
 
         return (
           <div key={key} className="bg-card">
-            <button
-              onClick={() => setOpenKey(open ? null : key)}
-              className="flex w-full items-center gap-4 px-5 py-4 text-left transition-colors hover:bg-secondary/40"
-              aria-expanded={open}
-            >
-              <div
-                className="grid h-9 w-9 shrink-0 place-items-center rounded-full text-xs font-semibold"
-                style={{
-                  backgroundColor: `hsl(${a.avatarHue} 45% 22%)`,
-                  color: `hsl(${a.avatarHue} 70% 78%)`,
-                }}
+            {/*
+              Строка — контейнер, а не одна кнопка: «О персоне» стоит рядом с
+              именем, а кнопка внутри кнопки — невалидная разметка, которую
+              браузеры чинят каждый по-своему. Поэтому раскрытие повешено на два
+              явных элемента: блок с именем слева и шеврон справа.
+            */}
+            <div className="flex w-full items-center gap-4 px-5 py-4 transition-colors hover:bg-secondary/40">
+              <button
+                onClick={() => setOpenKey(open ? null : key)}
+                className="flex min-w-0 items-center gap-4 text-left"
+                aria-expanded={open}
               >
-                {a.initials}
-              </div>
+                <div
+                  className="grid h-9 w-9 shrink-0 place-items-center rounded-full text-xs font-semibold"
+                  style={{
+                    backgroundColor: `hsl(${a.avatarHue} 45% 22%)`,
+                    color: `hsl(${a.avatarHue} 70% 78%)`,
+                  }}
+                >
+                  {a.initials}
+                </div>
 
-              <div className="min-w-0 flex-1">
-                <p className="truncate text-sm font-medium">
-                  {a.personaName}
-                  {a.replication > 0 && (
-                    <span className="ml-2 text-xs text-slate">
-                      повтор {a.replication + 1}
-                    </span>
-                  )}
-                </p>
-                <p className="truncate text-xs text-slate">
-                  {a.segmentLabel ?? "срез не записан"}
-                </p>
-              </div>
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-medium">
+                    {a.personaName}
+                    {a.replication > 0 && (
+                      <span className="ml-2 text-xs text-slate">
+                        повтор {a.replication + 1}
+                      </span>
+                    )}
+                  </p>
+                  <p className="truncate text-xs text-slate">
+                    {a.segmentLabel ?? "срез не записан"}
+                  </p>
+                </div>
+              </button>
+
+              <PersonaDialog personaId={a.personaId} personaName={a.personaName} />
+
+              {/* Распорка: всё, что правее, прижато к краю строки. */}
+              <div className="flex-1" />
 
               {a.qaFlags.length > 0 && (
                 <span
@@ -114,13 +128,17 @@ export function PersonaAccordion({
                 </p>
               </div>
 
-              <ChevronDown
-                className={cn(
-                  "h-4 w-4 shrink-0 text-slate transition-transform",
-                  open && "rotate-180",
-                )}
-              />
-            </button>
+              <button
+                onClick={() => setOpenKey(open ? null : key)}
+                className="shrink-0 rounded-md p-1 text-slate transition-colors hover:text-foreground"
+                aria-expanded={open}
+                aria-label={open ? "Свернуть ответ" : "Раскрыть ответ"}
+              >
+                <ChevronDown
+                  className={cn("h-4 w-4 transition-transform", open && "rotate-180")}
+                />
+              </button>
+            </div>
 
             {open && (
               <div className="border-t border-hairline/60 px-5 py-5">
@@ -160,12 +178,10 @@ export function PersonaAccordion({
                 <div className="mt-5 flex flex-wrap items-center gap-x-5 gap-y-2 text-xs text-slate">
                   {a.nps !== null && <span>Порекомендует: {a.nps} из 10</span>}
                   {a.emotions.length > 0 && <span>Эмоции: {a.emotions.join(", ")}</span>}
-                  <Link
-                    href={`/personas/${a.personaId}`}
-                    className="underline-offset-4 hover:text-foreground hover:underline"
-                  >
-                    Карточка персоны
-                  </Link>
+                  {/* Ссылки «Карточка персоны» здесь больше нет: она лежала
+                      внутри раскрытого ответа, то есть увидеть её можно было,
+                      только раскрыв ответ. Вопрос «кто это сказал» задают
+                      раньше — кнопка «О персоне» стоит в свёрнутой строке. */}
                   <Link
                     href={`/runs/${runId}/chat?persona=${a.personaId}`}
                     className="inline-flex items-center gap-1.5 underline-offset-4 hover:text-foreground hover:underline"
