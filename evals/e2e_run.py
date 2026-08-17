@@ -467,8 +467,16 @@ def main() -> int:
     parser.add_argument("--mode", choices=["short", "long"], default="short")
     parser.add_argument("--base-url", default=os.environ.get("BASE_URL", ""))
     parser.add_argument("--artifacts", default=str(DEFAULT_ARTIFACTS))
-    parser.add_argument("--timeout", type=int, default=600,
-                        help="секунд на один прогон; для long ставьте больше")
+    # Час, а не десять минут. Прежнее умолчание было приёмочным критерием #22 и
+    # держалось, пока означало содержательное; сейчас длительность определяется
+    # весом моделей и загрузкой машины, а не устройством кода. С добавлением
+    # валидации персон и строгих схем короткий прогон вышел за десять минут — и
+    # бросался ровно там, продолжая при этом считаться на воркере: три брошенных
+    # прогона соревновались за одну машину, замедляя друг друга.
+    #
+    # Потолок остался в другой роли: отсекать ЗАВИСШИЙ прогон, а не медленный.
+    parser.add_argument("--timeout", type=int, default=3600,
+                        help="секунд на один прогон; отсекает зависший, а не медленный")
     parser.add_argument("--repeat", type=int, default=1,
                         help="golden-сет: 3 означает «доверяем, если 3 из 3»")
     parser.add_argument("--fixture", default="")
