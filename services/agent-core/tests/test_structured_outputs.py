@@ -178,7 +178,27 @@ def test_every_schema_has_a_token_ceiling():
 
     assert set(MAX_TOKENS) == {"frame_analysis", "respondent", "judge", "persona_validation"}
     for role, ceiling in MAX_TOKENS.items():
-        assert 200 <= ceiling <= 8000, f"{role}: потолок {ceiling} вне разумного"
+        assert 200 <= ceiling <= 16000, f"{role}: потолок {ceiling} вне разумного"
+
+    # Респондент — единственная роль с включённым размышлением, и оно считается
+    # теми же токенами вывода: замер дал 4738–4844 против 581–622 без него.
+    # Потолок, равный соседним, обрезал бы ответ посередине рассуждения — так и
+    # вышло, восемь ответов из двенадцати.
+    from dataclasses import fields
+
+    from agent_core.config import ModelConfig
+
+    # Связь названа явно: потолок велик ПОТОМУ ЧТО у роли включено размышление.
+    # Уберут размышление — этот assert напомнит, что потолок можно снизить.
+    default_thinking = next(
+        f.default for f in fields(ModelConfig) if f.name == "thinking_roles"
+    )
+    assert "respondent" in default_thinking, (
+        "у респондента выключили размышление — потолок в MAX_TOKENS можно снижать"
+    )
+    assert MAX_TOKENS["respondent"] >= 3 * max(
+        MAX_TOKENS["frame_analysis"], MAX_TOKENS["judge"], MAX_TOKENS["persona_validation"]
+    ), "потолок респондента обязан вмещать рассуждение, а не только ответ"
 
 
 def test_truncated_answer_is_named_as_truncated():
