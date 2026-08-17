@@ -31,7 +31,15 @@ export interface TeamMember {
   email: string;
   name: string | null;
   role: "owner" | "member";
-  createdAt: string;
+  /**
+   * Когда человек вошёл в ЭТУ команду — `team_members.joined_at`.
+   *
+   * Не дата заведения учётной записи: `users` глобальна, и участник команды Б
+   * мог завести аккаунт годом раньше, работая в команде А. Список состава
+   * команды отвечает на вопрос «с какого момента он здесь», а не «с какого
+   * момента он вообще существует».
+   */
+  joinedAt: string;
 }
 
 /** Параметры argon2id по OWASP. Уезжают внутрь строки хеша — см. модульный докстринг. */
@@ -53,9 +61,9 @@ export async function listMembers(client: PoolClient): Promise<TeamMember[]> {
     email: string;
     name: string | null;
     role: "owner" | "member";
-    created_at: Date;
+    joined_at: Date;
   }>(
-    `SELECT m.user_id, u.email, u.name, m.role, m.created_at
+    `SELECT m.user_id, u.email, u.name, m.role, m.joined_at
      FROM team_members m
      JOIN users u ON u.id = m.user_id
      WHERE m.team_id = app.current_tenant()
@@ -66,7 +74,7 @@ export async function listMembers(client: PoolClient): Promise<TeamMember[]> {
     email: r.email,
     name: r.name,
     role: r.role,
-    createdAt: r.created_at.toISOString(),
+    joinedAt: r.joined_at.toISOString(),
   }));
 }
 
@@ -116,9 +124,9 @@ export async function addMember(
     email: string;
     name: string | null;
     role: "owner" | "member";
-    created_at: Date;
+    joined_at: Date;
   }>(
-    `SELECT u.email, u.name, m.role, m.created_at
+    `SELECT u.email, u.name, m.role, m.joined_at
      FROM team_members m JOIN users u ON u.id = m.user_id
      WHERE m.team_id = app.current_tenant() AND m.user_id = $1`,
     [userId],
@@ -130,7 +138,7 @@ export async function addMember(
       email: rows[0].email,
       name: rows[0].name,
       role: rows[0].role,
-      createdAt: rows[0].created_at.toISOString(),
+      joinedAt: rows[0].joined_at.toISOString(),
     },
     created,
   };

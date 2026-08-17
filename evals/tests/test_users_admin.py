@@ -123,6 +123,67 @@ check(
 )
 
 
+# ─── Колонки в SQL против схемы ──────────────────────────────────────────────
+#
+# Раздел «Пользователи» падал целиком: `listMembers` просил `m.created_at`, а в
+# `team_members` колонка называется `joined_at`. Наружу это выходило как
+# «An error occurred in the Server Components render» с одним лишь digest —
+# сообщение Next.js прячет в проде намеренно, чтобы не выдать устройство базы.
+#
+# Ни одна из проверок выше этого не поймала, и не могла: все они читают, ЧТО
+# делает код, и ни одна не сверяет его с тем, что есть в базе. Тот же промах
+# сидел вторым экземпляром в `addMember` — то есть заведение пользователя тоже
+# было сломано, просто до него не доходили: страница со списком падала раньше.
+#
+# Поэтому проверка не про `created_at`, а про класс: каждая колонка, которую SQL
+# просит у таблицы, обязана в этой таблице быть. Точечная проверка на одно имя
+# закрыла бы ровно один случай из двух, уже случившихся.
+
+
+def table_columns(sql: str, table: str) -> set[str]:
+    """Колонки таблицы из CREATE TABLE. Пустое множество — таблица не найдена."""
+    import re
+
+    match = re.search(
+        rf"CREATE TABLE IF NOT EXISTS {table}\s*\((.*?)\n\);", sql, re.S
+    )
+    if not match:
+        return set()
+    columns = set()
+    for line in match.group(1).splitlines():
+        line = line.strip()
+        if not line or line.startswith(("--", "CONSTRAINT", "PRIMARY KEY", "UNIQUE", "CHECK", "FOREIGN")):
+            continue
+        name = line.split()[0]
+        if name.isidentifier():
+            columns.add(name)
+    return columns
+
+
+schema_sql = read(REPO / "infra" / "postgres" / "init" / "02_schema.sql")
+
+# Псевдонимы, которыми пользуется users.ts: `FROM team_members m JOIN users u`.
+ALIASES = {"m": "team_members", "u": "users", "o": "team_members"}
+
+unknown: list[str] = []
+for alias, table in ALIASES.items():
+    columns = table_columns(schema_sql, table)
+    if not columns:
+        unknown.append(f"таблица {table} не найдена в 02_schema.sql")
+        continue
+    import re as _re
+
+    for referenced in sorted(set(_re.findall(rf"\b{alias}\.([a-z_]+)\b", lib))):
+        if referenced not in columns:
+            unknown.append(f"{alias}.{referenced} — в таблице {table} такой колонки нет")
+
+check(
+    "каждая колонка в SQL есть в схеме",
+    not unknown,
+    "; ".join(unknown),
+)
+
+
 print("== Поведенческий уровень ==")
 
 base = os.environ.get("BASE_URL") or os.environ.get("E2E_BASE_URL")
