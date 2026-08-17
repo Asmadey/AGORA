@@ -91,6 +91,42 @@ def test_answer_keyed_by_label_counts():
     assert _coverage_complaint(consistency_reasons(answer, SURVEY)) is None
 
 
+def test_answer_keyed_by_the_prompt_line_counts():
+    """
+    Третий случай той же семьи — и самый дорогой из трёх.
+
+    Промпт печатает вопрос строкой ``- [q-77] (open) Что запомнилось больше
+    всего`` (`respondent/run.py:228`), а формат ответа разрешает ключ «id или
+    текст вопроса». Модель берёт строку целиком — она видит именно её, и это
+    буквальное исполнение инструкции, а не отсебятина.
+
+    Правило искало точное совпадение с `id` либо с `label` и не находило ни
+    того, ни другого. Цена измерена на golden-сете 17.08.2026: из восьми-девяти
+    отбраковок в прогоне три-шесть приходились на один и тот же вопрос
+    `q-1786730705947` («как дела?»), отвеченный ключом
+    ``[q-1786730705947] (scale) как дела?``. Ни один из трёх прогонов не
+    добрал 2/3 выживших; без этих отбраковок все три добирают.
+    """
+    answer = _answer(
+        survey_answers={"[q-77] (open) Что запомнилось больше всего": "заставка"}
+    )
+
+    assert _coverage_complaint(consistency_reasons(answer, SURVEY)) is None
+
+
+def test_prompt_line_of_another_question_does_not_count():
+    """
+    Послабление узкое: строка чужого вопроса не закрывает наш.
+
+    Иначе правило начало бы засчитывать любой ключ в квадратных скобках, и
+    пропуск вопроса перестал бы отличаться от ответа на него.
+    """
+    answer = _answer(survey_answers={"[q-99] (open) Совсем другой вопрос": "нечто"})
+    complaint = _coverage_complaint(consistency_reasons(answer, SURVEY))
+
+    assert complaint is not None and "q-77" in complaint
+
+
 def test_genuinely_missing_answer_is_still_caught():
     """
     Послабление не должно превратить правило в декорацию: вопрос, на который не

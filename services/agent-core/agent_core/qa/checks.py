@@ -115,6 +115,52 @@ def _watched_share_reasons(perception: dict[str, Any], stance: str) -> list[str]
     return []
 
 
+#: Строка вопроса в том виде, в каком её печатает промпт респондента:
+#: ``- [q-77] (open) Что запомнилось больше всего`` (`respondent/run.py:228`).
+#: Модель видит именно её и охотно берёт ключом ответа целиком.
+_PROMPT_LINE = re.compile(r"^\[(?P<id>[^\]]+)\]\s*(?:\((?P<type>[^)]*)\)\s*)?(?P<label>.*)$")
+
+
+def _norm(text: str) -> str:
+    """Ключ в сравнимом виде: без краевых пробелов и без разницы в регистре."""
+    return str(text or "").strip().casefold()
+
+
+def _answer_keys(given: Any) -> set[str]:
+    """
+    Всё, чем персона могла назвать вопрос, — одним множеством.
+
+    Промпт разрешает ключ «id или текст вопроса», а сам вопрос печатает строкой
+    ``[id] (тип) формулировка``. Три вида ключа на один вопрос — и правило,
+    знающее только про два, бракует исправные ответы.
+
+    Такая отбраковка не выглядит дефектом правила: доля выживших падает, и
+    объяснение «модель плохо заполняет анкету» звучит правдоподобно. Так уже
+    было дважды — с базовыми баллами в `scores` и с типовыми вопросами в
+    `perception`. Поэтому здесь разбирается форма ключа, а не заводится третья
+    проверка по месту.
+
+    Из строки промпта берутся и `id`, и формулировка: персона могла обрезать
+    строку с любой стороны, а нам нужно узнать вопрос, а не форму записи.
+    """
+    if not isinstance(given, dict):
+        return set()
+
+    keys: set[str] = set()
+    for raw in given:
+        text = str(raw).strip()
+        keys.add(_norm(text))
+        match = _PROMPT_LINE.match(text)
+        if match:
+            keys.add(_norm(match.group("id")))
+            keys.add(_norm(match.group("label")))
+    # Пустая строка попадает сюда от ключа вида «[q-77] (open)» без текста и
+    # совпала бы с вопросом, у которого нет формулировки, — то есть закрыла бы
+    # ответом чужой пропуск.
+    keys.discard("")
+    return keys
+
+
 def timecodes(text: str) -> list[float]:
     """Все таймкоды в тексте, в секундах. Пустой список — их там нет."""
     out: list[float] = []
@@ -219,7 +265,7 @@ def consistency_reasons(answer: dict[str, Any], survey: dict[str, Any] | None = 
     # До починки формы анкеты правило было мёртвым (список вопросов получался
     # пустым), поэтому расхождение и дожило до продакшена.
     given = answer.get("survey_answers")
-    given_keys = set(map(str, given)) if isinstance(given, dict) else set()
+    given_keys = _answer_keys(given)
     scored = {k for k, v in scores.items() if v is not None}
     perception = answer.get("perception")
     perception = perception if isinstance(perception, dict) else {}
@@ -251,7 +297,9 @@ def consistency_reasons(answer: dict[str, Any], survey: dict[str, Any] | None = 
         # текст, выполнила инструкцию буквально, и требовать от неё строже, чем
         # сказано в промпте, значит браковать исправные ответы — а выглядеть это
         # будет как плохое качество модели.
-        answered_directly = (qid and qid in given_keys) or (label and label in given_keys)
+        answered_directly = (qid and _norm(qid) in given_keys) or (
+            label and _norm(label) in given_keys
+        )
 
         if base_key:
             if str(base_key) not in scored and not answered_directly:
