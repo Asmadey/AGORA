@@ -29,9 +29,17 @@ export default async function ProgressPage({
   const { id } = await params;
   const { tenantId } = await requireSession();
 
+  // started_at/finished_at нужны таймеру. Без них он считал бы от загрузки
+  // страницы: обновление на десятой минуте показывало бы «0:03», а открытая со
+  // вчера вкладка — сутки прогона, которого давно нет.
   const row = await withTenant(tenantId, async (client) => {
-    const { rows } = await client.query<{ mode: string; status: string }>(
-      "SELECT mode, status FROM tasks WHERE id = $1::uuid",
+    const { rows } = await client.query<{
+      mode: string;
+      status: string;
+      started_at: Date | null;
+      finished_at: Date | null;
+    }>(
+      "SELECT mode, status, started_at, finished_at FROM tasks WHERE id = $1::uuid",
       [id],
     );
     return rows[0] ?? null;
@@ -49,7 +57,12 @@ export default async function ProgressPage({
     <>
       <PageHeader title="Прогресс исследования" subtitle={`Прогон ${id}`} />
       <div className="p-8">
-        <ProgressView taskId={id} mode={row.mode === "long" ? "long" : "short"} />
+        <ProgressView
+          taskId={id}
+          mode={row.mode === "long" ? "long" : "short"}
+          startedAt={row.started_at?.toISOString() ?? null}
+          finishedAt={row.finished_at?.toISOString() ?? null}
+        />
       </div>
     </>
   );

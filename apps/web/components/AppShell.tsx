@@ -154,22 +154,38 @@ export function PageHeader({
   title,
   subtitle,
   actions,
+  back,
 }: {
   title: string;
   subtitle?: string;
   actions?: React.ReactNode;
+  /**
+   * Возврат — слева от заголовка, а не в общей группе действий справа.
+   *
+   * «Назад» и «сделать что-то» — разные жанры. В одном ряду справа возврат
+   * читается как ещё одно действие над содержимым страницы и теряется среди
+   * них тем вернее, чем больше действий рядом. Слева он попадает туда, где
+   * взгляд начинает строку.
+   */
+  back?: React.ReactNode;
 }) {
   return (
     <header className="border-b border-hairline px-8 py-6">
       <div className="flex flex-wrap items-start justify-between gap-4">
-        <div className="min-w-0">
-          {/* heading-3 из DESIGN.md: 28px/1.25, средняя насыщенность.
-              Отрицательный трекинг из спецификации оставлен только крупным
-              размерам — на 28px он уже съедает воздух между буквами. */}
-          <h1 className="text-[28px] font-medium leading-[1.25] tracking-tight">{title}</h1>
-          {subtitle && (
-            <p className="mt-1 max-w-2xl text-sm text-slate">{subtitle}</p>
-          )}
+        <div className="flex min-w-0 items-start gap-3">
+          {/* mt-1 равняет кнопку по первой строке заголовка: у 28px/1.25
+              верхний край буквы ниже верха строки, и без сдвига кнопка
+              выглядит приподнятой. */}
+          {back && <div className="mt-1 shrink-0">{back}</div>}
+          <div className="min-w-0">
+            {/* heading-3 из DESIGN.md: 28px/1.25, средняя насыщенность.
+                Отрицательный трекинг из спецификации оставлен только крупным
+                размерам — на 28px он уже съедает воздух между буквами. */}
+            <h1 className="text-[28px] font-medium leading-[1.25] tracking-tight">{title}</h1>
+            {subtitle && (
+              <p className="mt-1 max-w-2xl text-sm text-slate">{subtitle}</p>
+            )}
+          </div>
         </div>
         {actions && <div className="flex shrink-0 items-center gap-2">{actions}</div>}
       </div>

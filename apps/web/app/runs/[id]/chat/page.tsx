@@ -35,10 +35,10 @@ export default async function ChatPage({ params }: { params: Promise<{ id: strin
       <PageHeader
         title="Обсудить результаты"
         subtitle="Вопросы к аналитику по всему исследованию и к отдельной персоне по её ответам."
-        actions={
+        back={
           <Link
             href={`/runs/${id}`}
-            className="inline-flex items-center gap-2 rounded-md border border-hairline px-4 py-2 text-sm transition-colors hover:bg-secondary"
+            className="inline-flex items-center gap-1.5 rounded-md border border-hairline px-2.5 py-1.5 text-sm transition-colors hover:bg-secondary"
           >
             <ArrowLeft className="h-4 w-4" />
             К отчёту

@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { ArrowRight, Loader2, CheckCircle2, Clock, AlertTriangle, Ban, Film } from "lucide-react";
+import { Loader2, CheckCircle2, Clock, AlertTriangle, Ban, Film } from "lucide-react";
 import { PageHeader } from "@/components/AppShell";
 import { Chip } from "@/components/agora/Primitives";
 import { EmptyState } from "@/components/agora/States";
@@ -116,8 +116,6 @@ export default async function RunsPage() {
                       {task.author && <Chip tone="outline">Автор: {task.author}</Chip>}
                     </div>
                   </div>
-
-                  <ArrowRight className="h-4 w-4 shrink-0 text-slate transition-transform group-hover:translate-x-0.5" />
 
                   {/* Крестик справа вверху, поверх карточки: в потоке он бы
                       сдвигал содержимое, когда превращается в подтверждение. */}

@@ -1,6 +1,7 @@
 import Link from "next/link";
 
 import { PageHeader } from "@/components/AppShell";
+import { PersonaSetChips } from "@/components/agora/PersonaSetChips";
 import { Chip } from "@/components/agora/Primitives";
 import { withTenant } from "@/lib/server/db";
 import { requireSession } from "@/lib/server/guard";
@@ -72,25 +73,15 @@ export default async function PersonasPage() {
 
       <div className="p-8">
         {sets.length > 0 && (
-          <div className="mb-6 space-y-1.5">
-            <p className="text-xs uppercase tracking-wide text-slate">Наборы</p>
-            {/* Наборы кликабельны: «на ком я буду проверять ролик» — вопрос,
-                который задают перед запуском, а реестр показывает всех персон
-                арендатора вперемешку и ответа не даёт. Раньше это были
-                неинтерактивные подписи. */}
-            <div className="flex flex-wrap gap-2">
-              {sets.map((s) => (
-                <Link
-                  key={s.id}
-                  href={`/personas/sets/${s.id}`}
-                  className="rounded-full border border-hairline px-3.5 py-1.5 text-sm text-slate transition-colors hover:border-hairline-strong hover:bg-surface hover:text-ink"
-                >
-                  {s.name} · {s.personaCount} из {s.size}
-                  {s.seed !== null && ` · seed ${s.seed}`}
-                </Link>
-              ))}
-            </div>
-          </div>
+          <PersonaSetChips
+            sets={sets.map((s) => ({
+              id: s.id,
+              name: s.name,
+              size: s.size,
+              personaCount: s.personaCount,
+              seed: s.seed,
+            }))}
+          />
         )}
 
         {personas.length === 0 ? (

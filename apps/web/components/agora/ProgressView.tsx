@@ -46,13 +46,43 @@ type NodeState = "waiting" | "running" | "done" | "failed";
 export function ProgressView({
   taskId,
   mode = "short",
+  startedAt = null,
+  finishedAt = null,
 }: {
   taskId: string;
   mode?: "short" | "long";
+  /**
+   * Когда воркер взял задачу — `tasks.started_at`, момент первого перехода в
+   * RUNNING, то есть начало шага «Разбор файла». null — задача ещё в очереди.
+   */
+  startedAt?: string | null;
+  /** Когда закончился последний шаг — `tasks.finished_at`. */
+  finishedAt?: string | null;
 }) {
   const [event, setEvent] = useState<ProgressEvent | null>(null);
   const [connected, setConnected] = useState(false);
-  const [elapsed, setElapsed] = useState(0);
+  /**
+   * Отсчёт ведётся от начала прогона, а не от открытия страницы.
+   *
+   * Прежний счётчик стартовал с нуля на каждом монтировании компонента, и это
+   * ломало его в обе стороны: обновив вкладку на десятой минуте, читатель видел
+   * «0:03», а вкладка, открытая со вчера, показывала сутки прогона, который
+   * давно закончился. Число выглядело осмысленным в обоих случаях — тем оно и
+   * было плохо.
+   *
+   * `null` означает «считать не от чего»: задача стоит в очереди, воркер её ещё
+   * не взял, и любое число здесь было бы выдуманным.
+   */
+  const [elapsed, setElapsed] = useState<number | null>(null);
+  /**
+   * Запасное начало отсчёта для страницы, открытой ДО того, как воркер взял
+   * задачу. `startedAt` отрисован на сервере один раз и в такой вкладке
+   * навсегда останется null — а прогон тем временем идёт. Первое событие
+   * прогресса несёт `at` (epoch-секунды `time.time()` воркера) и годится
+   * началом: расхождение с настоящим `started_at` — доли секунды, которые в
+   * счётчике минут не видны.
+   */
+  const [firstEventAt, setFirstEventAt] = useState<number | null>(null);
   // useMemo, а не useRef: инициализатор ref вычисляется один раз за жизнь
   // компонента и на смену mode не реагирует — на длинном прогоне шкала осталась
   // бы со списком этапов короткого режима. Вдобавок чтение ref во время
@@ -67,7 +97,11 @@ export function ProgressView({
     source.addEventListener("progress", (e) => {
       setConnected(true);
       try {
-        setEvent(JSON.parse((e as MessageEvent).data) as ProgressEvent);
+        const parsed = JSON.parse((e as MessageEvent).data) as ProgressEvent;
+        setEvent(parsed);
+        setFirstEventAt((seen) =>
+          seen ?? (typeof parsed.at === "number" ? parsed.at * 1000 : null),
+        );
       } catch {
         // Битое событие пропускаем: следующее придёт целым, а рушить экран
         // идущего исследования из-за одной строки нельзя.
@@ -81,10 +115,27 @@ export function ProgressView({
   const finished = event?.status === "REPORT_READY";
 
   useEffect(() => {
+    const fromServer = startedAt ? Date.parse(startedAt) : NaN;
+    const start = Number.isNaN(fromServer) ? (firstEventAt ?? NaN) : fromServer;
+    if (Number.isNaN(start)) {
+      setElapsed(null);
+      return;
+    }
+
+    // Прогон уже закончился к моменту открытия страницы — показываем итоговую
+    // длительность и не тикаем: она больше не меняется.
+    const end = finishedAt ? Date.parse(finishedAt) : NaN;
+    if (!Number.isNaN(end)) {
+      setElapsed(Math.max(0, Math.round((end - start) / 1000)));
+      return;
+    }
+
+    const tick = () => setElapsed(Math.max(0, Math.round((Date.now() - start) / 1000)));
+    tick(); // сразу, чтобы первая секунда не была пустой
     if (finished || failed) return;
-    const timer = setInterval(() => setElapsed((e) => e + 1), 1000);
+    const timer = setInterval(tick, 1000);
     return () => clearInterval(timer);
-  }, [finished, failed]);
+  }, [startedAt, finishedAt, firstEventAt, finished, failed]);
 
   const currentIndex = nodes.findIndex((n) => n.name === event?.node);
   const doneCount = finished
@@ -115,7 +166,9 @@ export function ProgressView({
           <span className="text-sm tabular-nums text-slate">
             {!connected && !finished && !failed
               ? "переподключение…"
-              : `${Math.floor(elapsed / 60)}:${String(elapsed % 60).padStart(2, "0")}`}
+              : elapsed === null
+                ? "в очереди"
+                : `${Math.floor(elapsed / 60)}:${String(elapsed % 60).padStart(2, "0")}`}
           </span>
         </div>
         <div className="h-1.5 overflow-hidden rounded-full bg-secondary">

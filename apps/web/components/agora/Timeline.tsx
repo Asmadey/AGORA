@@ -82,11 +82,19 @@ export function Timeline({ runId }: { runId: string }) {
     <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,22rem)]">
       <div className="space-y-3">
         {data.video ? (
+          /*
+            Высота ограничена, ширина подстраивается — ролики бывают и 16:9, и
+            9:16. При `w-full` вертикальный ролик растягивался по ширине колонки
+            и уезжал на три экрана вниз: таймлайн справа оказывался напротив
+            пустоты. `w-auto max-w-full` вместе с потолком высоты сохраняет
+            пропорции обоих: горизонтальный упирается в ширину, вертикальный — в
+            600 пикселей.
+          */
           <video
             ref={videoRef}
             src={data.video}
             controls
-            className="w-full rounded-lg border border-hairline bg-black"
+            className="mx-auto max-h-[600px] w-auto max-w-full rounded-lg border border-hairline bg-black"
             onTimeUpdate={(e) => setCurrentSec(e.currentTarget.currentTime)}
           />
         ) : (
@@ -95,13 +103,25 @@ export function Timeline({ runId }: { runId: string }) {
             хранения. Разбор ниже от этого не зависит.
           </p>
         )}
-        <p className="text-xs text-slate">
-          {stats.scenesTotal} сцен · {stats.speakers} спикеров · {stats.words} слов ·{" "}
-          {formatTime(durationSec)}
-        </p>
+        {/* Полоса под плеером, а не карточки в сетке метрик: это свойства
+            материала, а не результат исследования. В одном ряду с NPS они
+            читались бы как показатель, который что-то говорит об аудитории. */}
+        <dl className="flex flex-wrap items-baseline gap-x-5 gap-y-1 text-xs text-slate">
+          {[
+            ["Сцен", String(stats.scenesTotal)],
+            ["Спикеров", String(stats.speakers)],
+            ["Слов", String(stats.words)],
+            ["Длительность", formatTime(durationSec)],
+          ].map(([label, value]) => (
+            <div key={label} className="flex items-baseline gap-1.5">
+              <dt>{label}</dt>
+              <dd className="font-medium tabular-nums text-foreground">{value}</dd>
+            </div>
+          ))}
+        </dl>
       </div>
 
-      <ol className="max-h-[32rem] space-y-1 overflow-y-auto pr-1">
+      <ol className="max-h-[600px] space-y-1 overflow-y-auto pr-1">
         {cells.map((cell, index) => (
           <Cell
             key={`${cell.start}-${index}`}
@@ -156,13 +176,25 @@ function Cell({
                 в материале нет. */}
             {cell.isCut && <span className="text-[10px] uppercase">склейка</span>}
           </span>
-          <span className="mt-0.5 block truncate text-sm">
+          <span className="mt-0.5 block line-clamp-2 text-sm">
             {cell.scene ?? "до первой сцены"}
           </span>
+          {/*
+            Все реплики отрезка, а не первая: `truncate` на одной строке
+            показывал начало первой фразы и обрывал его на полуслове, из-за чего
+            по карточке нельзя было понять, о чём говорили. Ровно эту речь видит
+            персона, и ровно с ней QA сверяет её ответы, — читатель отчёта
+            обязан видеть то же самое. Потолок в пять строк удерживает список
+            прокручиваемым: без него сцена на тридцать секунд занимала бы экран.
+          */}
           {cell.lines.length > 0 && (
-            <span className="mt-0.5 block truncate text-xs text-slate">
-              {cell.lines[0].speaker ? `${cell.lines[0].speaker}: ` : ""}
-              {cell.lines[0].text}
+            <span className="mt-1 block line-clamp-5 text-xs leading-relaxed text-slate">
+              {cell.lines.map((line, i) => (
+                <span key={`${line.start}-${i}`}>
+                  {line.speaker ? <strong className="font-medium">{line.speaker}: </strong> : null}
+                  {line.text}{" "}
+                </span>
+              ))}
             </span>
           )}
         </span>

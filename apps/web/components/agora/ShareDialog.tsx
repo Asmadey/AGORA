@@ -56,15 +56,23 @@ export function ShareDialog() {
           onClick={() => setOpen(false)}
         >
           <div
-            className="w-full max-w-md rounded-lg border border-hairline bg-[hsl(222_47%_8%)] p-6"
+            className="w-full max-w-md rounded-lg border border-hairline bg-card p-6"
             onClick={(e) => e.stopPropagation()}
           >
             <h2 className="text-lg font-semibold">Публичная ссылка на отчёт</h2>
 
+            {/*
+              Текст обёрнут в span, а не лежит в flex-контейнере голым.
+              Голый текст внутри flex становится анонимным flex-элементом, и
+              каждый его кусок, разорванный тегом <strong>, — отдельным: строка
+              разъезжалась на три колонки вместо одного абзаца.
+            */}
             <p className="mt-3 flex gap-2.5 rounded-md border border-warning/30 bg-warning-soft/60 p-3 text-xs leading-relaxed text-warning">
               <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0" />
-              По ссылке отчёт открывается <strong>без входа в систему</strong>. Любой, у
-              кого она есть, увидит содержимое. Ссылку можно отозвать в любой момент.
+              <span>
+                По ссылке отчёт открывается <strong>без входа в систему</strong>. Любой,
+                у кого она есть, увидит содержимое. Ссылку можно отозвать в любой момент.
+              </span>
             </p>
 
             <div className="mt-5">
