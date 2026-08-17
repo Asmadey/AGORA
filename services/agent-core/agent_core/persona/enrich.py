@@ -163,11 +163,19 @@ class QwenTextClient:
     """
 
     def __init__(self, config: Any | None = None, model: str | None = None,
-                 temperature: float | None = None):
+                 temperature: float | None = None,
+                 response_schema: tuple[str, dict[str, Any]] | None = None,
+                 max_tokens: int | None = None):
         from ..config import ModelConfig, TemperatureConfig
 
         self.config = config or ModelConfig.from_env()
         self.model = model or self.config.text_model
+        # `(имя, схема)` либо None. Клиент обслуживает две задачи: обогащение
+        # ждёт связный ТЕКСТ портрета, валидация — строгий JSON. Схема нужна
+        # только второй, и навязывать её первой значило бы требовать JSON там,
+        # где нужен абзац прозы.
+        self.response_schema = response_schema
+        self.max_tokens = max_tokens
         # Стадия personaCreation. Прежде здесь стоял жёсткий ноль как условие
         # воспроизводимости CDD #5 — но атрибуты DNA сэмплирует генератор через
         # random.Random(seed) и модель к ним не прикасается, а этот вызов
@@ -182,18 +190,27 @@ class QwenTextClient:
     def complete(self, *, prompt: str) -> str:
         from openai import OpenAI
 
+        from ..schemas.responses import response_format
+
         client = OpenAI(
             api_key=self.config.api_key,
             base_url=self.config.base_url,
             default_headers=self.config.default_headers,
             timeout=REQUEST_TIMEOUT_SEC,
         )
+        extra: dict[str, Any] = {}
+        if self.response_schema is not None:
+            extra["response_format"] = response_format(*self.response_schema)
+        if self.max_tokens is not None:
+            extra["max_tokens"] = self.max_tokens
+
         response = client.chat.completions.create(
             model=self.model,
             messages=[{"role": "user", "content": prompt}],
             temperature=self.temperature,
             # Размышление выключено: см. ModelConfig.thinking — замер и причина.
             extra_body=self.config.extra_body("persona"),
+            **extra,
         )
         return (response.choices[0].message.content or "").strip()
 

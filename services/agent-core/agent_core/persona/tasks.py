@@ -160,6 +160,7 @@ def generate_audience(self: Any, payload: dict[str, Any]) -> dict[str, Any]:
     verdicts: list[Any] = []
     validation_meta: dict[str, Any] = {"checked": 0, "regenerated": 0, "failed": 0}
     if config.use_llm and personas:
+        from ..schemas.responses import PERSONA_VALIDATION
         from .enrich import QwenTextClient, enrich_personas
         from .validate import validate_set
 
@@ -188,7 +189,17 @@ def generate_audience(self: Any, payload: dict[str, Any]) -> dict[str, Any]:
         try:
             validation = validate_set(
                 personas,
-                client=QwenTextClient(temperature=temperatures.personaValidation),
+                client=QwenTextClient(
+                    temperature=temperatures.personaValidation,
+                    # Схема, а не уговоры: первый же боевой набор потерял один
+                    # вердикт на разборе — модель вернула JSON в ```json и, судя
+                    # по обрыву, не закрыла ограду. Внутри была настоящая
+                    # претензия, и она пропала по дороге.
+                    response_schema=("PersonaValidation", PERSONA_VALIDATION),
+                    # Потолок задан явно: умолчание провайдера обрезает длинный
+                    # разбор на полуслове, и обрыв неотличим от плохого ответа.
+                    max_tokens=1500,
+                ),
                 regenerate=regenerate,
             )
             personas = validation.personas

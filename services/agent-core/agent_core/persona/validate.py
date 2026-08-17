@@ -115,8 +115,14 @@ def _parse(text: str) -> Verdict:
     try:
         parsed = json.loads(body)
     except json.JSONDecodeError:
+        # Хвост, а не начало: обрыв виден только в конце, а по началу ответ
+        # выглядит правильным. Первый же боевой набор потерял вердикт именно
+        # так, и установить причину по записи не удалось — прежний срез на 200
+        # символах отрезал ровно то место, где она была.
+        body = text.strip()
+        shown = body if len(body) <= 600 else f"{body[:200]} … {body[-400:]}"
         return Verdict(consistent=True, checked=False,
-                       issues=[f"ответ проверяющего не разобран: {text.strip()[:200]}"])
+                       issues=[f"ответ проверяющего не разобран ({len(body)} симв.): {shown}"])
     if not isinstance(parsed, dict):
         return Verdict(consistent=True, checked=False,
                        issues=["ответ проверяющего не объект"])
