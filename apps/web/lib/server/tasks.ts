@@ -202,6 +202,26 @@ export async function launchTask(
   params: LaunchParams,
   createdBy: string | null,
 ): Promise<LaunchedTask> {
+  // ─── Проект обязан принадлежать этому же арендатору ───────────────────────
+  //
+  // Внешний ключ `tasks.project_id REFERENCES projects(id)` этого НЕ проверяет:
+  // Postgres выполняет проверки ссылочной целостности в обход RLS, то есть
+  // чужой проект для неё существует. Пока визард не отправлял projectId, путь
+  // был недостижим; теперь отправляет.
+  //
+  // Проверка идёт SELECT'ом под RLS: чужая строка политике не видна, и запрос
+  // честно возвращает ноль. Молча заменить на NULL было бы хуже отказа —
+  // исследование ушло бы «в никуда», а оператор считал бы, что подшил его.
+  if (params.projectId) {
+    const { rowCount } = await client.query(
+      "SELECT 1 FROM projects WHERE id = $1",
+      [params.projectId],
+    );
+    if (!rowCount) {
+      throw new Error(`проект ${params.projectId} не найден у этой команды`);
+    }
+  }
+
   const snapshot = await buildPromptsSnapshot(client);
   const settings = await buildSettingsSnapshot(client);
   const key = idempotencyKey(params, snapshot);

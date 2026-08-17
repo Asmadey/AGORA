@@ -11,6 +11,7 @@ import { cn } from "@/lib/utils";
 import { Chip } from "@/components/agora/Primitives";
 import { SurveyBuilder, BASE_QUESTIONS } from "@/components/agora/SurveyBuilder";
 import { AudienceStep } from "@/components/agora/AudienceStep";
+import { ProjectPicker, type ProjectOption } from "@/components/agora/ProjectPicker";
 import { DEFAULT_CRITERIA, type AudienceCriteria } from "@/lib/audience";
 import type { SurveyQuestion } from "@/lib/agora-types";
 
@@ -91,6 +92,7 @@ export default function NewStudyPage() {
         body: JSON.stringify({
           mode,
           videoRef,
+          projectId,
           personaSetId,
           replicationCount: replication,
           seed,
@@ -117,6 +119,11 @@ export default function NewStudyPage() {
     }
   }
 
+  // null — «без проекта», законный выбор: у арендатора, запускающего первое
+  // исследование, проектов нет вовсе, и обязательное поле означало бы
+  // «сначала придумай папку, потом работай».
+  const [project, setProject] = useState<ProjectOption | null>(null);
+  const projectId = project?.id ?? null;
   const [personaSetId, setPersonaSetId] = useState<string | null>(null);
   // Размер выбранного набора приходит с шагом «Аудитория»: список наборов
   // загружает он, и только он знает, сколько там персон. Резюме считает по
@@ -316,6 +323,8 @@ export default function NewStudyPage() {
               )}
             </div>
 
+            <ProjectPicker value={projectId} onChange={setProject} />
+
             <div>
               <h2 className="text-sm font-semibold">Режим обработки</h2>
               <div className="mt-3 grid gap-2 sm:grid-cols-2">
@@ -395,6 +404,7 @@ export default function NewStudyPage() {
 
             <dl className="space-y-2 rounded-md border border-hairline p-4 text-sm">
               {[
+                ["Проект", project?.name ?? "без проекта"],
                 ["Режим", mode === "short" ? "Короткое видео" : "Длинное видео"],
                 [
                   "Аудитория",
