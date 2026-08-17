@@ -15,6 +15,7 @@ import {
   REPLICATION_VALUES,
   TEMPERATURE_BOUNDS,
   TEMPERATURE_STAGES,
+  normalizeEndpoint,
   settingsEqual,
   type TenantSettings,
   type ReplicationCount,
@@ -48,6 +49,19 @@ export default function SettingsPage() {
   // Введённый ключ тоже делает форму «грязной»: без этого кнопка сохранения
   // осталась бы неактивной, и ключ было бы некуда отправить.
   const dirty = !settingsEqual(saved, draft) || apiKey.trim().length > 0;
+
+  /*
+    Претензия к endpoint считается тем же кодом, что и на сервере, и живёт
+    рядом с полем.
+
+    Раньше она приходила ответом на сохранение и печаталась внизу экрана —
+    общей строкой отказа. Владелец подвинул ползунок температуры и получил
+    «endpoint: ожидается http(s)-адрес либо пусто»: поля он не трогал, находится
+    оно в другой секции, и связать одно с другим было не с чем. Отказ был
+    правильный, а сообщение — неадресным.
+  */
+  const endpointCheck = normalizeEndpoint(draft.endpoint);
+  const endpointError = endpointCheck.ok ? null : endpointCheck.error;
 
   useEffect(() => {
     let cancelled = false;
@@ -308,17 +322,65 @@ export default function SettingsPage() {
             )}
 
             <div>
-              <label className="block text-sm font-medium">Endpoint</label>
+              <label htmlFor="provider-endpoint" className="block text-sm font-medium">
+                Endpoint
+              </label>
               <p className="mt-1 text-xs text-slate">
                 Пусто — брать из окружения сервера
                 {provider?.current.endpoint ? ` (${provider.current.endpoint})` : ""}.
               </p>
               <input
+                id="provider-endpoint"
+                name="provider-endpoint"
+                type="url"
+                inputMode="url"
+                /*
+                  Поле стоит вплотную к «Ключу провайдера» с type="password", и
+                  менеджер паролей читает такую пару как форму входа: пароль —
+                  туда, логин — в предыдущее текстовое поле. Заполнение приходит
+                  событием change, то есть попадает в черновик молча, а всплывает
+                  отказом сохранения совсем другой настройки.
+
+                  autoComplete="off" браузеры для менеджеров паролей не соблюдают,
+                  поэтому рядом стоят их собственные признаки. Имя полю дано по
+                  той же причине: безымянное поле опознаётся эвристикой, а
+                  названное — по имени.
+                */
+                autoComplete="off"
+                data-1p-ignore
+                data-lpignore="true"
+                data-bwignore
                 value={draft.endpoint}
                 onChange={(e) => patch({ endpoint: e.target.value })}
+                // Приведение к записываемому виду показывается сразу, а не
+                // применяется втихую при сохранении: человек должен увидеть, что
+                // именно уедет в базу.
+                onBlur={() => {
+                  const checked = normalizeEndpoint(draft.endpoint);
+                  if (checked.ok && checked.value !== draft.endpoint) {
+                    patch({ endpoint: checked.value });
+                  }
+                }}
                 placeholder={provider?.current.endpoint || "https://…/v1"}
-                className="mt-2 w-full rounded-md border border-hairline bg-background px-3 py-2 font-mono text-sm"
+                aria-invalid={endpointError !== null}
+                className={cn(
+                  "mt-2 w-full rounded-md border bg-background px-3 py-2 font-mono text-sm",
+                  endpointError ? "border-danger" : "border-hairline",
+                )}
               />
+              {endpointError && (
+                <p className="mt-2 text-xs text-danger">
+                  {endpointError}.{" "}
+                  <button
+                    type="button"
+                    onClick={() => patch({ endpoint: DEFAULT_SETTINGS.endpoint })}
+                    className="underline underline-offset-2"
+                  >
+                    Вернуть значение по умолчанию
+                  </button>{" "}
+                  — пустое поле означает «брать адрес из окружения сервера».
+                </p>
+              )}
             </div>
 
             <div>
@@ -328,13 +390,20 @@ export default function SettingsPage() {
               </p>
               <input
                 type="password"
+                name="provider-api-key"
                 value={apiKey}
                 onChange={(e) => {
                   setApiKey(e.target.value);
                   setSave({ kind: "idle" });
                 }}
                 placeholder="вставьте новый ключ, чтобы заменить"
-                autoComplete="off"
+                // "new-password", а не "off": первое браузеры соблюдают, второе
+                // менеджеры паролей игнорируют — и заодно предлагают заполнить
+                // соседнее поле логином.
+                autoComplete="new-password"
+                data-1p-ignore
+                data-lpignore="true"
+                data-bwignore
                 className="mt-2 w-full rounded-md border border-hairline bg-background px-3 py-2 font-mono text-sm"
               />
               {/*
@@ -375,7 +444,10 @@ export default function SettingsPage() {
         <div className="flex max-w-2xl items-center gap-4">
           <button
             onClick={submit}
-            disabled={!dirty || save.kind === "saving" || loading}
+            // Претензия к endpoint держит кнопку: иначе отказ придёт с сервера
+            // общей строкой внизу экрана, а поле, из-за которого он случился,
+            // останется в другой секции без единой пометки.
+            disabled={!dirty || endpointError !== null || save.kind === "saving" || loading}
             className="inline-flex items-center gap-2 rounded-md bg-foreground px-5 py-2.5 text-sm font-medium text-background transition-opacity hover:opacity-90 disabled:pointer-events-none disabled:opacity-40"
           >
             {save.kind === "saving" && <Loader2 className="h-4 w-4 animate-spin" />}
@@ -396,7 +468,12 @@ export default function SettingsPage() {
 
           <span className="text-xs text-slate">
             {loading && "Загрузка…"}
-            {!loading && dirty && "Есть несохранённые изменения"}
+            {!loading && dirty && endpointError && (
+              <span className="text-danger">
+                Endpoint провайдера задан неверно — исправьте его, чтобы сохранить
+              </span>
+            )}
+            {!loading && dirty && !endpointError && "Есть несохранённые изменения"}
             {!loading && !dirty && save.kind === "saved" && (
               <span className="inline-flex items-center gap-1.5 text-success">
                 <Check className="h-3.5 w-3.5" />
