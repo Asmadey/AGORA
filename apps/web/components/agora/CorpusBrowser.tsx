@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import { Loader2, Plus, Trash2 } from "lucide-react";
 
 import type { CorpusDataset, CorpusRecord } from "@/lib/server/corpus-db";
@@ -150,15 +150,6 @@ export function CorpusBrowser({ datasets }: Props) {
         <p className="rounded-md bg-danger-soft px-3 py-2 text-sm text-danger">{error}</p>
       )}
 
-      {editing && (
-        <RecordEditor
-          record={editing}
-          busy={busy}
-          onCancel={() => setEditing(null)}
-          onSave={save}
-        />
-      )}
-
       {records === null ? (
         <p className="text-sm text-slate">Загружаем записи…</p>
       ) : (
@@ -178,32 +169,59 @@ export function CorpusBrowser({ datasets }: Props) {
               {records.map((r) => {
                 const socio = (r.data.socio_demographics ?? {}) as Record<string, unknown>;
                 const survey = (r.data.all_survey_responses ?? {}) as Record<string, unknown>;
+                const open = editing?.id === r.id;
                 return (
-                  <tr key={r.id} className="border-b border-hairline-soft last:border-0">
-                    <td className="px-3 py-2 font-mono text-xs">{r.respondentId}</td>
-                    <td className="px-3 py-2">{String(socio.gender ?? "—")}</td>
-                    <td className="px-3 py-2">{String(socio.age_group ?? socio.age ?? "—")}</td>
-                    <td className="px-3 py-2">{String(socio.geo ?? "—")}</td>
-                    <td className="px-3 py-2 tabular-nums">{Object.keys(survey).length}</td>
-                    <td className="px-3 py-2 text-right">
-                      <button
-                        type="button"
-                        onClick={() => setEditing(r)}
-                        className="mr-3 text-xs underline underline-offset-4"
-                      >
-                        Править
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => void remove(r)}
-                        disabled={busy}
-                        aria-label={`Удалить ${r.respondentId}`}
-                        className="text-stone transition-colors hover:text-danger disabled:opacity-40"
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </button>
-                    </td>
-                  </tr>
+                  /*
+                    Фрагмент, а не одна строка: редактор раскрывается ПОД
+                    правимой записью. Прежде он рисовался над таблицей, и
+                    нажатие «Править» на сороковой строке требовало прокрутки
+                    в начало страницы — чтобы увидеть, что именно правишь.
+                    Связь между строкой и формой при этом держалась только
+                    памятью: на экране их вместе не было никогда.
+                  */
+                  <Fragment key={r.id}>
+                    <tr className={open ? "bg-secondary/40" : "border-b border-hairline-soft last:border-0"}>
+                      <td className="px-3 py-2 font-mono text-xs">{r.respondentId}</td>
+                      <td className="px-3 py-2">{String(socio.gender ?? "—")}</td>
+                      <td className="px-3 py-2">{String(socio.age_group ?? socio.age ?? "—")}</td>
+                      <td className="px-3 py-2">{String(socio.geo ?? "—")}</td>
+                      <td className="px-3 py-2 tabular-nums">{Object.keys(survey).length}</td>
+                      <td className="px-3 py-2 text-right">
+                        <button
+                          type="button"
+                          onClick={() => setEditing(open ? null : r)}
+                          className="mr-3 text-xs underline underline-offset-4"
+                        >
+                          {open ? "Свернуть" : "Править"}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => void remove(r)}
+                          disabled={busy}
+                          aria-label={`Удалить ${r.respondentId}`}
+                          className="text-stone transition-colors hover:text-danger disabled:opacity-40"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      </td>
+                    </tr>
+                    {open && (
+                      <tr className="border-b border-hairline-soft last:border-0">
+                        <td colSpan={6} className="bg-secondary/40 px-3 pb-4">
+                          <RecordEditor
+                            // key по идентификатору: без него React переиспользует
+                            // состояние формы при переходе к другой записи, и в
+                            // textarea остаётся карточка предыдущего респондента.
+                            key={r.id}
+                            record={r}
+                            busy={busy}
+                            onCancel={() => setEditing(null)}
+                            onSave={save}
+                          />
+                        </td>
+                      </tr>
+                    )}
+                  </Fragment>
                 );
               })}
             </tbody>
