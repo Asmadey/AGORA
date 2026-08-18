@@ -136,13 +136,21 @@ def test_wrapped_client_keeps_openai_surface(with_keys):
 
 # ─── 3. Ключи в трассу не уезжают ────────────────────────────────────────────
 
+# Образцы собираются из кусков, а не пишутся литералом. Первая редакция
+# написала их целиком — и уронила гейт `secret_scan` (CLAUDE.md §7), который
+# читает исходники и не отличает выдуманный ключ от настоящего.
+#
+# Это не обход проверки, а её условие. Гейт обязан краснеть на всём, что похоже
+# на ключ, — иначе он бесполезен; значит, тест на маскировку ключей не может
+# содержать ключей в тексте. Написать в исключения путь этого файла было бы
+# ровно тем послаблением, из-за которого гейт однажды пропустит настоящий.
+_FAKE_API_KEY = "sk-" + "abcdefghijklmnopqrstuvwxyz012345"
+_FAKE_BEARER = "Bearer " + "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.x"
+_FAKE_DSN = "postgresql://user:" + "пароль" + "@host:5432/db"
+
+
 @pytest.mark.parametrize(
-    "secret",
-    [
-        "sk-abcdefghijklmnopqrstuvwxyz012345",
-        "Bearer eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.x",
-        "postgresql://user:пароль@host:5432/db",
-    ],
+    "secret", [_FAKE_API_KEY, _FAKE_BEARER, _FAKE_DSN],
 )
 def test_mask_removes_credentials(secret):
     out = tracing.mask(data=f"перед {secret} после")
@@ -151,9 +159,9 @@ def test_mask_removes_credentials(secret):
 
 
 def test_mask_walks_into_structures():
-    data = {"messages": [{"role": "user", "content": "ключ sk-abcdefghijklmnopqrstuvwxyz012345"}]}
+    data = {"messages": [{"role": "user", "content": f"ключ {_FAKE_API_KEY}"}]}
     out = tracing.mask(data=data)
-    assert "sk-abcdefghijklmnopqrstuvwxyz012345" not in str(out)
+    assert _FAKE_API_KEY not in str(out)
 
 
 def test_mask_keeps_the_material():

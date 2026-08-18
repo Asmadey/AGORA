@@ -194,6 +194,16 @@ services:
       S3_BUCKET: ${S3_BUCKET:-}
       S3_ACCESS_KEY: ${S3_ACCESS_KEY:-}
       S3_SECRET_KEY: ${S3_SECRET_KEY:-}
+      # ─── Трассировка ────────────────────────────────────────────────────
+      # Все три со значением по умолчанию «пусто», и это не небрежность:
+      # agent_core.tracing включается только при всех трёх заполненных, а
+      # обязательные переменные (`:?`) сделали бы наблюдение условием запуска
+      # продукта. Разработчик без LangFuse не должен получать отказ compose.
+      LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:-}
+      LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY:-}
+      LANGFUSE_BASE_URL: ${LANGFUSE_BASE_URL:-}
+      # Разделяет трассы боевого сервера и локальных прогонов в одном проекте.
+      LANGFUSE_ENVIRONMENT: ${LANGFUSE_ENVIRONMENT:-production}
     volumes:
       # Кэш весов Whisper/pyannote между перезапусками — модели тяжёлые,
       # качать их заново на каждый up слишком дорого. Путь в домашнем каталоге
