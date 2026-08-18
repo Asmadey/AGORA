@@ -123,6 +123,14 @@ export interface AskedQuestion {
   id: string;
   label: string;
   type: string;
+  /**
+   * Ключ базового критерия, если вопрос базовый.
+   *
+   * Ответ на такой вопрос промпт кладёт в `scores`, а не в `survey_answers` —
+   * без этого поля карточка ищет его не там и показывает «не ответила» под
+   * нарисованным рядом баллом.
+   */
+  baseKey?: Criterion;
 }
 
 export interface AnswerView {
@@ -357,7 +365,15 @@ export function parseReport(raw: Record<string, unknown>): ReportView {
       const q = obj(rawQ);
       const label = str(q.label);
       if (!label) return [];
-      return [{ id: str(q.id) ?? "?", label, type: str(q.type) ?? "открытый" }];
+      const baseKey = str(q.baseKey);
+      return [{
+        id: str(q.id) ?? "?",
+        label,
+        type: str(q.type) ?? "открытый",
+        ...(baseKey && (CRITERIA as readonly string[]).includes(baseKey)
+          ? { baseKey: baseKey as Criterion }
+          : {}),
+      }];
     }),
     riskPoints: (Array.isArray(raw.retention_risk_points) ? raw.retention_risk_points : [])
       .flatMap((rawPoint) => {
@@ -437,4 +453,72 @@ export function parseAnswer(card: {
     surveyAnswers: flatten(obj(body.survey_answers)),
     verbatims: flatten(verbatims),
   };
+}
+
+/**
+ * Строка вопроса в том виде, в каком её печатает промпт респондента:
+ * `[q-77] (scale) как дела?`. Модель охотно берёт её ключом ответа целиком.
+ */
+const PROMPT_LINE = /^\[([^\]]+)\]\s*(?:\(([^)]*)\)\s*)?(.*)$/;
+
+/** Ключ ответа во всех видах, какими персона могла назвать вопрос. */
+function answerKeys(answers: Record<string, string>): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const [raw, value] of Object.entries(answers)) {
+    const key = raw.trim();
+    const put = (k: string) => {
+      const norm = k.trim().toLocaleLowerCase();
+      if (norm && !out.has(norm)) out.set(norm, value);
+    };
+    put(key);
+    const m = PROMPT_LINE.exec(key);
+    if (m) {
+      put(m[1]);
+      put(m[3]);
+    }
+  }
+  return out;
+}
+
+const TYPED_IN_PERCEPTION: Record<string, "watchedShare" | "retentionIntent" | "recommendation"> = {
+  watched_share: "watchedShare",
+  retention: "retentionIntent",
+  nps: "recommendation",
+};
+
+/**
+ * Ответ персоны на заданный вопрос — откуда бы он ни пришёл. `null` — не ответила.
+ *
+ * Три источника, потому что промпт кладёт ответы в три разных места: базовые
+ * баллы в `scores`, типовые вопросы в `perception`, остальное в
+ * `survey_answers` — и там ключом может оказаться идентификатор, формулировка
+ * ЛИБО целая строка промпта «[q-77] (scale) как дела?».
+ *
+ * Живёт здесь, а не в карточке, ровно потому, что это уже четвёртый случай
+ * одной семьи: тот же разрыв чинили в `qa/checks.py` дважды и в
+ * `content/pack.py` один раз. Место, где он проверяется тестом, должно быть
+ * одно.
+ */
+export function answerForQuestion(a: AnswerView, q: AskedQuestion): string | null {
+  if (q.baseKey) {
+    const score = a.scores?.[q.baseKey];
+    if (typeof score === "number") return `${score} из 10`;
+  }
+
+  const keys = answerKeys(a.surveyAnswers ?? {});
+  const direct = keys.get(q.id.trim().toLocaleLowerCase())
+    ?? keys.get(q.label.trim().toLocaleLowerCase());
+  if (direct) return direct;
+
+  switch (TYPED_IN_PERCEPTION[q.type]) {
+    case "watchedShare":
+      return a.watchedShare !== null && a.watchedShare !== undefined
+        ? `${a.watchedShare}%` : null;
+    case "retentionIntent":
+      return a.retentionIntent || null;
+    case "recommendation":
+      return a.nps !== null && a.nps !== undefined ? `${a.nps} из 10` : null;
+    default:
+      return null;
+  }
 }

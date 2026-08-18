@@ -266,6 +266,11 @@ def _asked_questions(user_prompt: str, survey: Any) -> list[dict[str, Any]]:
             "id": q.get("id"),
             "label": question_label(q),
             "type": q.get("type", "открытый"),
+            # Ответ на базовый вопрос промпт кладёт в `scores`, а не в
+            # `survey_answers`. Без этого поля отчёт ищет его не там и рисует
+            # «не ответила» рядом с нарисованным баллом — читатель делает вывод,
+            # что прогон ненастоящий.
+            "baseKey": q.get("baseKey"),
         }
         for q in questions
     ]

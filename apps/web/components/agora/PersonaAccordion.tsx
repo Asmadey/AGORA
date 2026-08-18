@@ -5,6 +5,7 @@ import Link from "next/link";
 import { ChevronDown, MessageCircle, AlertTriangle } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { CRITERIA, CRITERIA_LABELS } from "@/lib/agora-types";
+import { answerForQuestion } from "@/lib/report-view";
 import type { AnswerView, AskedQuestion } from "@/lib/report-view";
 import { PersonaDialog } from "./PersonaDialog";
 import { TimecodeRef } from "./Primitives";
@@ -38,31 +39,6 @@ const VERBATIM_LABELS: Record<string, string> = {
   memorable_elements: "Что запомнилось",
   character_opinions: "О героях",
 };
-
-const TYPED_IN_PERCEPTION: Record<string, string> = {
-  watched_share: "watched_share_pct",
-  retention: "retention_intent",
-  nps: "recommendation_nps_1_to_10",
-};
-
-/** Ответ персоны на конкретный вопрос анкеты, откуда бы он ни пришёл. */
-function answerFor(a: AnswerView, q: AskedQuestion): string | null {
-  // Промпт разрешает ключом и идентификатор, и текст вопроса — принимаем оба.
-  const direct = a.surveyAnswers[q.id] ?? a.surveyAnswers[q.label];
-  if (direct) return direct;
-
-  const perceptionKey = TYPED_IN_PERCEPTION[q.type];
-  if (perceptionKey === "watched_share_pct" && a.watchedShare !== null) {
-    return `${a.watchedShare}%`;
-  }
-  if (perceptionKey === "retention_intent" && a.retentionIntent) {
-    return a.retentionIntent;
-  }
-  if (perceptionKey === "recommendation_nps_1_to_10" && a.nps !== null) {
-    return `${a.nps} из 10`;
-  }
-  return null;
-}
 
 export function PersonaAccordion({
   answers,
@@ -219,7 +195,7 @@ export function PersonaAccordion({
                     </h3>
                     <dl className="mt-2 space-y-2 text-sm">
                       {asked.map((q) => {
-                        const value = answerFor(a, q);
+                        const value = answerForQuestion(a, q);
                         return (
                           <div key={q.id} className="grid gap-1 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
                             <dt className="text-slate">{q.label}</dt>

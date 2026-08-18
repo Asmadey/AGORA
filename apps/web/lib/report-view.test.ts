@@ -1,7 +1,10 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { avatarHue, initials, parseAnswer, parseReport, segmentLabel } from "./report-view.ts";
+import {
+  answerForQuestion, avatarHue, initials, parseAnswer, parseReport, segmentLabel,
+  type AnswerView, type AskedQuestion,
+} from "./report-view.ts";
 
 /**
  * Тесты разбора отчёта.
@@ -249,4 +252,55 @@ test("заданные вопросы берутся из отчёта, а не 
     { id: "base-1", label: "Общее впечатление", type: "scale" },
     { id: "?", label: "Без идентификатора", type: "open" },
   ]);
+});
+
+/**
+ * Карточка персоны показывает ответ, откуда бы он ни пришёл.
+ *
+ * ─── Как это нашлось ───────────────────────────────────────────────────────
+ * Владелец открыл отчёт и увидел «не ответила» напротив ВСЕХ шести вопросов —
+ * включая пять базовых, баллы по которым тут же нарисованы рядом. Естественный
+ * вывод из такой карточки: прогон ненастоящий, модель не звали.
+ *
+ * Звали. Ответы есть, и лежат они там, куда их положил промпт:
+ *  · пять базовых баллов — в `scores` под своими ключами, а не в survey_answers;
+ *  · вопрос о доле просмотра — в `perception`;
+ *  · пользовательский вопрос — под ключом «[q-1786…] (scale) как дела?»,
+ *    то есть строкой, которой промпт этот вопрос и напечатал.
+ *
+ * Поиск же шёл точным совпадением с `id` либо с формулировкой — и не находил
+ * ничего. Это четвёртый случай одной семьи: тот же разрыв уже чинили в
+ * `qa/checks.py` дважды и в `content/pack.py` один раз. Здесь он выглядел не
+ * отбраковкой, а обвинением в подделке прогона.
+ */
+test("ответ находится и в scores, и под строкой промпта", () => {
+  const answer = {
+    scores: { overall_impression: 7, plot: 6, acting: 5, music: 4, cinematography: 8 },
+    surveyAnswers: { "[q-77] (scale) как дела?": "7" },
+    watchedShare: 75,
+    retentionIntent: "скорее досмотреть",
+    nps: 6,
+  } as unknown as AnswerView;
+
+  const base: AskedQuestion = {
+    id: "base-1", label: "Общее впечатление", type: "scale", baseKey: "overall_impression",
+  };
+  assert.equal(answerForQuestion(answer, base), "7 из 10");
+
+  const custom: AskedQuestion = { id: "q-77", label: "как дела?", type: "scale" };
+  assert.equal(answerForQuestion(answer, custom), "7");
+
+  const share: AskedQuestion = {
+    id: "base-6", label: "Какую часть ролика вы бы досмотрели", type: "watched_share",
+  };
+  assert.equal(answerForQuestion(answer, share), "75%");
+});
+
+test("вопрос без ответа остаётся без ответа", () => {
+  // Послабление не должно превратить поиск в угадывание: пустая карточка
+  // честнее выдуманного ответа.
+  const answer = { scores: {}, surveyAnswers: {} } as unknown as AnswerView;
+  const q: AskedQuestion = { id: "q-99", label: "чужой вопрос", type: "открытый" };
+
+  assert.equal(answerForQuestion(answer, q), null);
 });
