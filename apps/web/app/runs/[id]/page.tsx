@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { MessageCircle, RotateCcw } from "lucide-react";
 import { PageHeader } from "@/components/AppShell";
+import { JsonTree } from "@/components/agora/JsonTree";
 import {
   Chip,
   ScoreBar,
@@ -135,6 +136,26 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
           </p>
           <Timeline runId={id} />
         </section>
+
+        {/*
+          Отчёт в исходном виде (п. 20).
+
+          Экран показывает выжимку — числа, вербатимы, точки риска. Всё
+          остальное лежит в отчёте и до сих пор доставалось только скачиванием
+          файла и открытием его в другом приложении. Дерево отвечает на вопрос
+          «а что там ещё есть» на месте.
+
+          Свёрнуто по умолчанию: это инструмент для разбора, а не часть чтения
+          отчёта, и раскрытый по умолчанию он оттеснял бы выводы вниз.
+        */}
+        <details className="rounded-lg border border-hairline bg-card p-6">
+          <summary className="cursor-pointer text-sm font-semibold">
+            Отчёт в исходном виде
+          </summary>
+          <div className="mt-3">
+            <JsonTree value={envelope.report as never} label="отчёт" />
+          </div>
+        </details>
 
         {/*
           Материалы прогона (п. 36).
