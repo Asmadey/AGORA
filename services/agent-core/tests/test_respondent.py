@@ -79,16 +79,29 @@ def test_slice_contains_only_own_dna():
 
 
 def test_no_leak_across_many_personas_and_replications():
-    """Утечка проявляется не на второй персоне, а на двадцатой во втором повторе."""
+    """
+    Утечка проявляется не на второй персоне, а на двадцатой во втором повторе.
+
+    Считаем ПРОМПТЫ С МАРКЕРОМ, а не сверяем их по порядку с ответами. Прежняя
+    редакция брала `outcome.answers[i]` для i-го отправленного промпта, но опрос
+    идёт в пуле потоков: порядок записи в Recorder не совпадает с порядком
+    ответов, и тест падал примерно раз из трёх — на исправном коде.
+
+    Мигающая проверка хуже отсутствующей: она учит перезапускать вместо того,
+    чтобы читать. Счёт от порядка не зависит: маркер обязан встретиться ровно
+    столько раз, сколько у своей персоны повторов, — ни больше (утечка), ни
+    меньше (персона не опрошена).
+    """
+    replications = 3
     people = [persona(0, "МАРКЕР-XYZ")] + [persona(i) for i in range(1, 20)]
     client = Recorder()
-    outcome = run(personas=people, client=client, replication_count=3)
+    run(personas=people, client=client, replication_count=replications)
 
-    for i, (system, user) in enumerate(client.sent):
-        own = outcome.answers[i]["persona_id"] if i < len(outcome.answers) else None
-        if own == "p0":
-            continue
-        assert "МАРКЕР-XYZ" not in system + user, f"утечка в промпте {i}"
+    seen = sum(1 for system, user in client.sent if "МАРКЕР-XYZ" in system + user)
+    assert seen == replications, (
+        f"маркер в {seen} промптах из {len(client.sent)}, ожидалось {replications}: "
+        f"больше — утечка соседней персоны, меньше — своя персона не опрошена"
+    )
 
 
 def test_input_personas_not_mutated():

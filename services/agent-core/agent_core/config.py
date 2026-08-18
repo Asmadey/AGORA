@@ -455,7 +455,27 @@ class TemperatureConfig:
 #: а как необъяснимо долгая транскрипция в первый раз и нормальная во второй.
 #: Список закреплён тестом tests/test_whisper_catalogue.py вместе со списком в
 #: интерфейсе: два перечня в двух языках расходятся молча.
-WHISPER_MODELS = ("large-v3",)
+#: Модели распознавания, которые можно выбрать.
+#:
+#: Ровно то, что предзагружено в образ воркера. Имя WHISPER_MODELS осталось
+#: историческим: сейчас в перечне две модели и лишь одна из них whisper.
+#: Переименование затронуло бы снимки настроек уже сделанных прогонов, а они
+#: обязаны остаться исполнимыми.
+#:
+#: Замер на боевом железе 18.08.2026, дорожка 161,6 с, четыре потока CPU:
+#:
+#:     faster-whisper large-v3 (int8)      198,1 с
+#:     parakeet-tdt-0.6b-v3 (int8 ONNX)     24,7 с
+#:
+#: Восьмикратная разница. Транскрипция занимала около половины прогона, поэтому
+#: parakeet стоит первым и он же значение по умолчанию.
+WHISPER_MODELS = ("parakeet-tdt-0.6b-v3", "large-v3")
+
+#: Модели, распознавание которыми идёт через ONNX, а не через faster-whisper.
+#: Перечень, а не признак в имени: имя — это то, что видит пользователь, и
+#: завязывать на его подстроку выбор кода значит однажды переименовать модель и
+#: сломать конвейер.
+ONNX_MODELS = ("parakeet-tdt-0.6b-v3",)
 
 
 @dataclass(frozen=True)
@@ -469,7 +489,7 @@ class TranscriptionConfig:
     def from_env(cls) -> TranscriptionConfig:
         return cls(
             whisper_model=_validate_model(
-                _optional("WHISPER_MODEL", "large-v3"), source="WHISPER_MODEL"
+                _optional("WHISPER_MODEL", WHISPER_MODELS[0]), source="WHISPER_MODEL"
             ),
             compute_type=_optional("WHISPER_COMPUTE_TYPE", "int8"),
         )

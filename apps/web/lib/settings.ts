@@ -14,11 +14,15 @@
 /**
  * Модели транскрипции — ровно те, что лежат в образе воркера.
  *
- * `large-v3-turbo` убран: его в кэше нет, и выбор уводил прогон качать веса уже
- * после заливки ролика. Список закреплён тестом вместе с перечнем воркера —
+ * Первый элемент — значение по умолчанию. Parakeet стоит первым по замеру
+ * 18.08.2026: 24,7 секунды на дорожку 161,6 с против 198,1 у whisper large-v3
+ * на том же железе.
+ *
+ * `large-v3-turbo` убран: его в образе нет, и выбор уводил прогон качать веса
+ * уже после заливки ролика. Список закреплён тестом вместе с перечнем воркера —
  * два списка в двух языках расходятся молча.
  */
-export const WHISPER_MODELS = ["large-v3"] as const;
+export const WHISPER_MODELS = ["parakeet-tdt-0.6b-v3", "large-v3"] as const;
 export type WhisperModel = (typeof WHISPER_MODELS)[number];
 
 export const COST_CAP_MODES = ["auto", "hard"] as const;
@@ -181,7 +185,7 @@ export const DEFAULT_REASONING: Reasoning = { thinking: false, effort: "max" };
 export const DEFAULT_SETTINGS: TenantSettings = {
   costCap: "auto",
   costCapValue: 500,
-  whisperModel: "large-v3",
+  whisperModel: "parakeet-tdt-0.6b-v3",
   defaultReplication: 1,
   temperatures: DEFAULT_TEMPERATURES,
   // Пустые строки означают «как задано в окружении сервера». Подставлять сюда

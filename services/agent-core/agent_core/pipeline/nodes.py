@@ -308,7 +308,7 @@ def transcribe(state: PipelineState) -> dict[str, Any]:
     съедали 473 секунды из восьмисот, и гейт #22 (600 с) не выполнялся из-за
     этого, а не из-за разбора кадров.
     """
-    from ..asr.transcribe import transcribe as run
+    run = _asr(state)
 
     segments = run(str(state["audio_ref"]))
     return {
@@ -316,6 +316,35 @@ def transcribe(state: PipelineState) -> dict[str, Any]:
             {"start": s.start, "end": s.end, "text": s.text} for s in segments
         ]
     }
+
+
+
+def _asr(state: PipelineState):
+    """
+    Какой моделью распознавать. Возвращает функцию с сигнатурой whisper.
+
+    Выбор идёт по СНИМКУ настроек прогона, а не по окружению: модель меняется из
+    интерфейса, и прогон обязан исполниться той, что была выбрана на момент
+    запуска. Иначе задача, простоявшая в очереди, распозналась бы одной моделью,
+    а отчёт назвал бы другую.
+
+    Перечень ONNX-моделей закрытый, а не признак в имени: имя видит
+    пользователь, и завязывать на его подстроку выбор кода значит однажды
+    переименовать модель и сломать конвейер.
+    """
+    from ..config import ONNX_MODELS, TranscriptionConfig
+
+    snapshot = state.get("settings_snapshot") or {}
+    name = TranscriptionConfig.for_task(snapshot.get("whisperModel")).whisper_model
+
+    if name in ONNX_MODELS:
+        from ..asr.parakeet import transcribe as run
+
+        return run
+
+    from ..asr.transcribe import transcribe as run
+
+    return run
 
 
 def transcribe_and_diarize(state: PipelineState) -> dict[str, Any]:
@@ -350,7 +379,6 @@ def transcribe_and_diarize(state: PipelineState) -> dict[str, Any]:
 
     from ..asr.diarize import DiarizationUnavailable
     from ..asr.diarize import diarize as run_diarize
-    from ..asr.transcribe import transcribe as run_transcribe
 
     audio = str(state["audio_ref"])
     spans = [(a, b) for a, b in state.get("speech_regions", [])]
@@ -366,7 +394,7 @@ def transcribe_and_diarize(state: PipelineState) -> dict[str, Any]:
             stage_timings[name] = round(time.monotonic() - started, 3)
 
     with ThreadPoolExecutor(max_workers=2, thread_name_prefix="asr") as pool:
-        transcription = pool.submit(timed, "transcribe", lambda: run_transcribe(audio))
+        transcription = pool.submit(timed, "transcribe", lambda: _asr(state)(audio))
         diarization = pool.submit(
             timed, "diarize", lambda: run_diarize(audio, spans=spans or None)
         )

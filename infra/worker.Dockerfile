@@ -75,6 +75,29 @@ sys.stderr.write('opencv: стоит ' + ('opencv-python (GUI)' if gui else 'Н�
   'экстру opencv-headless убрали и pip тихо ставит GUI-сборку.\n') if not ok else None; \
 sys.exit(0 if ok else 1)"
 
+# ─── Веса parakeet в образ ──────────────────────────────────────────────────
+#
+# 671 МБ int8-весов пекутся сюда намеренно. Скачивание модели посреди прогона —
+# ровно тот дефект, который чинился для whisper (пункт 29 списка владельца): он
+# не выглядит нехваткой модели, он выглядит случайно долгой транскрипцией в
+# первый раз и нормальной во второй, то есть чинит себя сам и не воспроизводится,
+# когда за него берутся.
+#
+# Каталог /opt/models, а не кэш HuggingFace на томе: том общий и переживает
+# пересборку, и модель, оказавшаяся там, продолжала бы работать даже после того,
+# как её убрали из образа. Образ обязан быть самодостаточным.
+RUN python -c "\
+from huggingface_hub import snapshot_download; \
+snapshot_download('csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8', \
+                  local_dir='/opt/models/parakeet-tdt-0.6b-v3')" \
+ && rm -rf /opt/models/parakeet-tdt-0.6b-v3/.cache \
+ && python -c "\
+import pathlib, sys; \
+d = pathlib.Path('/opt/models/parakeet-tdt-0.6b-v3'); \
+need = ['encoder.int8.onnx', 'decoder.int8.onnx', 'joiner.int8.onnx', 'tokens.txt']; \
+missing = [n for n in need if not (d / n).exists()]; \
+sys.exit(0 if not missing else sys.stderr.write('нет весов parakeet: ' + str(missing) + chr(10)) or 1)"
+
 COPY services/agent-core/ ./
 COPY packages/shared/ /app/shared/
 COPY prompts/ /app/prompts/
