@@ -130,10 +130,6 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
             видели», потом «сколько», потом «кто что сказал». */}
         <section>
           <h2 className="mb-1 text-sm font-semibold">Материал</h2>
-          <p className="mb-4 text-xs text-slate">
-            То, что видели персоны: описание сцены и реплики на её отрезке. Клик по
-            сцене перематывает ролик
-          </p>
           <Timeline runId={id} />
         </section>
 
@@ -205,7 +201,7 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
             рядом намеренно. Первая считается по retention_intent: он
             категориален, и процента просмотра из него не выводится. Вторая
             приходит из шкального вопроса анкеты, и без него честно пуста. */}
-        <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+        <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
           <StatCard
             label="Общее впечатление"
             value={fmt(view.scores.overall_impression, 1)}
@@ -219,12 +215,12 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
           <StatCard
             label="NPS"
             value={fmt(view.nps, 0)}
-            hint="промоутеры минус критики, шкала −100…+100"
+            hint="промоутеры минус критики"
             rationale={view.rationales.nps}
             tone={view.nps === null ? undefined : view.nps < 0 ? "bad" : view.nps > 30 ? "good" : "warn"}
           />
           <StatCard
-            label="Готовность рекомендовать"
+            label="Готовы рекомендовать"
             value={fmt(view.recommendation, 1)}
             hint="среднее по шкале 1–10"
             tone={
@@ -236,7 +232,6 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
           <StatCard
             label="Досмотрят до конца"
             value={view.retentionRate === null ? "—" : `${view.retentionRate.toFixed(0)}%`}
-            hint="доля намеренных досмотреть"
             tone={view.retentionRate === null ? undefined : view.retentionRate < 70 ? "warn" : "good"}
           />
           <StatCard
@@ -251,7 +246,7 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
             tone={view.watchedShare === null ? undefined : view.watchedShare < 60 ? "warn" : "good"}
           />
           <StatCard
-            label="Эмоциональный индекс"
+            label="Эмоц. индекс"
             value={fmt(view.emotionalIndex, 1)}
             hint="из 10"
             rationale={view.rationales.emotional_index}
@@ -372,10 +367,6 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
             </p>
           ) : (
             <>
-              <p className="mb-4 text-xs text-slate">
-                Показаны группы от {view.minSegmentPersonas} персон: средняя по меньшей
-                группе неотличима на вид от средней по сотне, а держится на нескольких ответах
-              </p>
               {/*
                 Измерения кладутся в две колонки, а не столбиком: «Пол» с двумя
                 значениями занимал целую строку рядом с пустотой, хотя рядом
@@ -387,20 +378,18 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
                 зашитый порядок разъехался бы на первой же анкете с другим
                 срезом.
               */}
-              <div className="grid gap-6 lg:grid-cols-2">
+              {/*
+                Все измерения в один ряд. Раньше стояли две колонки плюс правило
+                «самое длинное измерение занимает обе», и из-за него «Пол» уезжал
+                на второй ряд — читалось это как отдельный, менее важный разрез.
+              */}
+              <div className="grid gap-6 lg:grid-cols-3">
                 {view.segments.map((dim) => (
-                  <div
-                    key={dim.key}
-                    className={
-                      dim.rows.length === Math.max(...view.segments.map((d) => d.rows.length))
-                        ? "lg:col-span-2"
-                        : undefined
-                    }
-                  >
+                  <div key={dim.key}>
                     <h3 className="mb-2 text-xs uppercase tracking-wide text-slate">
                       {dim.label}
                     </h3>
-                    <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                    <div className="grid gap-3 sm:grid-cols-2">
                       {dim.rows.map((row) => (
                         <div
                           key={row.value}

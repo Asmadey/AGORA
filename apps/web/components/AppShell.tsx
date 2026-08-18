@@ -165,7 +165,11 @@ export function PageHeader({
   actions,
   back,
 }: {
-  title: string;
+  /**
+   * Заголовок. Узел, а не строка: на странице проекта в него встроена правка
+   * имени на месте, и вынести её рядом означало бы второй заголовок.
+   */
+  title: React.ReactNode;
   subtitle?: string;
   actions?: React.ReactNode;
   /**
