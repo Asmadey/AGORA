@@ -73,10 +73,11 @@ else:
         """Склеивает ролик из источников lavfi по секундам."""
         inputs: list[str] = []
         for source, secs in segments:
-            # Размер и частота дописываются здесь, а параметры источника —
-            # вызывающим: у lavfi первый разделитель «=», а последующие «:», и
-            # склеивать их в одном месте значит однажды перепутать.
-            inputs += ["-f", "lavfi", "-t", str(secs), "-i", f"{source}=s=320x240:r=25"]
+            # Источник приходит готовой строкой lavfi целиком. Дописывать
+            # размер здесь пробовали: у `testsrc2` параметры начинаются с «=», у
+            # `color=c=red` — уже продолжаются с «:», и одно правило на оба
+            # случая даёт неработающую команду.
+            inputs += ["-f", "lavfi", "-t", str(secs), "-i", source]
         filt = "".join(f"[{i}:v]" for i in range(len(segments)))
         filt += f"concat=n={len(segments)}:v=1:a=0[v]"
         subprocess.run(
@@ -99,7 +100,12 @@ else:
     # Четыре плана, а не два: одна склейка нашлась бы и случайно. По четыре
     # секунды — чтобы ни одна граница не была отброшена правилом MIN_SCENE_SEC.
     cut_video = tmp / "cuts.mp4"
-    build(cut_video, [("testsrc2", 4), ("smptebars", 4), ("rgbtestsrc", 4), ("testsrc", 4)])
+    build(cut_video, [
+        ("testsrc2=s=320x240:r=25", 4),
+        ("smptebars=s=320x240:r=25", 4),
+        ("rgbtestsrc=s=320x240:r=25", 4),
+        ("testsrc=s=320x240:r=25", 4),
+    ])
     scenes = detect_scenes(cut_video)
     starts = [round(s.start_sec, 1) for s in scenes]
 
@@ -115,7 +121,7 @@ else:
 
     # ── Случай 2: непрерывный ролик длиннее потолка ─────────────────────────
     flat_video = tmp / "flat.mp4"
-    build(flat_video, [("color=c=red", int(MAX_SCENE_SEC) + 10)])
+    build(flat_video, [("color=c=red:s=320x240:r=25", int(MAX_SCENE_SEC) + 10)])
     flat = detect_scenes(flat_video)
     longest = max((s.end_sec - s.start_sec for s in flat), default=0.0)
 
@@ -134,7 +140,11 @@ else:
     # материале сцен станет заметно больше: на ролике 3 min.mp4 порог 27 даёт 42
     # сцены, порог 15 — 52.
     flat = tmp / "flat_cuts.mp4"
-    build(flat, [("color=c=red", 4), ("color=c=lime", 4), ("color=c=blue", 4)])
+    build(flat, [
+        ("color=c=red:s=320x240:r=25", 4),
+        ("color=c=lime:s=320x240:r=25", 4),
+        ("color=c=blue:s=320x240:r=25", 4),
+    ])
     flat_starts = [round(s.start_sec, 1) for s in detect_scenes(flat)]
     check(
         CASES[2],
