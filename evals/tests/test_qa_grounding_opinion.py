@@ -115,55 +115,79 @@ elif not os.environ.get("OPENAI_API_KEY"):
 else:
     sys.path.insert(0, str(REPO / "services" / "agent-core"))
     from agent_core.config import ModelConfig
-    from agent_core.qa.judge import QwenJudgeClient
+    from agent_core.qa.judge import QwenJudgeClient, parse_verdict, render
 
-    PACK = {
-        "duration_sec": 42.0,
-        "timeline": [
-            {"time": "0:00–0:20", "scene": "Мужчина у доски рассказывает о запуске стартапа",
-             "lines": [{"text": "Он основал хедж-фонд, и через пять лет под управлением было 14 миллиардов."}]},
-            {"time": "0:20–0:42", "scene": "Экран телефона с рейтингом приложений",
-             "lines": [{"text": "Приложение стало номером один в AppStore в США."}]},
-        ],
-    }
-    TEMPLATE = (
-        "Проверь, что персона ссылается ТОЛЬКО на реально существующие детали.\n"
-        "Материал: {{video_understanding}}\nОтвет персоны: {{persona_answer}}\n"
-        "Верни JSON: {\"grounded\": <bool>, \"hallucinations\": [], "
-        "\"verdict\": \"<ok|regenerate>\", \"confidence\": <0..1>}"
-    )
+    # Промпт берётся ИЗ БАЗЫ, а не пишется здесь: проверять надо тот текст,
+    # по которому пойдёт прогон. Инлайновый шаблон проверил бы сам себя и
+    # прошёл бы даже при неприменённой миграции.
+    template = ""
+    why_no_template = ""
+    try:
+        import psycopg
 
-    judge = QwenJudgeClient(config=ModelConfig.from_env(), temperature=0.0)
+        with psycopg.connect(os.environ["DATABASE_URL"]) as conn:
+            row = conn.execute(
+                "SELECT template FROM prompts "
+                "WHERE key = 'qa.grounding' AND is_default AND tenant_id IS NULL "
+                "ORDER BY version DESC LIMIT 1"
+            ).fetchone()
+        template = row[0] if row else ""
+        if not template:
+            why_no_template = "в базе нет промпта qa.grounding"
+    except Exception as exc:  # noqa: BLE001
+        why_no_template = f"промпт не прочитан из базы ({type(exc).__name__}: {exc})"
 
-    opinion = {
-        "verbatims": {
-            "why_impression": "Цифра в 14 миллиардов выглядит как маркетинг, а не как факт.",
-            "memorable_elements": "Запомнилось, как он стоит у доски и считает деньги.",
-        },
-        "grounding_refs": ["0:00–0:20"],
-    }
-    invented = {
-        "verbatims": {
-            "why_impression": "Зацепила сцена, где он идёт по берегу моря с собакой.",
-            "memorable_elements": "Понравился разговор с матерью на кухне.",
-        },
-        "grounding_refs": ["0:20–0:42"],
-    }
+    if not template:
+        for case in CASES:
+            skip(case, why_no_template)
+    else:
+        PACK = {
+            "duration_sec": 42.0,
+            "timeline": [
+                {"time": "0:00–0:20",
+                 "scene": "Мужчина у доски рассказывает о запуске стартапа",
+                 "lines": [{"text": "Он основал хедж-фонд, и через пять лет под "
+                                    "управлением было 14 миллиардов."}]},
+                {"time": "0:20–0:42",
+                 "scene": "Экран телефона с рейтингом приложений",
+                 "lines": [{"text": "Приложение стало номером один в AppStore в США."}]},
+            ],
+        }
 
-    def verdict_of(answer: dict) -> str:
-        out = judge.judge(template=TEMPLATE, variables={
-            "persona_answer": answer, "video_understanding": PACK,
-        })
-        return str(out.get("verdict") or "")
+        judge = QwenJudgeClient(config=ModelConfig.from_env(), temperature=0.0)
 
-    got = verdict_of(opinion)
-    check(CASES[0], got == "ok",
-          f"мнение забраковано ({got}) — судья по-прежнему требует пересказа транскрипта")
+        opinion = {
+            "verbatims": {
+                "why_impression": "Цифра в 14 миллиардов выглядит как маркетинг, а не как факт.",
+                "memorable_elements": "Запомнилось, как он стоит у доски и считает деньги.",
+            },
+            "grounding_refs": ["0:00–0:20"],
+        }
+        invented = {
+            "verbatims": {
+                "why_impression": "Зацепила сцена, где он идёт по берегу моря с собакой.",
+                "memorable_elements": "Понравился разговор с матерью на кухне.",
+            },
+            "grounding_refs": ["0:20–0:42"],
+        }
 
-    got = verdict_of(invented)
-    check(CASES[1], got == "regenerate",
-          f"выдуманная сцена пропущена ({got}) — граница сдвинута слишком далеко, "
-          f"и проверка превратилась в декорацию")
+        def verdict_of(answer: dict) -> tuple[str, list[str]]:
+            user = render(template, {
+                "persona_answer": answer, "video_understanding": PACK,
+            })
+            raw = judge.complete(system="", user=user, schema_key="qa.grounding")
+            v = parse_verdict(raw)
+            return v.verdict, v.reasons
+
+        got, why = verdict_of(opinion)
+        check(CASES[0], got == "ok",
+              f"мнение забраковано ({got}: {'; '.join(why)[:180]}) — судья "
+              f"по-прежнему требует пересказа транскрипта")
+
+        got, why = verdict_of(invented)
+        check(CASES[1], got == "regenerate",
+              f"выдуманная сцена пропущена ({got}) — граница сдвинута слишком "
+              f"далеко, и проверка превратилась в декорацию")
 
 print()
 n_fail = sum(1 for _, s, _ in results if s == FAIL)
