@@ -1,0 +1,22 @@
+{
+  "CORSRules": [
+    {
+      "AllowedOrigins": [
+        "https://agora.185-154-194-125.sslip.io",
+        "http://localhost:3000"
+      ],
+      "AllowedMethods": [
+        "PUT",
+        "GET",
+        "HEAD"
+      ],
+      "AllowedHeaders": [
+        "*"
+      ],
+      "ExposeHeaders": [
+        "ETag"
+      ],
+      "MaxAgeSeconds": 3000
+    }
+  ]
+}
