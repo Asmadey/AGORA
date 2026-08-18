@@ -94,11 +94,20 @@ export function StatCard({
   label,
   value,
   hint,
+  rationale,
   tone = "default",
 }: {
   label: string;
   value: string;
   hint?: string;
+  /**
+   * Почему число такое — фразой из вербатимов персон.
+   *
+   * Отдельно от `hint`: подпись объясняет ШКАЛУ («из 10», «−100…+100»), а
+   * обоснование — результат. Слив их в одно поле, мы бы получили карточку, где
+   * не разобрать, что здесь свойство метрики, а что вывод по этому материалу.
+   */
+  rationale?: string;
   tone?: "default" | "good" | "warn" | "bad";
 }) {
   const toneClass = {
@@ -113,6 +122,11 @@ export function StatCard({
       <p className="text-xs uppercase tracking-wide text-slate">{label}</p>
       <p className={cn("mt-1.5 text-2xl font-semibold tabular-nums", toneClass)}>{value}</p>
       {hint && <p className="mt-1 text-xs text-slate">{hint}</p>}
+      {rationale && (
+        <p className="mt-2 border-t border-hairline pt-2 text-xs leading-relaxed text-foreground/80">
+          {rationale}
+        </p>
+      )}
     </div>
   );
 }

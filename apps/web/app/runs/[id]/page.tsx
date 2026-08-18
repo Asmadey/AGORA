@@ -148,6 +148,7 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
             label="NPS"
             value={fmt(view.nps, 0)}
             hint="промоутеры минус критики, шкала −100…+100"
+            rationale={view.rationales.nps}
             tone={view.nps === null ? undefined : view.nps < 0 ? "bad" : view.nps > 30 ? "good" : "warn"}
           />
           <StatCard
@@ -174,12 +175,14 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
                 ? "в анкете не было вопроса о доле просмотра"
                 : "средняя доля просмотренного"
             }
+            rationale={view.rationales.watched_share}
             tone={view.watchedShare === null ? undefined : view.watchedShare < 60 ? "warn" : "good"}
           />
           <StatCard
             label="Эмоциональный индекс"
             value={fmt(view.emotionalIndex, 1)}
             hint="из 10"
+            rationale={view.rationales.emotional_index}
           />
           {/* Прочерк, а не ноль: прогоны до появления замеров не знают своей
               длительности, и «0 с» утверждало бы, что обработка была мгновенной. */}

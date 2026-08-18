@@ -44,6 +44,14 @@ export interface ReportView {
   /** Средняя доля просмотренного. null — в анкете не было вопроса о ней. */
   watchedShare: number | null;
   emotionalIndex: number | null;
+  /**
+   * Обоснования под числами: почему NPS такой, почему досмотр такой.
+   *
+   * Пустой словарь означает «модель не отвечала», отсутствие ключа — «по этой
+   * метрике оснований в ответах не нашлось». Оба случая честнее выдуманной
+   * фразы: по выдуманной примут решение.
+   */
+  rationales: Record<string, string>;
   topEmotions: { name: string; pct: number }[];
   sampleSize: number;
   excludedByQa: number;
@@ -327,6 +335,11 @@ export function parseReport(raw: Record<string, unknown>): ReportView {
     retentionRate: num(agg.retention_rate),
     watchedShare: num(agg.watched_share_mean),
     emotionalIndex: num(agg.emotional_index),
+    rationales: Object.fromEntries(
+      Object.entries(obj(raw.rationales)).flatMap(([k, v]) =>
+        typeof v === "string" && v.trim() ? [[k, v.trim()]] : [],
+      ),
+    ),
     topEmotions: (Array.isArray(agg.top_emotions) ? agg.top_emotions : []).flatMap((raw) => {
       const e = obj(raw);
       const name = str(e.name) ?? str(e.emotion);

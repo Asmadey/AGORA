@@ -134,14 +134,28 @@ _SELECT = re.compile(
 # Порядок — по положению в тексте, а не по типу оператора: файлы склеены
 # отсортированными, и последний по счёту оператор для ключа и есть тот, что
 # останется в базе после прогона всех миграций.
+# Четвёртая форма: дописывание к существующему тексту.
+#
+# `SET template = template || '…'` — так добавляют раздел, не переписывая
+# промпт целиком: полная замена в миграции означала бы копию всего текста,
+# которая разъедется с оригиналом при первой же правке соседней строки.
+#
+# Разбирать её обязательно по той же причине, по какой пришлось разбирать
+# INSERT ... SELECT: проверка, не знающая формы записи, молчит там, где текст
+# разошёлся, — и это уже третий раз, когда слепое пятно находится не само.
+_CONCAT = re.compile(
+    r"SET template = template \|\| '(?P<tpl>(?:[^']|'')*)'.*?key = '(?P<key>[a-z._]+)'",
+    re.DOTALL,
+)
+
 _assignments = [
-    (m.start(), m.group("key"), m.group("tpl").replace("''", "'"))
-    for pattern in (_INSERT, _SELECT, _UPDATE)
+    (m.start(), m.group("key"), m.group("tpl").replace("''", "'"), pattern is _CONCAT)
+    for pattern in (_INSERT, _SELECT, _UPDATE, _CONCAT)
     for m in pattern.finditer(seed_text)
 ]
-latest_template: dict[str, str] = {
-    key: tpl for _, key, tpl in sorted(_assignments, key=lambda a: a[0])
-}
+latest_template: dict[str, str] = {}
+for _, key, tpl, appends in sorted(_assignments, key=lambda a: a[0]):
+    latest_template[key] = (latest_template.get(key, "") + tpl) if appends else tpl
 
 check(
     "все миграции промптов попадают под маску засевов",
