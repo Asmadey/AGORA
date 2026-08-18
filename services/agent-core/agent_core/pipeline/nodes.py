@@ -200,7 +200,64 @@ def probe_and_normalize(state: PipelineState) -> dict[str, Any]:
     info = probe(src)
     proxy = workdir(state) / "proxy.mp4"
     make_proxy(src, proxy)
-    return {"proxy_ref": str(proxy), "duration_sec": info.duration_sec}
+
+    update: dict[str, Any] = {"proxy_ref": str(proxy), "duration_sec": info.duration_sec}
+    degraded = _build_playback(state, src)
+    if degraded:
+        update["degraded"] = degraded
+    return update
+
+
+def _build_playback(state: PipelineState, src: Path) -> list[str]:
+    """
+    Собирает копию ролика для просмотра и выгружает её в S3.
+
+    Отказ не роняет прогон: плеер в этом случае возьмёт исходник, как и до
+    появления копии. Ронять разбор материала из-за того, что видео будет хуже
+    перематываться, — обмен не в ту сторону.
+
+    Считается здесь, а не отдельной задачей Celery: шаг занимает около минуты на
+    трёхминутном ролике (замер 18.08.2026), и вынос его в отдельную задачу дал
+    бы вторую очередь, второй набор состояний и второй способ «зависнуть» ради
+    экономии, которой нет — конвейер всё равно ждёт разбор кадров.
+    """
+    from ..media.playback import make_playback
+
+    degraded: list[str] = []
+    try:
+        dst = workdir(state) / "playback.mp4"
+        make_playback(src, dst)
+
+        from ..storage import Boto3S3
+
+        key = f"playback/{state['tenant_id']}/{state['task_id']}.mp4"
+        Boto3S3().upload(dst, key, "video/mp4")
+    except Exception as exc:  # noqa: BLE001
+        return [
+            f"копия для просмотра не собрана ({type(exc).__name__}: {exc}); "
+            f"плеер возьмёт исходник"
+        ]
+
+    dsn = os.environ.get("DATABASE_URL")
+    if not dsn:
+        return ["копия для просмотра собрана, но ключ не записан: нет DATABASE_URL"]
+
+    try:
+        import psycopg
+
+        from ..db import tenant_scope
+
+        with psycopg.connect(dsn) as conn, tenant_scope(conn, state["tenant_id"]) as cur:
+            cur.execute(
+                "UPDATE tasks SET playback_ref = %s WHERE id = %s::uuid",
+                (key, str(state["task_id"])),
+            )
+    except Exception as exc:  # noqa: BLE001
+        degraded.append(
+            f"копия для просмотра выгружена, но ключ не записан "
+            f"({type(exc).__name__}: {exc}); плеер возьмёт исходник"
+        )
+    return degraded
 
 
 def extract_audio(state: PipelineState) -> dict[str, Any]:

@@ -33,11 +33,20 @@ export async function GET(
     // что чужой прогон сюда не попадёт. Отсутствие строки и чужая строка
     // неотличимы — так и должно быть.
     const videoRef = await withTenant(tenantId, async (client) => {
-      const { rows } = await client.query<{ video_ref: string | null }>(
-        "SELECT video_ref FROM tasks WHERE id = $1",
+      const { rows } = await client.query<{
+        video_ref: string | null;
+        playback_ref: string | null;
+      }>(
+        "SELECT video_ref, playback_ref FROM tasks WHERE id = $1",
         [id],
       );
-      return rows[0]?.video_ref ?? null;
+      // Копия для просмотра главнее исходника: она H.264 720p с индексом в
+      // начале файла, то есть играет в любом браузере и перематывается сразу.
+      // Исходник может оказаться в HEVC — Chrome покажет чёрный прямоугольник, —
+      // а его moov обычно лежит в конце, и прыжок на вторую минуту означает
+      // скачать весь файл. Исходник остаётся доступен отдельной ссылкой в
+      // «Материалах»: там он нужен именно как исходник.
+      return rows[0]?.playback_ref ?? rows[0]?.video_ref ?? null;
     });
 
     const timeline = await loadTimeline({ tenantId, userId }, id);
