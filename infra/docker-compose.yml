@@ -202,8 +202,10 @@ services:
       LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:-}
       LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY:-}
       LANGFUSE_BASE_URL: ${LANGFUSE_BASE_URL:-}
-      # Разделяет трассы боевого сервера и локальных прогонов в одном проекте.
-      LANGFUSE_ENVIRONMENT: ${LANGFUSE_ENVIRONMENT:-production}
+      # Разделяет трассы боевого сервера и локальных прогонов в одном
+      # проекте. Имя переменной — то, что читает сам SDK: своё завести
+      # значило бы иметь два источника правды и разойтись с документацией.
+      LANGFUSE_TRACING_ENVIRONMENT: ${LANGFUSE_TRACING_ENVIRONMENT:-production}
     volumes:
       # Кэш весов Whisper/pyannote между перезапусками — модели тяжёлые,
       # качать их заново на каждый up слишком дорого. Путь в домашнем каталоге

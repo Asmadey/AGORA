@@ -292,41 +292,113 @@ def test_node_failure_still_closes_the_span(monkeypatch):
 # арендатор — в `user_id`, потому что именно по ним фильтрует интерфейс
 # LangFuse и считается стоимость.
 
+class _FakeSpan:
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+
+class _FakeClient:
+    """
+    Заглушка клиента LangFuse.
+
+    Её метод обязан существовать у настоящего клиента — за этим следит
+    `test_fake_client_matches_the_real_sdk` ниже, и это не педантизм. Первая
+    редакция этой заглушки повторяла API третьей версии SDK, ровно как и
+    проверяемый код: тест был зелёным, а на первом настоящем вызове пришло
+    `'Langfuse' object has no attribute 'start_as_current_span'`.
+
+    Заглушка, написанная по тем же представлениям, что и код, проверяет
+    представления, а не код.
+    """
+
+    def __init__(self) -> None:
+        self.seen: dict[str, object] = {}
+
+    def start_as_current_observation(self, **kwargs):
+        self.seen["span_name"] = kwargs.get("name")
+        self.seen["as_type"] = kwargs.get("as_type")
+        return _FakeSpan()
+
+    def flush(self):
+        self.seen["flushed"] = True
+
+
+def test_fake_client_matches_the_real_sdk():
+    from langfuse import Langfuse
+
+    for name in ("start_as_current_observation", "flush"):
+        assert hasattr(Langfuse, name), (
+            f"заглушка тестов реализует {name}, которого у настоящего клиента "
+            f"нет: тесты проверяют вымышленный SDK"
+        )
+
+
 def test_run_binds_task_and_tenant_to_the_trace(with_keys, monkeypatch):
-    seen: dict[str, object] = {}
+    fake = _FakeClient()
+    monkeypatch.setattr(tracing, "client", lambda: fake)
 
-    class _Span:
-        def update_trace(self, **kwargs):
-            seen.update(kwargs)
+    propagated: dict[str, object] = {}
 
-        def __enter__(self):
-            return self
+    import contextlib as _ctx
 
-        def __exit__(self, *exc):
-            return False
+    @_ctx.contextmanager
+    def fake_propagate(**kwargs):
+        propagated.update(kwargs)
+        yield
 
-    class _Client:
-        def start_as_current_span(self, **kwargs):
-            seen["span_name"] = kwargs.get("name")
-            return _Span()
+    import langfuse
 
-        def flush(self):
-            seen["flushed"] = True
+    monkeypatch.setattr(langfuse, "propagate_attributes", fake_propagate)
 
-    monkeypatch.setattr(tracing, "client", lambda: _Client())
-
-    with tracing.run(task_id="0050", tenant_id="de15d1e3"):
+    with tracing.run(task_id="0050", tenant_id="de15d1e3", mode="short"):
         pass
 
-    assert seen.get("session_id") == "0050", (
+    assert propagated.get("session_id") == "0050", (
         "прогон не помечен идентификатором задачи: вызовы одного ролика "
         "рассыплются по несвязанным трассам"
     )
-    assert seen.get("user_id") == "de15d1e3"
-    assert seen.get("flushed"), (
+    assert propagated.get("user_id") == "de15d1e3"
+    assert "tenant:de15d1e3" in (propagated.get("tags") or [])
+    assert fake.seen.get("as_type") == "span"
+    assert fake.seen.get("flushed"), (
         "трасса не отправлена: воркер живёт долго, и накопленное дождётся "
         "выхода процесса, то есть не появится тогда, когда его смотрят"
     )
+
+
+def test_propagated_metadata_is_strings_within_the_limit(with_keys, monkeypatch):
+    """
+    SDK v4 принимает в propagate_attributes только dict[str, str] со значением
+    до 200 символов; длиннее — отбрасывает с предупреждением, то есть молча для
+    того, кто смотрит трассу.
+    """
+    monkeypatch.setattr(tracing, "client", lambda: _FakeClient())
+
+    propagated: dict[str, object] = {}
+
+    import contextlib as _ctx
+
+    @_ctx.contextmanager
+    def fake_propagate(**kwargs):
+        propagated.update(kwargs)
+        yield
+
+    import langfuse
+
+    monkeypatch.setattr(langfuse, "propagate_attributes", fake_propagate)
+
+    with tracing.run(
+        task_id="0050", tenant_id="t", personas=20, note="я" * 500
+    ):
+        pass
+
+    metadata = propagated["metadata"]
+    assert all(isinstance(v, str) for v in metadata.values()), metadata
+    assert all(len(v) <= 200 for v in metadata.values())
+    assert metadata["personas"] == "20"
 
 
 def test_run_pipeline_opens_the_root_span(monkeypatch):
@@ -356,3 +428,63 @@ def test_run_pipeline_opens_the_root_span(monkeypatch):
         "run_pipeline не открывает корневой спан: спаны узлов останутся без "
         "родителя, и прогон нельзя будет собрать обратно"
     )
+
+
+# ─── 7. Маска покрывает содержимое вызовов модели ────────────────────────────
+#
+# Легаси-хук `mask` видит только то, что положено через API самого LangFuse.
+# Промпты и ответы кладёт интеграция OpenAI своими атрибутами `gen_ai.*` — мимо
+# него. Маска, поставленная туда, выглядит работающей и не закрывает ровно то
+# место, ради которого ставилась.
+
+def _otel_span(attributes: dict):
+    """Снимок спана в том виде, в каком его отдаёт SDK на экспорт."""
+    from langfuse.types import OtelSpanData
+
+    return OtelSpanData(
+        trace_id="t",
+        span_id="s",
+        parent_span_id=None,
+        name="OpenAI-generation",
+        instrumentation_scope_name="openai",
+        instrumentation_scope_version=None,
+        attributes=attributes,
+        resource_attributes={},
+    )
+
+
+def test_export_hook_masks_generation_attributes():
+    from langfuse.types import MaskOtelSpansParams, OtelSpanIdentifier
+
+    identifier = OtelSpanIdentifier(trace_id="t", span_id="s")
+    span = _otel_span(
+        {
+            "gen_ai.prompt.0.content": f"используй ключ {_FAKE_API_KEY}",
+            "gen_ai.completion.0.content": "Париж",
+            "gen_ai.usage.input_tokens": 12,
+        }
+    )
+
+    result = tracing.mask_otel_spans(
+        params=MaskOtelSpansParams(spans={identifier: span})
+    )
+
+    assert result is not None, "хук ничего не поправил, хотя ключ в атрибуте есть"
+    patched = result.span_patches[identifier].set_attributes
+    assert _FAKE_API_KEY not in patched["gen_ai.prompt.0.content"]
+    assert "gen_ai.completion.0.content" not in patched, (
+        "правка должна быть точечной: атрибуты, которых маска не касалась, "
+        "переписывать незачем"
+    )
+
+
+def test_export_hook_leaves_clean_batches_alone():
+    from langfuse.types import MaskOtelSpansParams, OtelSpanIdentifier
+
+    span = _otel_span({"gen_ai.completion.0.content": "ролик показался затянутым"})
+    result = tracing.mask_otel_spans(
+        params=MaskOtelSpansParams(
+            spans={OtelSpanIdentifier(trace_id="t", span_id="s"): span}
+        )
+    )
+    assert result is None, "пачка без учётных данных обязана уйти нетронутой"

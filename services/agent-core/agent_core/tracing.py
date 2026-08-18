@@ -70,8 +70,8 @@ MASKED = "[скрыто]"
 
 def mask(*, data: Any) -> Any:
     """
-    Замена учётных данных на заглушку. Сигнатура с именованным `data` — та, что
-    вызывает SDK; менять её нельзя, даже если она выглядит странно.
+    Замена учётных данных на заглушку. Рекурсивно по строкам, спискам и
+    словарям.
     """
     if isinstance(data, str):
         out = data
@@ -83,6 +83,37 @@ def mask(*, data: Any) -> Any:
     if isinstance(data, (list, tuple)):
         return type(data)(mask(data=v) for v in data)
     return data
+
+
+def mask_otel_spans(*, params: Any) -> Any:
+    """
+    Маска на стадии экспорта — единственная, которая покрывает всё.
+
+    Легаси-хук `mask` видит только то, что положено через API самого LangFuse:
+    имена спанов, их метаданные, `set_trace_io`. Содержимое вызова модели он НЕ
+    видит — промпты и ответы кладёт интеграция OpenAI своими атрибутами
+    `gen_ai.*`, мимо этого хука. То есть маска, поставленная на `mask`,
+    выглядит работающей и не закрывает ровно то место, ради которого ставилась.
+
+    Хук получает пачку спанов на экспорт и возвращает точечные правки. Правится
+    только то, что изменилось: возвращать всю пачку значит переписывать
+    атрибуты, которых не касался.
+    """
+    from langfuse.types import MaskOtelSpansResult, OtelSpanPatch
+
+    patches: dict[Any, Any] = {}
+    for identifier, span in params.spans.items():
+        changed: dict[str, Any] = {}
+        for key, value in span.attributes.items():
+            if not isinstance(value, str):
+                continue
+            masked = mask(data=value)
+            if masked != value:
+                changed[key] = masked
+        if changed:
+            patches[identifier] = OtelSpanPatch(set_attributes=changed)
+
+    return MaskOtelSpansResult(span_patches=patches) if patches else None
 
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -122,8 +153,9 @@ def client() -> Any:
         host=os.environ[BASE_URL],
         # Маска ставится на клиенте, а не на каждом вызове: пропущенный вызов
         # означал бы ключ в трассе, а это не та ошибка, которую ловят ревью.
-        mask=mask,
-        environment=os.environ.get("LANGFUSE_ENVIRONMENT", "production"),
+        # Именно `mask_otel_spans`, а не легаси-`mask`: второй не видит
+        # содержимого вызовов модели — см. комментарий у самой функции.
+        mask_otel_spans=mask_otel_spans,
     )
     return _client
 
@@ -174,27 +206,44 @@ def run(task_id: str, tenant_id: str, **attrs: Any):
     разрозненные вызовы в одно наблюдаемое событие, а прогон исследования и
     есть такое событие. `user_id` — арендатор: он же в фильтрах и в разбивке
     стоимости, а настоящего пользователя внутри воркера нет.
+
+    ─── Почему `propagate_attributes`, а не `update_trace` ───────────────────
+    В SDK четвёртой версии модель данных «наблюдение прежде трассы»:
+    `session_id`, `user_id`, теги и метаданные живут на КАЖДОМ наблюдении, а не
+    только на трассе, — это позволяет фильтровать без соединения таблиц.
+    Прежний `span.update_trace(...)` в v4 отсутствует; я написал его по памяти
+    о v3, и падение пришло не при сборке, а на первом настоящем вызове.
     """
     lf = client()
     if lf is None:
         yield None
         return
 
-    with lf.start_as_current_span(name="pipeline") as span:
-        span.update_trace(
-            name=f"прогон {task_id}",
-            session_id=task_id,
-            user_id=tenant_id,
-            tags=[f"tenant:{tenant_id}", *(attrs.pop("tags", []) or [])],
-            metadata={"task_id": task_id, "tenant_id": tenant_id, **attrs},
-        )
-        try:
-            yield span
-        finally:
-            # Отправка здесь, а не в конце процесса: воркер живёт долго, и
-            # трасса, ждущая выхода процесса, не появится вовсе — а нужна она
-            # ровно тогда, когда прогон только что кончился.
-            lf.flush()
+    from langfuse import propagate_attributes
+
+    tags = [f"tenant:{tenant_id}", *(attrs.pop("tags", None) or [])]
+    # Метаданные propagate_attributes — строго dict[str, str] со значением не
+    # длиннее 200 символов: длиннее SDK отбрасывает с предупреждением, то есть
+    # молча для того, кто смотрит трассу.
+    metadata = {k: str(v)[:200] for k, v in attrs.items() if v is not None}
+    metadata["task_id"] = task_id
+    metadata["tenant_id"] = tenant_id
+
+    try:
+        with lf.start_as_current_observation(as_type="span", name="pipeline") as span:
+            with propagate_attributes(
+                trace_name=f"прогон {task_id}",
+                session_id=task_id,
+                user_id=tenant_id,
+                tags=tags,
+                metadata=metadata,
+            ):
+                yield span
+    finally:
+        # Отправка здесь, а не в конце процесса: воркер живёт долго, и трасса,
+        # ждущая выхода процесса, не появится вовсе — а нужна она ровно тогда,
+        # когда прогон только что кончился.
+        lf.flush()
 
 
 @contextlib.contextmanager
@@ -214,7 +263,9 @@ def stage(name: str, task_id: str = "", tenant_id: str = "", **attrs: Any):
     if tenant_id:
         metadata["tenant_id"] = tenant_id
 
-    with lf.start_as_current_span(name=name, metadata=metadata or None) as span:
+    with lf.start_as_current_observation(
+        as_type="span", name=name, metadata=metadata or None
+    ) as span:
         yield span
 
 
