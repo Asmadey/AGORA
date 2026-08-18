@@ -92,6 +92,10 @@ export default function NewStudyPage() {
         body: JSON.stringify({
           mode,
           videoRef,
+          // Имя файла — для показа в списке. Ключ S3 из него не собирается:
+          // пользовательские имена содержат пробелы, кириллицу и повторяются, а
+          // ключ обязан быть уникальным. Поэтому имя едет отдельным полем.
+          sourceName: videoName,
           projectId,
           personaSetId,
           replicationCount: replication,

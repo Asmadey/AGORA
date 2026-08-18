@@ -7,6 +7,7 @@ import { DeleteRunButton } from "@/components/agora/DeleteRunButton";
 import { withTenant } from "@/lib/server/db";
 import { requireSession } from "@/lib/server/guard";
 import { listTasks, taskNumber } from "@/lib/server/tasks";
+import { safePresign } from "@/lib/server/content-pack";
 
 /**
  * Список прогонов (PRD §5.E).
@@ -66,6 +67,13 @@ function ago(iso: string): string {
 export default async function RunsPage() {
   const { tenantId } = await requireSession();
   const tasks = await withTenant(tenantId, listTasks);
+  // Подписи живут час и потому считаются на каждый показ, а не хранятся.
+  const posters = Object.fromEntries(
+    tasks.flatMap((t) => {
+      const url = t.posterRef ? safePresign(t.posterRef) : null;
+      return url ? [[t.id, url] as const] : [];
+    }),
+  );
 
   return (
     <>
@@ -93,6 +101,22 @@ export default async function RunsPage() {
                   href={href}
                   className="group relative flex items-center gap-6 rounded-xl border border-hairline bg-card p-5 pr-14 transition-colors hover:border-hairline-strong"
                 >
+                  {/*
+                    Заставка слева, до всего текста. Ключ лежит в самой задаче
+                    (`tasks.poster_ref`), а не достаётся из пакета в Mongo: сто
+                    прогонов означали бы сто запросов ради картинки в углу.
+                  */}
+                  {posters[task.id] ? (
+                    /* eslint-disable-next-line @next/next/no-img-element */
+                    <img
+                      src={posters[task.id]!}
+                      alt=""
+                      className="h-16 w-28 shrink-0 rounded-md object-cover"
+                    />
+                  ) : (
+                    <span className="h-16 w-28 shrink-0 rounded-md bg-secondary" />
+                  )}
+
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
                       {taskNumber(task.seqNo) && (
@@ -100,8 +124,13 @@ export default async function RunsPage() {
                           {taskNumber(task.seqNo)}
                         </span>
                       )}
+                      {/*
+                        Имя файла, как его назвал человек. Раньше здесь стоял
+                        ключ S3 — узнать в нём свой ролик нельзя, а именно по
+                        нему исследование и ищут глазами.
+                      */}
                       <h2 className="truncate font-medium">
-                        {task.videoRef ?? "Прогон без материала"}
+                        {task.sourceName ?? task.videoRef ?? "Прогон без материала"}
                       </h2>
                       <StatusBadge status={task.status} />
                     </div>

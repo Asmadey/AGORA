@@ -22,6 +22,7 @@ export const runtime = "nodejs";
 interface LaunchBody {
   mode?: unknown;
   videoRef?: unknown;
+  sourceName?: unknown;
   personaSetId?: unknown;
   surveyId?: unknown;
   projectId?: unknown;
@@ -58,6 +59,9 @@ export async function POST(request: Request) {
 
     if (body.videoRef !== undefined && typeof body.videoRef !== "string") {
       errors.push("videoRef: строка либо отсутствует");
+    }
+    if (body.sourceName !== undefined && typeof body.sourceName !== "string") {
+      errors.push("sourceName: строка либо отсутствует");
     }
 
     // seed обязателен: без него идемпотентность бессмысленна — каждый запуск
@@ -110,6 +114,7 @@ export async function POST(request: Request) {
       const params: LaunchParams = {
         mode: mode as "short" | "long",
         videoRef: optionalId(body.videoRef),
+        sourceName: typeof body.sourceName === "string" ? body.sourceName.slice(0, 300) : null,
         personaSetId: optionalId(body.personaSetId),
         surveyId: optionalId(body.surveyId),
         projectId: optionalId(body.projectId),

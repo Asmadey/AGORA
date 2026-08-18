@@ -662,7 +662,35 @@ def _publish_frames(state: PipelineState, scenes: list[dict[str, Any]]) -> list[
 
     if failures:
         degraded.append(f"кадры сцен выгружены не полностью: отказов {failures} из {len(scenes)}")
+
+    # Первый выгруженный кадр — заставка прогона. Записывается сюда, а не
+    # достаётся потом из пакета в Mongo: список исследований показывает по
+    # картинке на карточку, и сто прогонов означали бы сто запросов к Mongo ради
+    # угла карточки. Ключ уже известен, стоит он один UPDATE.
+    poster = next((s.get("screenshot") for s in scenes if s.get("screenshot")), None)
+    if poster:
+        degraded.extend(_save_poster(state, str(poster)))
     return degraded
+
+
+def _save_poster(state: PipelineState, key: str) -> list[str]:
+    """Кладёт ключ заставки в задачу. Отказ не роняет прогон — карточка обойдётся."""
+    dsn = os.environ.get("DATABASE_URL")
+    if not dsn:
+        return []
+    try:
+        import psycopg
+
+        from ..db import tenant_scope
+
+        with psycopg.connect(dsn) as conn, tenant_scope(conn, state["tenant_id"]) as cur:
+            cur.execute(
+                "UPDATE tasks SET poster_ref = %s WHERE id = %s::uuid",
+                (key, str(state["task_id"])),
+            )
+    except Exception as exc:  # noqa: BLE001
+        return [f"заставка не записана ({type(exc).__name__}: {exc}); карточка будет без картинки"]
+    return []
 
 
 def stitch(state: PipelineState) -> dict[str, Any]:
