@@ -85,8 +85,8 @@ export function Timeline({ runId }: { runId: string }) {
       панель, где список — продолжение плеера. Скругление 5px намеренно мельче
       карточек отчёта (8px): это рабочая поверхность, а не карточка с выводом.
     */
-    <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,22rem)]">
-      <div className="space-y-3 rounded-[5px] bg-secondary/50 p-3">
+    <div className="grid gap-4 lg:grid-cols-[auto_minmax(0,1fr)]">
+      <div className="mx-auto w-fit space-y-3 rounded-[5px] bg-secondary/50 p-3 lg:mx-0">
         {data.video ? (
           /*
             Высота ограничена, ширина подстраивается — ролики бывают и 16:9, и
@@ -127,16 +127,29 @@ export function Timeline({ runId }: { runId: string }) {
         </dl>
       </div>
 
-      <ol className="max-h-[600px] space-y-1 overflow-y-auto rounded-[5px] bg-secondary/50 p-3">
-        {cells.map((cell, index) => (
-          <Cell
-            key={`${cell.start}-${index}`}
-            cell={cell}
-            active={currentSec >= cell.start && currentSec < cell.end}
-            onSeek={() => seek(cell.start)}
-          />
-        ))}
-      </ol>
+      {/*
+        Одна прокрутка на обе части, а не две колонки со своими полосами.
+        Раздельная прокрутка разъезжается на первом же движении колеса: слева
+        сцена 1:20, справа речь из 0:30, и подсветка «обеих частей» показывает
+        два места, которые ничего общего не имеют. Строка держит их рядом по
+        построению.
+      */}
+      <div className="max-h-[600px] overflow-y-auto rounded-[5px] bg-secondary/50 p-3">
+        <div className="mb-2 grid grid-cols-[minmax(0,7fr)_minmax(0,9fr)] gap-3 px-2 text-[11px] uppercase tracking-wide text-slate">
+          <span>Сцена</span>
+          <span>Речь</span>
+        </div>
+        <ol className="space-y-1">
+          {cells.map((cell, index) => (
+            <Cell
+              key={`${cell.start}-${index}`}
+              cell={cell}
+              active={currentSec >= cell.start && currentSec < cell.end}
+              onSeek={() => seek(cell.start)}
+            />
+          ))}
+        </ol>
+      </div>
     </div>
   );
 }
@@ -155,53 +168,61 @@ function Cell({
       <button
         type="button"
         onClick={onSeek}
-        className={`flex w-full gap-3 rounded-md border p-2 text-left transition-colors ${
+        className={`grid w-full grid-cols-[minmax(0,7fr)_minmax(0,9fr)] gap-3 rounded-md border p-2 text-left transition-colors ${
           active
             ? "border-brand-blue bg-surface-yellow"
             : "border-transparent hover:border-hairline hover:bg-secondary"
         }`}
       >
-        {cell.screenshot ? (
-          // Подписанная ссылка на S3 живёт час; next/image кеширует её на своей
-          // стороне и отдавал бы протухшую после истечения подписи. Кадр здесь
-          // 512 пикселей по ширине и рисуется в 80 — оптимизировать нечего.
-          /* eslint-disable-next-line @next/next/no-img-element */
-          <img
-            src={cell.screenshot}
-            alt=""
-            className="h-12 w-20 shrink-0 rounded object-cover"
-          />
-        ) : (
-          <span className="h-12 w-20 shrink-0 rounded bg-secondary" />
-        )}
-        <span className="min-w-0 flex-1">
-          <span className="flex items-center gap-2 text-xs tabular-nums text-slate">
-            {formatTime(cell.start)}–{formatTime(cell.end)}
-            {/* Смена сцены — только от монтажа. Разрез длинной сцены на блоки
-                границей не считается: иначе экран показывал бы монтаж, которого
-                в материале нет. */}
-            {cell.isCut && <span className="text-[10px] uppercase">склейка</span>}
+        {/* Левая часть: обложка, таймкод, описание кадра. */}
+        <span className="flex min-w-0 gap-3">
+          {cell.screenshot ? (
+            // Подписанная ссылка на S3 живёт час; next/image кеширует её на своей
+            // стороне и отдавал бы протухшую после истечения подписи. Кадр здесь
+            // 512 пикселей по ширине и рисуется в 80 — оптимизировать нечего.
+            /* eslint-disable-next-line @next/next/no-img-element */
+            <img
+              src={cell.screenshot}
+              alt=""
+              className="h-12 w-20 shrink-0 rounded object-cover"
+            />
+          ) : (
+            <span className="h-12 w-20 shrink-0 rounded bg-secondary" />
+          )}
+          <span className="min-w-0 flex-1">
+            <span className="flex items-center gap-2 text-xs tabular-nums text-slate">
+              {formatTime(cell.start)}–{formatTime(cell.end)}
+              {/* Смена сцены — только от монтажа. Разрез длинной сцены на блоки
+                  границей не считается: иначе экран показывал бы монтаж, которого
+                  в материале нет. */}
+              {cell.isCut && <span className="text-[10px] uppercase">склейка</span>}
+            </span>
+            <span className="mt-0.5 block line-clamp-3 text-sm">
+              {cell.scene ?? "до первой сцены"}
+            </span>
           </span>
-          <span className="mt-0.5 block line-clamp-2 text-sm">
-            {cell.scene ?? "до первой сцены"}
-          </span>
-          {/*
-            Все реплики отрезка, а не первая: `truncate` на одной строке
-            показывал начало первой фразы и обрывал его на полуслове, из-за чего
-            по карточке нельзя было понять, о чём говорили. Ровно эту речь видит
-            персона, и ровно с ней QA сверяет её ответы, — читатель отчёта
-            обязан видеть то же самое. Потолок в пять строк удерживает список
-            прокручиваемым: без него сцена на тридцать секунд занимала бы экран.
-          */}
-          {cell.lines.length > 0 && (
-            <span className="mt-1 block line-clamp-5 text-xs leading-relaxed text-slate">
+        </span>
+
+        {/*
+          Правая часть: речь по репликам. Каждая — своей строкой с отступом, а не
+          сплошным абзацем: слитный текст двух спикеров читается как монолог, и
+          по нему нельзя понять, кто кому отвечает. Ровно эту речь видит персона,
+          и ровно с ней QA сверяет её ответы.
+        */}
+        <span className="min-w-0 border-l border-hairline pl-3">
+          {cell.lines.length > 0 ? (
+            <span className="block max-h-24 space-y-1 overflow-hidden text-xs leading-relaxed">
               {cell.lines.map((line, i) => (
-                <span key={`${line.start}-${i}`}>
-                  {line.speaker ? <strong className="font-medium">{line.speaker}: </strong> : null}
-                  {line.text}{" "}
+                <span key={`${line.start}-${i}`} className="block pl-2 -indent-2">
+                  {line.speaker ? (
+                    <strong className="font-medium text-foreground">{line.speaker}: </strong>
+                  ) : null}
+                  <span className="text-slate">{line.text}</span>
                 </span>
               ))}
             </span>
+          ) : (
+            <span className="block text-xs text-slate">— тишина</span>
           )}
         </span>
       </button>
