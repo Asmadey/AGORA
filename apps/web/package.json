@@ -9,7 +9,7 @@
     "lint": "eslint .",
     "clean": "next clean",
     "typecheck": "tsc --noEmit",
-    "test": "node --test 'lib/**/*.test.ts'"
+    "test": "node --conditions=react-server --test 'lib/**/*.test.ts'"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.2.1",
