@@ -125,12 +125,22 @@ else:
     try:
         import psycopg
 
-        with psycopg.connect(os.environ["DATABASE_URL"]) as conn:
-            row = conn.execute(
+        from agent_core.db import tenant_scope
+
+        # Через tenant_scope, а не голым запросом: agora_login объявлен
+        # NOINHERIT, и без SET LOCAL ROLE запрос падает «permission denied for
+        # table prompts» — ровно то, ради чего роль такой и сделана
+        # (CLAUDE.md §5). Идентификатор арендатора здесь любой: промпты по
+        # умолчанию лежат с tenant_id IS NULL.
+        tenant = os.environ.get("E2E_TENANT_ID") or "00000000-0000-0000-0000-000000000000"
+        with psycopg.connect(os.environ["DATABASE_URL"]) as conn, \
+                tenant_scope(conn, tenant) as cur:
+            cur.execute(
                 "SELECT template FROM prompts "
                 "WHERE key = 'qa.grounding' AND is_default AND tenant_id IS NULL "
                 "ORDER BY version DESC LIMIT 1"
-            ).fetchone()
+            )
+            row = cur.fetchone()
         template = row[0] if row else ""
         if not template:
             why_no_template = "в базе нет промпта qa.grounding"
