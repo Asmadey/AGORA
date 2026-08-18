@@ -71,6 +71,7 @@ def transcribe(
     audio: str | Path,
     language: str | None = None,
     vad: bool = True,
+    model: str | None = None,
 ) -> list[Segment]:
     """
     Речь в текст с таймкодами.
@@ -84,10 +85,16 @@ def transcribe(
     работает с русским контентом, но фикстуры и часть роликов англоязычные, а
     неверно заданный язык даёт не ошибку, а правдоподобный бессмысленный текст.
     """
-    name, compute_type = _settings()
-    model = _model(name, compute_type)
+    # Имя модели приходит ПАРАМЕТРОМ, а окружение остаётся только умолчанием.
+    #
+    # Раньше оно читалось здесь из os.environ, и снимок настроек прогона не
+    # доезжал сюда никак: владелец выбирал модель в интерфейсе, выбор
+    # сохранялся, прогон шёл — и считала всё равно модель из compose. Заметить
+    # это было неоткуда, отличается только текст, а сравнить не с чем.
+    default_name, compute_type = _settings()
+    engine = _model(model or default_name, compute_type)
 
-    segments, _info = model.transcribe(
+    segments, _info = engine.transcribe(
         str(audio),
         language=language,
         vad_filter=vad,

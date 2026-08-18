@@ -31,6 +31,7 @@ from __future__ import annotations
 import json
 import os
 import time
+from functools import partial
 from pathlib import Path
 from typing import Any
 
@@ -337,14 +338,27 @@ def _asr(state: PipelineState):
     snapshot = state.get("settings_snapshot") or {}
     name = TranscriptionConfig.for_task(snapshot.get("whisperModel")).whisper_model
 
-    if name in ONNX_MODELS:
-        from ..asr.parakeet import transcribe as run
+    import importlib
 
-        return run
+    # Модуль берётся по имени, а не через `from ..asr import transcribe`: в
+    # `asr/__init__.py` стоит ре-экспорт `from .transcribe import transcribe`, и
+    # это имя перекрывает одноимённый подмодуль. Импорт «как обычно» дал бы
+    # функцию вместо модуля — и молча, потому что вызвать можно и то, и другое.
+    module = importlib.import_module(
+        "agent_core.asr.parakeet" if name in ONNX_MODELS else "agent_core.asr.transcribe"
+    )
+    return partial(_call, module, name)
 
-    from ..asr.transcribe import transcribe as run
 
-    return run
+def _call(module: Any, model: str, audio: Any) -> Any:
+    """
+    Зовёт распознаватель модуля, передавая ИМЯ МОДЕЛИ.
+
+    Через модуль, а не через прямой импорт функции: тесты подменяют
+    `module.transcribe`, и импортированная заранее ссылка мимо подмены прошла бы
+    — заглушка стоит, а вызывается настоящий движок.
+    """
+    return module.transcribe(audio, model=model)
 
 
 def transcribe_and_diarize(state: PipelineState) -> dict[str, Any]:

@@ -15,6 +15,8 @@ import {
   REPLICATION_VALUES,
   TEMPERATURE_BOUNDS,
   TEMPERATURE_STAGES,
+  WHISPER_LABELS,
+  WHISPER_MODELS,
   normalizeEndpoint,
   settingsEqual,
   type TenantSettings,
@@ -175,27 +177,28 @@ export default function SettingsPage() {
         <section className="rounded-lg border border-hairline bg-card p-6">
           <h2 className="text-sm font-semibold">Модель транскрипции</h2>
           <p className="mt-1 text-xs leading-relaxed text-slate">
-            Транскрипция идёт на CPU. В образе воркера предзагружена одна модель —
-            выбор второй увёл бы прогон качать полтора гигабайта весов уже после
-            заливки ролика, и выглядело бы это случайным замедлением, а не
-            нехваткой модели.
+            Транскрипция идёт на CPU и занимала около половины прогона. Обе модели
+            предзагружены в образ воркера: выбор третьей увёл бы прогон качать
+            веса уже после заливки ролика, и выглядело бы это случайным
+            замедлением, а не нехваткой модели.
           </p>
+          {/*
+            Кнопки строятся из каталога, а не перечисляются здесь руками.
+            Перечисление уже разъезжалось с образом: экран предлагал
+            large-v3-turbo, которого в кэше воркера не было.
+          */}
           <div className="mt-4 flex gap-2">
-            {(
-              [
-                { v: "large-v3", t: "whisper large-v3", d: "точнее, медленнее" },
-              ] as const
-            ).map((o) => (
+            {WHISPER_MODELS.map((id) => (
               <button
-                key={o.v}
-                onClick={() => patch({ whisperModel: o.v })}
+                key={id}
+                onClick={() => patch({ whisperModel: id })}
                 className={cn(
                   "flex-1 rounded-md border p-3 text-left transition-colors",
-                  draft.whisperModel === o.v ? "border-ink bg-secondary" : "border-hairline hover:bg-secondary",
+                  draft.whisperModel === id ? "border-ink bg-secondary" : "border-hairline hover:bg-secondary",
                 )}
               >
-                <span className="block font-mono text-sm">{o.t}</span>
-                <span className="mt-0.5 block text-xs text-slate">{o.d}</span>
+                <span className="block font-mono text-sm">{WHISPER_LABELS[id].title}</span>
+                <span className="mt-0.5 block text-xs text-slate">{WHISPER_LABELS[id].hint}</span>
               </button>
             ))}
           </div>

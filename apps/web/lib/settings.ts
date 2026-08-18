@@ -25,6 +25,26 @@
 export const WHISPER_MODELS = ["parakeet-tdt-0.6b-v3", "large-v3"] as const;
 export type WhisperModel = (typeof WHISPER_MODELS)[number];
 
+/**
+ * Подписи моделей для экрана.
+ *
+ * Живут рядом с каталогом, а не в компоненте: список моделей меняется вместе с
+ * содержимым образа воркера, и подпись, забытая в другом файле, оставила бы на
+ * экране кнопку с техническим именем и без объяснения, чем этот выбор платится.
+ *
+ * Цифры — замер на боевом железе 18.08.2026, дорожка 161,6 с, четыре потока CPU.
+ */
+export const WHISPER_LABELS: Record<WhisperModel, { title: string; hint: string }> = {
+  "parakeet-tdt-0.6b-v3": {
+    title: "parakeet-tdt-0.6b-v3",
+    hint: "быстрее в восемь раз: 25 с против 198 на трёхминутной дорожке",
+  },
+  "large-v3": {
+    title: "whisper large-v3",
+    hint: "медленнее, но проверена на этом продукте дольше",
+  },
+};
+
 export const COST_CAP_MODES = ["auto", "hard"] as const;
 export type CostCapMode = (typeof COST_CAP_MODES)[number];
 

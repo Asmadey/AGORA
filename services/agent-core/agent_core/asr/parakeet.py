@@ -95,16 +95,21 @@ def _read_wav(path: str | Path) -> tuple[object, int]:
     return np.frombuffer(frames, dtype=np.int16).astype(np.float32) / 32768.0, rate
 
 
-def transcribe(audio: str | Path, language: str | None = None) -> list[Segment]:
+def transcribe(
+    audio: str | Path,
+    language: str | None = None,
+    model: str | None = None,
+) -> list[Segment]:
     """
     Речь в текст с таймкодами. Форма ответа та же, что у whisper.
 
     `language` принимается и игнорируется: parakeet-tdt-0.6b-v3 многоязычен и
-    определяет язык сам. Параметр оставлен, чтобы вызывающий код не расходился
-    между двумя моделями — расхождение сигнатур означало бы `if` в конвейере, а
-    он и есть то место, где две реализации однажды разъедутся.
+    определяет язык сам. `model` — тоже: веса лежат в каталоге, а не выбираются
+    именем. Оба параметра оставлены, чтобы вызывающий код не расходился между
+    двумя моделями — расхождение сигнатур означало бы `if` в конвейере, а он и
+    есть то место, где две реализации однажды разъедутся.
     """
-    _ = language
+    _ = language, model
     recognizer = _model()
     audio_data, rate = _read_wav(audio)
 
