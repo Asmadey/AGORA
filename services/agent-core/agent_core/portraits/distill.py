@@ -339,8 +339,12 @@ def distill_portrait_llm(
     if not key:
         return None
 
-    url = base_url or os.environ.get("OPENAI_BASE_URL", "https://api.timeweb.cloud/v1")
-    mdl = model or os.environ.get("AI_MODEL", "qwen3.6")
+    # Умолчаний нет по той же причине, что в ModelConfig.from_env: адрес и имя
+    # модели, зашитые здесь, пережили смену провайдера и указывали в пустоту.
+    url = base_url or os.environ.get("OPENAI_BASE_URL")
+    mdl = model or os.environ.get("AI_MODEL")
+    if not url or not mdl:
+        return None
 
     # Prepare segment records as compact JSON
     segment_records = json.dumps(records[:30], ensure_ascii=False, indent=2)

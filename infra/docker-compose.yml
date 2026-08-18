@@ -109,8 +109,12 @@ services:
       # расшифровывает. Пусто — интерфейс откажется принимать ключ и скажет
       # почему, вместо того чтобы сохранить его открытым.
       SETTINGS_SECRET: ${SETTINGS_SECRET:-}
-      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.timeweb.cloud/v1}
-      AI_MODEL: ${AI_MODEL:-qwen3.6}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:?OPENAI_BASE_URL обязателен — адреса по умолчанию нет}
+      AI_MODEL: ${AI_MODEL:?AI_MODEL обязателен}
+      # Модель зрения нужна и вебу — не для вызовов, а чтобы Настройки могли
+      # показать, что действует сейчас. Без неё селектор молчит о текущем
+      # значении, и выбор делается вслепую.
+      VLM_MODEL: ${VLM_MODEL:-}
       # Presigned upload выдаёт web, а не worker: маршрут /api/upload/presign
       # подписывает ссылку ключами S3 и кладёт tenant_id из сессии в имя объекта.
       # Раньше эти переменные были только у worker, поэтому на развёрнутом стенде
@@ -169,14 +173,14 @@ services:
       # расшифровывает. Пусто — интерфейс откажется принимать ключ и скажет
       # почему, вместо того чтобы сохранить его открытым.
       SETTINGS_SECRET: ${SETTINGS_SECRET:-}
-      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.timeweb.cloud/v1}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:?OPENAI_BASE_URL обязателен — адреса по умолчанию нет}
       # Обязательный заголовок агента TimeWeb: помечен required в OpenAPI,
       # но OpenAI SDK его не шлёт — без него запрос отклоняется до модели.
       MODEL_PROXY_SOURCE: ${MODEL_PROXY_SOURCE:-agora}
       # Поле model в запросе агент игнорирует — модель задана в его настройках.
       # Значения ниже нужны как подпись в отчёте и снимке задачи.
-      AI_MODEL: ${AI_MODEL:-qwen3.6}
-      VLM_MODEL: ${VLM_MODEL:-qwen3.6}
+      AI_MODEL: ${AI_MODEL:?AI_MODEL обязателен}
+      VLM_MODEL: ${VLM_MODEL:?VLM_MODEL обязателен — разбор кадров идёт в модель зрения}
       # Второй агент под кадры. Пусто — общий агент, то есть одна модель на всё.
       VLM_BASE_URL: ${VLM_BASE_URL:-}
       WHISPER_MODEL: ${WHISPER_MODEL:-large-v3}

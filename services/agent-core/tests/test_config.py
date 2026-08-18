@@ -23,22 +23,35 @@ def test_package_importable():
 
 
 def test_model_config_requires_api_key(monkeypatch):
+    # Соседние обязательные переменные заданы намеренно: без них отказ придёт
+    # раньше и на другое имя, и тест перестанет проверять то, ради чего написан.
+    monkeypatch.setenv("OPENAI_BASE_URL", "https://foundation-models.api.cloud.ru/v1")
+    monkeypatch.setenv("AI_MODEL", "m")
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     with pytest.raises(ConfigError, match="OPENAI_API_KEY"):
         ModelConfig.from_env()
 
 
-def test_model_config_defaults_to_timeweb(monkeypatch):
+def test_model_config_has_no_default_provider(monkeypatch):
+    """
+    Забытый адрес провайдера — отказ конфигурации, а не звонок в пустоту.
+
+    Здесь стояло умолчание `https://api.timeweb.cloud/v1` и модель `qwen3.6` —
+    обе величины пережили переход на Cloud.ru и указывали туда, где ничего нет.
+    Умолчание не спасает от забытой переменной: оно превращает внятный отказ
+    старта в загадочную ошибку авторизации посреди оплаченного прогона, уже
+    после расшифровки и разбора кадров.
+    """
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")
     monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
     monkeypatch.delenv("AI_MODEL", raising=False)
-    monkeypatch.delenv("VLM_MODEL", raising=False)
 
-    cfg = ModelConfig.from_env()
+    with pytest.raises(ConfigError, match="OPENAI_BASE_URL"):
+        ModelConfig.from_env()
 
-    assert cfg.base_url == "https://api.timeweb.cloud/v1"
-    assert cfg.text_model == "qwen3.6"
-    assert cfg.vlm_model == "qwen3.6"
+    monkeypatch.setenv("OPENAI_BASE_URL", "https://foundation-models.api.cloud.ru/v1")
+    with pytest.raises(ConfigError, match="AI_MODEL"):
+        ModelConfig.from_env()
 
 
 def test_storage_config_requires_all_three_stores(monkeypatch):
@@ -89,6 +102,8 @@ def test_model_config_sends_required_proxy_header(monkeypatch):
     """x-proxy-source помечен required в OpenAPI провайдера; SDK его не шлёт.
     Без заголовка запрос отклоняется до модели, поэтому он часть конфигурации."""
     monkeypatch.setenv("OPENAI_API_KEY", "k")
+    monkeypatch.setenv("OPENAI_BASE_URL", "https://foundation-models.api.cloud.ru/v1")
+    monkeypatch.setenv("AI_MODEL", "m")
     assert ModelConfig.from_env().default_headers == {"x-proxy-source": "agora"}
 
 
@@ -97,6 +112,7 @@ def test_vlm_falls_back_to_same_agent(monkeypatch):
     и это должно быть видно в конфигурации, а не выясняться по счёту."""
     monkeypatch.setenv("OPENAI_API_KEY", "k")
     monkeypatch.setenv("OPENAI_BASE_URL", "https://agent.timeweb.cloud/api/v1/cloud-ai/agents/abc/v1")
+    monkeypatch.setenv("AI_MODEL", "m")
     monkeypatch.delenv("VLM_BASE_URL", raising=False)
     cfg = ModelConfig.from_env()
     assert cfg.vlm_base_url == cfg.base_url
@@ -106,6 +122,7 @@ def test_vlm_falls_back_to_same_agent(monkeypatch):
 def test_separate_vlm_agent_is_detected(monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "k")
     monkeypatch.setenv("OPENAI_BASE_URL", "https://agent.timeweb.cloud/api/v1/cloud-ai/agents/text/v1")
+    monkeypatch.setenv("AI_MODEL", "m")
     monkeypatch.setenv("VLM_BASE_URL", "https://agent.timeweb.cloud/api/v1/cloud-ai/agents/vision/v1")
     assert ModelConfig.from_env().vlm_shares_agent is False
 

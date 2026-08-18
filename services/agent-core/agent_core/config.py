@@ -207,12 +207,17 @@ class ModelConfig:
 
     @classmethod
     def from_env(cls) -> ModelConfig:
-        base_url = _optional("OPENAI_BASE_URL", "https://api.timeweb.cloud/v1")
+        # Без умолчания намеренно. Здесь стоял `https://api.timeweb.cloud/v1`
+        # — адрес провайдера, которым мы не пользуемся с перехода на Cloud.ru.
+        # Умолчание, указывающее на чужой хост, не спасает от забытой
+        # переменной: оно превращает отказ конфигурации в загадочную ошибку
+        # авторизации посреди оплаченного прогона. Пусть лучше не стартует.
+        base_url = _required("OPENAI_BASE_URL")
         return cls(
             api_key=_required("OPENAI_API_KEY"),
             base_url=base_url,
             vlm_base_url=_optional("VLM_BASE_URL", base_url),
-            text_model=_optional("AI_MODEL", "qwen3.6"),
+            text_model=_required("AI_MODEL"),
             vlm_model=_optional("VLM_MODEL", "qwen3.6"),
             proxy_source=_optional("MODEL_PROXY_SOURCE", "agora"),
             thinking_roles=_thinking_roles(),
