@@ -156,6 +156,7 @@ def run_pipeline(self: Any, payload: dict[str, Any]) -> dict[str, Any]:
     `graph.invoke` передаётся None вместо состояния, когда чекпоинт уже есть, —
     иначе начальное состояние затёрло бы накопленное.
     """
+    from .. import tracing
     from .checkpoint import ValkeyCheckpointSaver
     from .graph import RunCancelled, build_graph
     from .progress import ProgressWriter
@@ -190,8 +191,22 @@ def run_pipeline(self: Any, payload: dict[str, Any]) -> dict[str, Any]:
     _set_task_status(task_id, tenant_id, STATUS_RUNNING)
     progress.emit("pipeline", STATUS_RUNNING, detail="возобновление" if resuming else "запуск")
 
+    # Корневой спан прогона. Без него тринадцать узлов дали бы тринадцать не
+    # связанных между собой трасс: смотреть их можно, разобрать прогон — нет.
+    #
+    # Внутри `try`, а не снаружи: спан обязан закрыться и на отказе, иначе в
+    # LangFuse узел выглядит вечно идущим — то есть трасса врёт именно там, где
+    # её открывают. Контекст `tracing.run` закрывает его в `finally`.
     try:
-        final = graph.invoke(initial, config)
+        with tracing.run(
+            task_id=task_id,
+            tenant_id=tenant_id,
+            mode=payload.get("mode", "short"),
+            resuming=resuming,
+            replication_count=int(payload.get("replication_count") or 1),
+            personas=len(payload.get("persona_ids") or []),
+        ):
+            final = graph.invoke(initial, config)
     except RunCancelled as e:
         # Отмена — не отказ. Отдельный статус, чтобы в списке было видно, что
         # прогон остановили, а не что он сломался.

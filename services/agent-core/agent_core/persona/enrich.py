@@ -188,11 +188,12 @@ class QwenTextClient:
         )
 
     def complete(self, *, prompt: str) -> str:
-        from openai import OpenAI
-
         from ..schemas.responses import content_of, response_format
+        from ..tracing import llm_client
 
-        client = OpenAI(
+        # Клиент выдаётся agent_core.tracing: там он оборачивается для
+        # LangFuse, если трассировка включена, и остаётся обычным, если нет.
+        client = llm_client(
             api_key=self.config.api_key,
             base_url=self.config.base_url,
             default_headers=self.config.default_headers,

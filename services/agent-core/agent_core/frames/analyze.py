@@ -412,9 +412,11 @@ class QwenVlmClient:
         self.model = model or self.config.vlm_model
 
     def analyze(self, *, image: bytes, prompt: str) -> dict[str, Any]:
-        from openai import OpenAI
+        from ..tracing import llm_client
 
-        client = OpenAI(
+        # Клиент выдаётся agent_core.tracing: там он оборачивается для
+        # LangFuse, если трассировка включена, и остаётся обычным, если нет.
+        client = llm_client(
             api_key=self.config.api_key,
             base_url=self.config.vlm_base_url,
             default_headers=self.config.default_headers,

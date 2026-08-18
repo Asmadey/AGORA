@@ -75,6 +75,7 @@ def generate_audience(self: Any, payload: dict[str, Any]) -> dict[str, Any]:
     провальный прогон (маршрут запуска его теперь и не примет), поэтому
     состояние обязано быть видно на экране, а не только в логах воркера.
     """
+    from .. import tracing
     from .generator import GenerationConfig, PersonaGenerator
 
     set_id = str(payload["persona_set_id"])
@@ -120,149 +121,165 @@ def generate_audience(self: Any, payload: dict[str, Any]) -> dict[str, Any]:
     temperatures = TemperatureConfig.for_task(payload.get("settings_snapshot"))
 
     # ── Обогащение с прогрессом ──────────────────────────────────────────────
-    meta: dict[str, Any] = {"enriched": False, "llm_calls": 0, "cache_hits": 0}
-    if config.use_llm:
-        from .enrich import enrich_personas
-
-        def report(done: int, total: int) -> None:  # noqa: ARG001
-            if done % PROGRESS_EVERY:
-                return
-            _update(
-                tenant_id,
-                "UPDATE persona_sets SET generated_count = %s WHERE id = %s::uuid",
-                (done, set_id),
-            )
-
-        try:
-            outcome = enrich_personas(
-                personas,
-                on_progress=report,
-                temperature=temperatures.personaCreation,  # стадия personaCreation
-            )
-        except Exception as exc:  # noqa: BLE001
-            return fail(f"обогащение не удалось: {type(exc).__name__}: {exc}")
-
-        personas = outcome.personas
-        meta = {
-            "enriched": outcome.enriched,
-            "llm_calls": outcome.calls_made,
-            "cache_hits": outcome.cache_hits,
-            "degraded_reason": outcome.degraded_reason,
-        }
-
-    # ── Фаза 2: проверка связности ───────────────────────────────────────────
-    # Идёт только после обогащения: проверять нечего, пока narrative скелетный —
-    # он собран из тех же атрибутов механически и разойтись с ними не может.
     #
-    # Пересоздание берёт ДРУГОЙ seed, а не повторяет вызов модели на тех же
-    # атрибутах: расхождение могло прийти и от самих атрибутов — редкое
-    # сочетание, которое связным текстом не описывается.
-    verdicts: list[Any] = []
-    validation_meta: dict[str, Any] = {"checked": 0, "regenerated": 0, "failed": 0}
-    if config.use_llm and personas:
-        from ..schemas.responses import MAX_TOKENS, PERSONA_VALIDATION
-        from .enrich import QwenTextClient, enrich_personas
-        from .validate import validate_set
+    # Корневой спан открывается здесь, а не в начале задачи: до этой точки
+    # модель не зовут ни разу — скелеты собираются из корпуса механически.
+    # Спан, открытый раньше, показывал бы в трассе работу, которой в ней нет.
+    trace = tracing.run(
+        task_id=set_id,
+        tenant_id=tenant_id,
+        kind="generate_audience",
+        size=len(personas),
+        tags=["audience"],
+    )
+    # Всё, что ниже, зовёт модель: обогащение, проверка связности и
+    # пересоздание непрошедших персон. Один спан на набор, а не на персону —
+    # иначе набор из двадцати даёт двадцать трасс, и вопрос «почему аудитория
+    # собиралась двенадцать минут» снова остаётся без ответа.
+    with trace:
+        meta: dict[str, Any] = {"enriched": False, "llm_calls": 0, "cache_hits": 0}
+        if config.use_llm:
+            from .enrich import enrich_personas
 
-        def regenerate(index: int, attempt: int) -> dict[str, Any] | None:
-            """Пересоздаёт одну персону с другим seed и заново обогащает её."""
-            try:
-                shifted = GenerationConfig(
-                    **{
-                        **raw_config,
-                        "size": 1,
-                        # Сдвиг по попытке И по позиции: без позиции две
-                        # непрошедшие персоны получили бы на одной попытке
-                        # одинаковый seed, то есть одну и ту же замену.
-                        "seed": (config.seed or 0) + 10_000 * attempt + index,
-                    }
+            def report(done: int, total: int) -> None:  # noqa: ARG001
+                if done % PROGRESS_EVERY:
+                    return
+                _update(
+                    tenant_id,
+                    "UPDATE persona_sets SET generated_count = %s WHERE id = %s::uuid",
+                    (done, set_id),
                 )
-                fresh = gen.generate(shifted)
-                if not fresh:
+
+            try:
+                outcome = enrich_personas(
+                    personas,
+                    on_progress=report,
+                    temperature=temperatures.personaCreation,  # стадия personaCreation
+                )
+            except Exception as exc:  # noqa: BLE001
+                return fail(f"обогащение не удалось: {type(exc).__name__}: {exc}")
+
+            personas = outcome.personas
+            meta = {
+                "enriched": outcome.enriched,
+                "llm_calls": outcome.calls_made,
+                "cache_hits": outcome.cache_hits,
+                "degraded_reason": outcome.degraded_reason,
+            }
+
+        # ── Фаза 2: проверка связности ───────────────────────────────────────────
+        # Идёт только после обогащения: проверять нечего, пока narrative скелетный —
+        # он собран из тех же атрибутов механически и разойтись с ними не может.
+        #
+        # Пересоздание берёт ДРУГОЙ seed, а не повторяет вызов модели на тех же
+        # атрибутах: расхождение могло прийти и от самих атрибутов — редкое
+        # сочетание, которое связным текстом не описывается.
+        verdicts: list[Any] = []
+        validation_meta: dict[str, Any] = {"checked": 0, "regenerated": 0, "failed": 0}
+        if config.use_llm and personas:
+            from ..schemas.responses import MAX_TOKENS, PERSONA_VALIDATION
+            from .enrich import QwenTextClient, enrich_personas
+            from .validate import validate_set
+
+            def regenerate(index: int, attempt: int) -> dict[str, Any] | None:
+                """Пересоздаёт одну персону с другим seed и заново обогащает её."""
+                try:
+                    shifted = GenerationConfig(
+                        **{
+                            **raw_config,
+                            "size": 1,
+                            # Сдвиг по попытке И по позиции: без позиции две
+                            # непрошедшие персоны получили бы на одной попытке
+                            # одинаковый seed, то есть одну и ту же замену.
+                            "seed": (config.seed or 0) + 10_000 * attempt + index,
+                        }
+                    )
+                    fresh = gen.generate(shifted)
+                    if not fresh:
+                        return None
+                    return enrich_personas(
+                        fresh, temperature=temperatures.personaCreation
+                    ).personas[0]
+                except Exception:  # noqa: BLE001 — не сумели пересоздать, не отказ фазы
                     return None
-                return enrich_personas(
-                    fresh, temperature=temperatures.personaCreation
-                ).personas[0]
-            except Exception:  # noqa: BLE001 — не сумели пересоздать, не отказ фазы
-                return None
+
+            try:
+                validation = validate_set(
+                    personas,
+                    client=QwenTextClient(
+                        temperature=temperatures.personaValidation,
+                        # Схема, а не уговоры: первый же боевой набор потерял один
+                        # вердикт на разборе — модель вернула JSON в ```json и, судя
+                        # по обрыву, не закрыла ограду. Внутри была настоящая
+                        # претензия, и она пропала по дороге.
+                        response_schema=("PersonaValidation", PERSONA_VALIDATION),
+                        # Потолок обязателен при схеме — см. MAX_TOKENS.
+                        max_tokens=MAX_TOKENS["persona_validation"],
+                    ),
+                    regenerate=regenerate,
+                )
+                personas = validation.personas
+                verdicts = validation.verdicts
+                validation_meta = {
+                    "checked": validation.checked,
+                    "regenerated": validation.regenerated,
+                    "failed": validation.failed,
+                    "calls": validation.calls,
+                }
+            except Exception as exc:  # noqa: BLE001
+                # Проверка — улучшение качества, а не условие работоспособности:
+                # сорвать из-за неё оплаченную генерацию значит поменять надёжный
+                # результат на аккуратный.
+                validation_meta = {"checked": 0, "regenerated": 0, "failed": 0,
+                                   "degraded_reason": f"{type(exc).__name__}: {exc}"}
+
+        # ── Запись персон одной транзакцией ──────────────────────────────────────
+        # Все или ни одной: наполовину записанный набор выглядит готовым и даёт
+        # отчёт по случайной части аудитории.
+        import psycopg
+
+        from ..db import tenant_scope
 
         try:
-            validation = validate_set(
-                personas,
-                client=QwenTextClient(
-                    temperature=temperatures.personaValidation,
-                    # Схема, а не уговоры: первый же боевой набор потерял один
-                    # вердикт на разборе — модель вернула JSON в ```json и, судя
-                    # по обрыву, не закрыла ограду. Внутри была настоящая
-                    # претензия, и она пропала по дороге.
-                    response_schema=("PersonaValidation", PERSONA_VALIDATION),
-                    # Потолок обязателен при схеме — см. MAX_TOKENS.
-                    max_tokens=MAX_TOKENS["persona_validation"],
-                ),
-                regenerate=regenerate,
-            )
-            personas = validation.personas
-            verdicts = validation.verdicts
-            validation_meta = {
-                "checked": validation.checked,
-                "regenerated": validation.regenerated,
-                "failed": validation.failed,
-                "calls": validation.calls,
-            }
-        except Exception as exc:  # noqa: BLE001
-            # Проверка — улучшение качества, а не условие работоспособности:
-            # сорвать из-за неё оплаченную генерацию значит поменять надёжный
-            # результат на аккуратный.
-            validation_meta = {"checked": 0, "regenerated": 0, "failed": 0,
-                               "degraded_reason": f"{type(exc).__name__}: {exc}"}
-
-    # ── Запись персон одной транзакцией ──────────────────────────────────────
-    # Все или ни одной: наполовину записанный набор выглядит готовым и даёт
-    # отчёт по случайной части аудитории.
-    import psycopg
-
-    from ..db import tenant_scope
-
-    try:
-        with psycopg.connect(os.environ["DATABASE_URL"]) as conn, tenant_scope(
-            conn, tenant_id
-        ) as cur:
-            for index, (name, dna) in enumerate(zip(names, personas, strict=False)):
-                # Пустой объект — «не проверялась». Отличать это от «проверена,
-                # претензий нет» обязательно: иначе набор, созданный без фазы
-                # валидации, выглядел бы прошедшим проверку, которой не было.
-                verdict = verdicts[index].to_json() if index < len(verdicts) else {}
-                # Автор наследуется от набора подзапросом, а не приезжает в
-                # payload: в очереди он мог бы разойтись со строкой набора, если
-                # набор пересоздали, — а истина о том, чья это аудитория, живёт
-                # в базе, не в сообщении.
+            with psycopg.connect(os.environ["DATABASE_URL"]) as conn, tenant_scope(
+                conn, tenant_id
+            ) as cur:
+                for index, (name, dna) in enumerate(zip(names, personas, strict=False)):
+                    # Пустой объект — «не проверялась». Отличать это от «проверена,
+                    # претензий нет» обязательно: иначе набор, созданный без фазы
+                    # валидации, выглядел бы прошедшим проверку, которой не было.
+                    verdict = verdicts[index].to_json() if index < len(verdicts) else {}
+                    # Автор наследуется от набора подзапросом, а не приезжает в
+                    # payload: в очереди он мог бы разойтись со строкой набора, если
+                    # набор пересоздали, — а истина о том, чья это аудитория, живёт
+                    # в базе, не в сообщении.
+                    cur.execute(
+                        "INSERT INTO personas (tenant_id, persona_set_id, name, dna, "
+                        "                      narrative, seed, validation, created_by) "
+                        "VALUES (app.current_tenant(), %s::uuid, %s, %s, %s, %s, %s, "
+                        "        (SELECT created_by FROM persona_sets WHERE id = %s::uuid))",
+                        (
+                            set_id,
+                            name,
+                            json.dumps(dna, ensure_ascii=False),
+                            dna.get("narrative"),
+                            dna.get("seed"),
+                            json.dumps(verdict, ensure_ascii=False),
+                            set_id,
+                        ),
+                    )
                 cur.execute(
-                    "INSERT INTO personas (tenant_id, persona_set_id, name, dna, "
-                    "                      narrative, seed, validation, created_by) "
-                    "VALUES (app.current_tenant(), %s::uuid, %s, %s, %s, %s, %s, "
-                    "        (SELECT created_by FROM persona_sets WHERE id = %s::uuid))",
-                    (
-                        set_id,
-                        name,
-                        json.dumps(dna, ensure_ascii=False),
-                        dna.get("narrative"),
-                        dna.get("seed"),
-                        json.dumps(verdict, ensure_ascii=False),
-                        set_id,
-                    ),
+                    "UPDATE persona_sets SET status='ready', generated_count=%s, finished_at=now() "
+                    "WHERE id = %s::uuid",
+                    (len(personas), set_id),
                 )
-            cur.execute(
-                "UPDATE persona_sets SET status='ready', generated_count=%s, finished_at=now() "
-                "WHERE id = %s::uuid",
-                (len(personas), set_id),
-            )
-    except Exception as exc:  # noqa: BLE001
-        return fail(f"персоны не сохранены: {type(exc).__name__}: {exc}")
+        except Exception as exc:  # noqa: BLE001
+            return fail(f"персоны не сохранены: {type(exc).__name__}: {exc}")
 
-    return {
-        "persona_set_id": set_id,
-        "status": "ready",
-        "size": len(personas),
-        "enrichment": meta,
-        "validation": validation_meta,
-    }
+        return {
+            "persona_set_id": set_id,
+            "status": "ready",
+            "size": len(personas),
+            "enrichment": meta,
+            "validation": validation_meta,
+        }

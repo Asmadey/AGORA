@@ -331,7 +331,7 @@ def distill_portrait_llm(
     Returns None if the API call fails (caller falls back to deterministic).
     """
     try:
-        from openai import OpenAI
+        from ..tracing import llm_client
     except ImportError:
         return None
 
@@ -364,7 +364,7 @@ def distill_portrait_llm(
     )
 
     try:
-        client = OpenAI(api_key=key, base_url=url)
+        client = llm_client(api_key=key, base_url=url)
         response = client.chat.completions.create(
             model=mdl,
             messages=[{"role": "user", "content": prompt}],
