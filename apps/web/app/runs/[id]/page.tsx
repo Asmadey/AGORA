@@ -15,6 +15,7 @@ import { withTenant } from "@/lib/server/db";
 import { requireSession } from "@/lib/server/guard";
 import { loadReport, loadReportPersonas } from "@/lib/server/reports";
 import { getTask, taskNumber, loadRunTiming } from "@/lib/server/tasks";
+import { safePresign } from "@/lib/server/content-pack";
 import { parseAnswer, parseReport } from "@/lib/report-view";
 import { CRITERIA, CRITERIA_LABELS } from "@/lib/agora-types";
 
@@ -69,6 +70,8 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
   // сослаться на прогон в разговоре нужно каждый день.
   const task = await withTenant(tenantId, (client) => getTask(client, id));
   const number = taskNumber(task?.seqNo ?? null);
+  // Подпись живёт час: записанная в базу ссылка протухла бы к первому открытию.
+  const videoUrl = task?.videoRef ? safePresign(task.videoRef) : null;
 
   return (
     <>
@@ -131,6 +134,49 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
             сцене перематывает ролик
           </p>
           <Timeline runId={id} />
+        </section>
+
+        {/*
+          Материалы прогона (п. 36).
+
+          Расшифровка и отчёт — то, чем пользуются ВНЕ продукта: вставляют в
+          презентацию, шлют монтажёру, ищут цитату. Пока их нельзя было забрать,
+          каждый такой случай означал переписывание с экрана.
+
+          Ссылка на ролик подписывается на час: она уедет в переписку и в
+          историю браузера, и вечная ссылка на чужое видео из этой переписки уже
+          не отзывается.
+        */}
+        <section className="rounded-lg border border-hairline bg-card p-6">
+          <h2 className="text-sm font-semibold">Материалы</h2>
+          <div className="mt-3 flex flex-wrap gap-2 text-sm">
+            <a
+              href={`/api/tasks/${id}/transcript`}
+              className="rounded-md border border-hairline px-3 py-1.5 transition-colors hover:bg-secondary"
+            >
+              Расшифровка · txt
+            </a>
+            <a
+              href={`/api/tasks/${id}/report`}
+              download={`report-${id}.json`}
+              className="rounded-md border border-hairline px-3 py-1.5 transition-colors hover:bg-secondary"
+            >
+              Отчёт · json
+            </a>
+            {videoUrl && (
+              <a
+                href={videoUrl}
+                className="rounded-md border border-hairline px-3 py-1.5 transition-colors hover:bg-secondary"
+              >
+                Исходный ролик
+              </a>
+            )}
+          </div>
+          {videoUrl && (
+            <p className="mt-2 text-xs text-slate">
+              Ссылка на ролик подписана на час — по истечении откройте страницу заново.
+            </p>
+          )}
         </section>
 
         {/* Сводные метрики.

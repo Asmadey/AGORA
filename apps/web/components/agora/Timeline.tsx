@@ -99,6 +99,16 @@ export function Timeline({ runId }: { runId: string }) {
           <video
             ref={videoRef}
             src={data.video}
+            /*
+              Постер — первый кадр таймлайна, а не отдельно снятая картинка.
+              Отдельная означала бы ещё один проход ffmpeg по ролику ради того,
+              что уже лежит в S3: кадры сцен выгружаются разбором и подписаны
+              тем же способом. Без постера браузер до нажатия «play» показывает
+              чёрный прямоугольник, и на вертикальном ролике это полэкрана
+              пустоты.
+            */
+            poster={cells.find((c) => c.screenshot)?.screenshot ?? undefined}
+            preload="metadata"
             controls
             className="mx-auto max-h-[600px] w-auto max-w-full rounded-lg border border-hairline bg-black"
             onTimeUpdate={(e) => setCurrentSec(e.currentTarget.currentTime)}

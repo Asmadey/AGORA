@@ -118,7 +118,7 @@ export async function loadTimeline(
   };
 }
 
-function safePresign(key: string): string | null {
+export function safePresign(key: string): string | null {
   try {
     return createPresignedGetUrl(key);
   } catch {
