@@ -1,0 +1,176 @@
+# LangFuse — трассировка вызовов модели.
+#
+# ─── Почему отдельный compose, а не сервис в основном ────────────────────────
+# LangFuse тянет за собой четыре собственных хранилища: Postgres, ClickHouse,
+# Redis и S3. В основном compose они встали бы рядом с сервисами AGORA и
+# останавливались бы вместе с ними — то есть трассировка пропадала бы ровно
+# тогда, когда её смотрят: при перезапуске конвейера после сбоя.
+#
+# ─── Почему не переиспользуются хранилища AGORA ──────────────────────────────
+# Postgres и Mongo у нас managed (TimeWeb). Класть в managed-инстанс миграции
+# чужого продукта значит связать срок жизни рабочей базы с апгрейдами LangFuse,
+# а разбираться с этим придётся в тот день, когда база нужна.
+#
+# ─── Память ──────────────────────────────────────────────────────────────────
+# На сервере 11,6 ГБ при 16 по §15 PRD, и конвейер уже уходил в OOM шесть раз.
+# Поэтому у каждого сервиса жёсткий потолок: без него ClickHouse считает
+# доступной всю память хоста и берёт её кэшем, а вытеснит он воркера —
+# выглядеть это будет случайным сбоем прогона, а не установкой трассировки.
+#
+#   langfuse-web       1,5 ГБ      ~290 МБ в покое
+#   langfuse-worker    1,0 ГБ      ~330 МБ
+#   clickhouse         1,5 ГБ      ~290 МБ
+#   postgres           256 МБ      ~75 МБ
+#   redis              128 МБ      ~7 МБ
+#   minio              256 МБ      ~120 МБ
+#                    ─────────    ─────────
+#                      4,6 ГБ      ~1,1 ГБ
+#
+# Потолок web поднят с 768 МБ после падения на старте. Node размеряет старое
+# поколение кучи по памяти контейнера: при 768 МБ он взял себе ~384 МБ, и
+# инициализация LangFuse в них не уложилась — «Ineffective mark-compacts near
+# heap limit». Контейнер при этом остаётся running с кодом 0 и слушает порт, на
+# котором никого нет, поэтому снаружи это выглядит как 502 от nginx, а вовсе не
+# как нехватка памяти. NODE_OPTIONS задаётся явно по той же причине.
+#
+# ─── Порты ───────────────────────────────────────────────────────────────────
+# Всё слушает 127.0.0.1: наружу выходит только nginx, у которого TLS и
+# сертификат. Сервис, повешенный на 0.0.0.0, доступен по IP в обход
+# сертификата — и это не гипотеза, а то, как обычно и утекают такие панели.
+#
+# ─── Запуск ──────────────────────────────────────────────────────────────────
+#   infra/langfuse/setup.sh          # один раз: сгенерирует .env рядом
+#   docker compose -f infra/langfuse/docker-compose.yml \
+#     --env-file infra/langfuse/.env up -d
+#
+# Файл .env НЕ попадает в репозиторий (.gitignore) — CLAUDE.md §7.
+
+name: langfuse
+
+x-langfuse-env: &langfuse_env
+  DATABASE_URL: postgresql://langfuse:${LANGFUSE_DB_PASSWORD:?}@postgres:5432/langfuse
+  SALT: ${LANGFUSE_SALT:?}
+  ENCRYPTION_KEY: ${LANGFUSE_ENCRYPTION_KEY:?}
+  NEXTAUTH_SECRET: ${LANGFUSE_NEXTAUTH_SECRET:?}
+  NEXTAUTH_URL: ${LANGFUSE_URL:?}
+  CLICKHOUSE_MIGRATION_URL: clickhouse://clickhouse:9000
+  CLICKHOUSE_URL: http://clickhouse:8123
+  CLICKHOUSE_USER: default
+  CLICKHOUSE_PASSWORD: ${LANGFUSE_CLICKHOUSE_PASSWORD:?}
+  CLICKHOUSE_CLUSTER_ENABLED: "false"
+  REDIS_HOST: redis
+  REDIS_PORT: "6379"
+  REDIS_AUTH: ${LANGFUSE_REDIS_PASSWORD:?}
+  LANGFUSE_S3_EVENT_UPLOAD_BUCKET: langfuse
+  LANGFUSE_S3_EVENT_UPLOAD_ENDPOINT: http://minio:9000
+  LANGFUSE_S3_EVENT_UPLOAD_ACCESS_KEY_ID: langfuse
+  LANGFUSE_S3_EVENT_UPLOAD_SECRET_ACCESS_KEY: ${LANGFUSE_MINIO_PASSWORD:?}
+  LANGFUSE_S3_EVENT_UPLOAD_REGION: auto
+  LANGFUSE_S3_EVENT_UPLOAD_FORCE_PATH_STYLE: "true"
+  # Регистрация закрывается после того, как заведён первый пользователь.
+  # Открытая форма на публичном адресе — это чужой аккаунт в вашей трассировке,
+  # где лежат промпты и куски ответов модели.
+  AUTH_DISABLE_SIGNUP: ${LANGFUSE_DISABLE_SIGNUP:-false}
+  TELEMETRY_ENABLED: "false"
+
+services:
+  langfuse-web:
+    image: ghcr.io/langfuse/langfuse:3
+    restart: unless-stopped
+    depends_on:
+      postgres: { condition: service_healthy }
+      clickhouse: { condition: service_healthy }
+      minio: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    ports:
+      - "127.0.0.1:3100:3000"
+    environment:
+      <<: *langfuse_env
+      NODE_OPTIONS: --max-old-space-size=1024
+    mem_limit: 1536m
+
+  langfuse-worker:
+    image: ghcr.io/langfuse/langfuse-worker:3
+    restart: unless-stopped
+    depends_on:
+      postgres: { condition: service_healthy }
+      clickhouse: { condition: service_healthy }
+      minio: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    environment:
+      <<: *langfuse_env
+      NODE_OPTIONS: --max-old-space-size=768
+    mem_limit: 1024m
+
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: langfuse
+      POSTGRES_PASSWORD: ${LANGFUSE_DB_PASSWORD:?}
+      POSTGRES_DB: langfuse
+    volumes:
+      - langfuse_postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U langfuse"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    mem_limit: 256m
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:24.3
+    restart: unless-stopped
+    environment:
+      CLICKHOUSE_USER: default
+      CLICKHOUSE_PASSWORD: ${LANGFUSE_CLICKHOUSE_PASSWORD:?}
+    ulimits:
+      nofile: { soft: 262144, hard: 262144 }
+    volumes:
+      - langfuse_clickhouse_data:/var/lib/clickhouse
+      - langfuse_clickhouse_logs:/var/log/clickhouse-server
+      - ./clickhouse-memory.xml:/etc/clickhouse-server/config.d/memory.xml:ro
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- localhost:8123/ping || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
+    mem_limit: 1536m
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--requirepass", "${LANGFUSE_REDIS_PASSWORD:?}", "--maxmemory", "96mb", "--maxmemory-policy", "allkeys-lru"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    mem_limit: 128m
+
+  minio:
+    image: minio/minio
+    restart: unless-stopped
+    entrypoint: sh
+    # Бакет создаётся до старта: LangFuse его не заводит сам и на первом же
+    # событии отвечает 500 — а выглядит это как «трассировка не приходит».
+    command: -c 'mkdir -p /data/langfuse && minio server /data --console-address ":9001"'
+    environment:
+      MINIO_ROOT_USER: langfuse
+      MINIO_ROOT_PASSWORD: ${LANGFUSE_MINIO_PASSWORD:?}
+    volumes:
+      - langfuse_minio:/data
+    healthcheck:
+      test: ["CMD-SHELL", "mc ready local || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 20s
+    mem_limit: 256m
+
+volumes:
+  langfuse_postgres:
+  langfuse_clickhouse_data:
+  langfuse_clickhouse_logs:
+  langfuse_minio:

@@ -1,0 +1,15 @@
+<clickhouse>
+    <!--
+      Потолок памяти сервера. Без него ClickHouse читает /proc/meminfo, видит
+      11,6 ГБ хоста и планирует запросы под них — cgroup-лимит из compose он не
+      учитывает и потому упирается в него, а не в собственный расчёт.
+
+      Значение ниже mem_limit контейнера: разница — на буферы вне учёта сервера.
+    -->
+    <max_server_memory_usage>1073741824</max_server_memory_usage>
+    <max_server_memory_usage_to_ram_ratio>0</max_server_memory_usage_to_ram_ratio>
+
+    <!-- Кэш несжатых блоков не нужен: у нас запись, а не аналитические чтения. -->
+    <mark_cache_size>268435456</mark_cache_size>
+    <uncompressed_cache_size>0</uncompressed_cache_size>
+</clickhouse>

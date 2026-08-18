@@ -76,3 +76,6 @@ skills/
 # удаление файла позже не уменьшает репозиторий, нужен filter-repo. Тот же
 # принцип, что для docs/Evaluative research/ (§6-бис CLAUDE.md).
 temp/
+
+# Секреты LangFuse: генерируются на сервере, в репозиторий не попадают (CLAUDE.md §7)
+infra/langfuse/.env
