@@ -808,19 +808,46 @@ def qa(state: PipelineState) -> dict[str, Any]:
         if why:
             degraded.append(why)
 
-    outcome = run_qa(
-        answers=answers,
-        pack=state.get("content_pack_compact") or state.get("content_pack_full") or {},
-        personas=_load_personas(state),
-        survey=state.get("survey") or {},
-        judge=judge,
-        policy=policy,
-        templates=templates,
-        artifact_path=workdir(state) / "qa_report.json",
-    )
+    def check(current: list[dict[str, Any]], artifact: str) -> Any:
+        return run_qa(
+            answers=current,
+            pack=state.get("content_pack_compact") or state.get("content_pack_full") or {},
+            personas=_load_personas(state),
+            survey=state.get("survey") or {},
+            judge=judge,
+            policy=policy,
+            templates=templates,
+            artifact_path=workdir(state) / artifact,
+        )
+
+    outcome = check(answers, "qa_report.json")
+
+    # ─── Переспрос забракованных (п. 33) ─────────────────────────────────────
+    #
+    # До этого забракованный ответ просто выпадал из агрегата: персона не
+    # переспрашивалась, деньги за ответ были потрачены, а отчёт вставал на
+    # остатке — и выглядел при этом нормальным отчётом.
+    #
+    # Переспрос идёт здесь, а не отдельным узлом графа, потому что ему нужны
+    # разом и ответы, и вердикты, и вторая проверка тех же ответов: узел,
+    # получающий это через состояние, пришлось бы вставлять между qa и
+    # analytics, а состояние между ними уже описано отчётом.
+    answers, requestioned = _requestion_flagged(state, answers, outcome, degraded)
+    if requestioned:
+        # Вторая проверка — тех же ответов после переспроса. Без неё переспрос
+        # был бы декорацией: новые ответы есть, а из агрегата их по-прежнему
+        # исключают вердикты первого круга.
+        #
+        # Круг ровно один (`requestion.MAX_ROUNDS`): вторая отбраковка
+        # окончательна. Без дна цикл крутился бы, пока не кончатся деньги, и
+        # каждый круг выглядел бы осмысленной работой — доля выживших растёт,
+        # значит система «чинится».
+        outcome = check(answers, "qa_report_after_requestion.json")
 
     update: dict[str, Any] = {
+        "persona_answers": answers,
         "qa_flags": outcome.flagged,
+        "qa_requestioned": requestioned,
         # Сводка едет в состояние и дальше в отчёт: полный список вердиктов
         # лежит в qa_report.json внутри контейнера и умирает вместе с ним, а
         # экран обязан показать, сколько ответов забраковано и по каким видам.
@@ -832,6 +859,84 @@ def qa(state: PipelineState) -> dict[str, Any]:
     if degraded:
         update["degraded"] = degraded
     return update
+
+
+
+def _requestion_flagged(
+    state: PipelineState,
+    answers: list[dict[str, Any]],
+    outcome: Any,
+    degraded: list[str],
+) -> tuple[list[dict[str, Any]], int]:
+    """
+    Переспрашивает забракованные персоны и проверяет их ответы заново.
+
+    Возвращает обновлённый список ответов и число переспрошенных. Порог, дно
+    цикла и запрет на подсказку живут в `respondent.requestion` — здесь только
+    сшивание с конвейером.
+
+    Отказ переспроса не роняет прогон: агрегат по остатку хуже полного, но
+    лучше отсутствующего. Причина уходит в `degraded` и обязана попасть в отчёт.
+    """
+    from ..respondent import requestion as rq
+
+    flagged = outcome.flagged
+    if not rq.needs_requestion(answers, flagged):
+        return answers, 0
+
+    targets = rq.personas_to_ask(flagged)
+    personas = {str(p.get("id")): p for p in _load_personas(state)}
+    to_ask = [personas[pid] for pid, _ in sorted(targets) if pid in personas]
+    if not to_ask:
+        return answers, 0
+
+    try:
+        from ..respondent.run import QwenRespondentClient, run_survey
+
+        system_template, _ = _prompt("respondent.system", state)
+        user_template, _ = _prompt("respondent.user", state)
+
+        # Подсказка дописывается в КОНЕЦ пользовательского промпта: персона
+        # видит её после материала и анкеты, то есть как уточнение задачи, а не
+        # как часть материала.
+        kinds: set[str] = set()
+        for target in targets:
+            kinds |= rq.kinds_for(flagged, target)
+        hint = rq.hint_for(kinds)
+
+        retry = run_survey(
+            personas=to_ask,
+            pack=state.get("content_pack_compact") or {},
+            survey=state.get("survey") or {},
+            client=QwenRespondentClient(
+                config=_model_config(state),
+                temperature=_temperatures(state).responseSimulation,
+            ),
+            replication_count=1,
+            artifact_path=workdir(state) / "persona_answers_retry.json",
+            system_template=system_template,
+            user_template=(user_template or "") + ("\n\n" + hint if hint else ""),
+        )
+    except Exception as exc:  # noqa: BLE001
+        degraded.append(
+            f"qa: переспрос не состоялся ({type(exc).__name__}: {exc}); "
+            f"агрегат построен на первой попытке"
+        )
+        return answers, 0
+
+    fresh = {
+        (str(a.get("persona_id")), int(a.get("replication") or 0)): a
+        for a in retry.answers
+    }
+    merged = [
+        fresh.get((str(a.get("persona_id")), int(a.get("replication") or 0)), a)
+        for a in answers
+    ]
+    degraded.append(
+        f"qa: переспрошено персон {len(fresh)} из {len(answers)} — доля отбраковки "
+        f"выше {rq.REQUESTION_SHARE:.0%}; вторая отбраковка окончательна"
+    )
+    return merged, len(fresh)
 
 
 # ─── Аналитика и отчёт (#20) ─────────────────────────────────────────────────
