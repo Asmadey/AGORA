@@ -73,7 +73,10 @@ else:
         """Склеивает ролик из источников lavfi по секундам."""
         inputs: list[str] = []
         for source, secs in segments:
-            inputs += ["-f", "lavfi", "-t", str(secs), "-i", f"{source}:s=320x240:r=25"]
+            # Размер и частота дописываются здесь, а параметры источника —
+            # вызывающим: у lavfi первый разделитель «=», а последующие «:», и
+            # склеивать их в одном месте значит однажды перепутать.
+            inputs += ["-f", "lavfi", "-t", str(secs), "-i", f"{source}=s=320x240:r=25"]
         filt = "".join(f"[{i}:v]" for i in range(len(segments)))
         filt += f"concat=n={len(segments)}:v=1:a=0[v]"
         subprocess.run(
@@ -112,7 +115,7 @@ else:
 
     # ── Случай 2: непрерывный ролик длиннее потолка ─────────────────────────
     flat_video = tmp / "flat.mp4"
-    build(flat_video, [("red", int(MAX_SCENE_SEC) + 10)])
+    build(flat_video, [("color=c=red", int(MAX_SCENE_SEC) + 10)])
     flat = detect_scenes(flat_video)
     longest = max((s.end_sec - s.start_sec for s in flat), default=0.0)
 
