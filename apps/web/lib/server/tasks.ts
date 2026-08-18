@@ -41,6 +41,15 @@ export interface LaunchParams {
 
 export interface LaunchedTask {
   id: string;
+  /**
+   * Человеческий номер исследования в пределах команды.
+   *
+   * UUID остаётся ключом и остаётся в адресе — он уникален глобально. Но в
+   * разговоре им не пользуются: «посмотри e81feb92-97a2-43ad…» не произносится
+   * вслух и не набирается по памяти. `null` — задача создана до появления
+   * нумерации и номер ей не раздали.
+   */
+  seqNo: number | null;
   mode: string;
   videoRef: string | null;
   replicationCount: number;
@@ -61,6 +70,20 @@ export interface LaunchedTask {
   created: boolean;
 }
 
+/**
+ * Номер исследования для человека: `№ 0007`.
+ *
+ * Четыре знака — не про ожидаемое число прогонов, а про выравнивание в столбце:
+ * список, где «7» и «112» стоят под разной шириной, читается хуже, чем список с
+ * ведущими нулями. При пятизначном номере строка просто станет длиннее.
+ *
+ * `null` — задача создана до появления нумерации. Показывать вместо неё «0000»
+ * значило бы выдумать номер, которого нет.
+ */
+export function taskNumber(seqNo: number | null): string | null {
+  return seqNo === null ? null : `№ ${String(seqNo).padStart(4, "0")}`;
+}
+
 export interface PinnedPrompt {
   id: string;
   version: number;
@@ -70,6 +93,7 @@ export interface PinnedPrompt {
 
 interface TaskRow {
   id: string;
+  seq_no: number | null;
   mode: string;
   video_ref: string | null;
   replication_count: number;
@@ -231,6 +255,7 @@ export function idempotencyKey(
 function toTask(row: TaskRow, created: boolean): LaunchedTask {
   return {
     id: row.id,
+    seqNo: row.seq_no ?? null,
     mode: row.mode,
     videoRef: row.video_ref,
     replicationCount: row.replication_count,
@@ -281,14 +306,31 @@ export async function launchTask(
   const key = idempotencyKey(params, snapshot);
 
   const inserted = await client.query<TaskRow>(
-    `INSERT INTO tasks (project_id, persona_set_id, survey_id, mode, video_ref,
+    `WITH next AS (
+       -- Номер берётся счётчиком арендатора в ТОЙ ЖЕ транзакции, что и вставка.
+       -- Sequence не годится: он не откатывается вместе с транзакцией, и
+       -- отменённое создание съедало бы номер навсегда. Пропуск в нумерации
+       -- выглядит потерянным исследованием, и объяснять его пришлось бы каждому
+       -- новому человеку в команде.
+       --
+       -- Цена — блокировка одной строки счётчика на время вставки. Исследование
+       -- создаёт человек руками, десятки раз в день на команду: очередь на этой
+       -- строке не соберётся.
+       INSERT INTO tenant_counters (tenant_id, kind, value)
+       VALUES (current_setting('app.tenant_id')::uuid, 'task', 1)
+       ON CONFLICT (tenant_id, kind)
+       DO UPDATE SET value = tenant_counters.value + 1
+       RETURNING value
+     )
+     INSERT INTO tasks (project_id, persona_set_id, survey_id, mode, video_ref,
                         replication_count, prompts_snapshot, settings_snapshot,
-                        idempotency_key, created_by, tenant_id)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
-             current_setting('app.tenant_id')::uuid)
+                        idempotency_key, created_by, tenant_id, seq_no)
+     SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
+             current_setting('app.tenant_id')::uuid, next.value
+     FROM next
      ON CONFLICT (tenant_id, idempotency_key) WHERE idempotency_key IS NOT NULL
      DO NOTHING
-     RETURNING id, mode, video_ref, replication_count, prompts_snapshot, settings_snapshot, status, created_at, (SELECT COALESCE(u.name, u.email) FROM users u WHERE u.id = tasks.created_by) AS author`,
+     RETURNING id, seq_no, mode, video_ref, replication_count, prompts_snapshot, settings_snapshot, status, created_at, (SELECT COALESCE(u.name, u.email) FROM users u WHERE u.id = tasks.created_by) AS author`,
     [
       params.projectId,
       params.personaSetId,
@@ -308,7 +350,7 @@ export async function launchTask(
   // Конфликт: задача с таким ключом уже есть. Возвращаем её, а не ошибку —
   // для вызывающего повторный запуск обязан выглядеть как успешный.
   const existing = await client.query<TaskRow>(
-    `SELECT id, mode, video_ref, replication_count, prompts_snapshot, settings_snapshot, status, created_at, (SELECT COALESCE(u.name, u.email) FROM users u WHERE u.id = tasks.created_by) AS author
+    `SELECT id, seq_no, mode, video_ref, replication_count, prompts_snapshot, settings_snapshot, status, created_at, (SELECT COALESCE(u.name, u.email) FROM users u WHERE u.id = tasks.created_by) AS author
      FROM tasks WHERE idempotency_key = $1`,
     [key],
   );
@@ -386,7 +428,7 @@ export async function getTask(
   id: string,
 ): Promise<LaunchedTask | null> {
   const { rows } = await client.query<TaskRow>(
-    `SELECT id, mode, video_ref, replication_count, prompts_snapshot, settings_snapshot, status, created_at, (SELECT COALESCE(u.name, u.email) FROM users u WHERE u.id = tasks.created_by) AS author
+    `SELECT id, seq_no, mode, video_ref, replication_count, prompts_snapshot, settings_snapshot, status, created_at, (SELECT COALESCE(u.name, u.email) FROM users u WHERE u.id = tasks.created_by) AS author
      FROM tasks WHERE id = $1`,
     [id],
   );
@@ -395,7 +437,7 @@ export async function getTask(
 
 export async function listTasks(client: PoolClient): Promise<LaunchedTask[]> {
   const { rows } = await client.query<TaskRow>(
-    `SELECT id, mode, video_ref, replication_count, prompts_snapshot, settings_snapshot, status, created_at, (SELECT COALESCE(u.name, u.email) FROM users u WHERE u.id = tasks.created_by) AS author
+    `SELECT id, seq_no, mode, video_ref, replication_count, prompts_snapshot, settings_snapshot, status, created_at, (SELECT COALESCE(u.name, u.email) FROM users u WHERE u.id = tasks.created_by) AS author
      FROM tasks ORDER BY created_at DESC LIMIT 100`,
   );
   return rows.map((r) => toTask(r, false));

@@ -6,7 +6,7 @@ import { EmptyState } from "@/components/agora/States";
 import { DeleteRunButton } from "@/components/agora/DeleteRunButton";
 import { withTenant } from "@/lib/server/db";
 import { requireSession } from "@/lib/server/guard";
-import { listTasks } from "@/lib/server/tasks";
+import { listTasks, taskNumber } from "@/lib/server/tasks";
 
 /**
  * Список прогонов (PRD §5.E).
@@ -95,6 +95,11 @@ export default async function RunsPage() {
                 >
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+                      {taskNumber(task.seqNo) && (
+                        <span className="shrink-0 font-mono text-sm tabular-nums text-slate">
+                          {taskNumber(task.seqNo)}
+                        </span>
+                      )}
                       <h2 className="truncate font-medium">
                         {task.videoRef ?? "Прогон без материала"}
                       </h2>

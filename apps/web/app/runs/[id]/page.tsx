@@ -14,7 +14,7 @@ import { ShareDialog } from "@/components/agora/ShareDialog";
 import { withTenant } from "@/lib/server/db";
 import { requireSession } from "@/lib/server/guard";
 import { loadReport, loadReportPersonas } from "@/lib/server/reports";
-import { loadRunTiming } from "@/lib/server/tasks";
+import { getTask, taskNumber, loadRunTiming } from "@/lib/server/tasks";
 import { parseAnswer, parseReport } from "@/lib/report-view";
 import { CRITERIA, CRITERIA_LABELS } from "@/lib/agora-types";
 
@@ -64,11 +64,16 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
   const { items } = await loadReportPersonas(session, id, { limit: FIRST_PAGE });
   const answers = items.map(parseAnswer);
   const timing = await withTenant(tenantId, (client) => loadRunTiming(client, id));
+  // Номер — для человека, идентификатор — для ссылки. Заголовок «Исследование
+  // e81feb92-97a2-43ad-8112-de7503699c60» нельзя ни произнести, ни запомнить, а
+  // сослаться на прогон в разговоре нужно каждый день.
+  const task = await withTenant(tenantId, (client) => getTask(client, id));
+  const number = taskNumber(task?.seqNo ?? null);
 
   return (
     <>
       <PageHeader
-        title={`Исследование ${id}`}
+        title={number ? `Исследование ${number}` : `Исследование ${id}`}
         subtitle={
           `${envelope.audienceSize} ответов` +
           (view.replicationCount > 1 ? ` · перекрытие ×${view.replicationCount}` : "") +
