@@ -175,14 +175,15 @@ export default function SettingsPage() {
         <section className="rounded-lg border border-hairline bg-card p-6">
           <h2 className="text-sm font-semibold">Модель транскрипции</h2>
           <p className="mt-1 text-xs leading-relaxed text-slate">
-            Транскрипция идёт на CPU. На длинных материалах large-v3 существенно
-            медленнее, turbo быстрее при небольшой потере точности распознавания.
+            Транскрипция идёт на CPU. В образе воркера предзагружена одна модель —
+            выбор второй увёл бы прогон качать полтора гигабайта весов уже после
+            заливки ролика, и выглядело бы это случайным замедлением, а не
+            нехваткой модели.
           </p>
           <div className="mt-4 flex gap-2">
             {(
               [
-                { v: "large-v3", t: "large-v3", d: "точнее, медленнее" },
-                { v: "large-v3-turbo", t: "large-v3-turbo", d: "быстрее, чуть менее точно" },
+                { v: "large-v3", t: "whisper large-v3", d: "точнее, медленнее" },
               ] as const
             ).map((o) => (
               <button

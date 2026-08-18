@@ -10,6 +10,7 @@ import pytest
 from agent_core import __version__
 from agent_core.config import (
     DIARIZATION_PIPELINES,
+    WHISPER_MODELS,
     ConfigError,
     DiarizationConfig,
     ModelConfig,
@@ -67,25 +68,35 @@ def test_transcription_rejects_unsupported_model(monkeypatch):
         TranscriptionConfig.from_env()
 
 
-@pytest.mark.parametrize("model", ["large-v3", "large-v3-turbo"])
-def test_transcription_accepts_both_supported_models(monkeypatch, model):
+@pytest.mark.parametrize("model", WHISPER_MODELS)
+def test_transcription_accepts_every_model_in_the_catalogue(monkeypatch, model):
+    """
+    Каталог перечисляет то, что можно выбрать, и всё перечисленное обязано
+    приниматься. Параметризация по самому каталогу, а не по списку имён: имена
+    менялись вместе с содержимым образа, и второй список отставал бы от первого.
+    """
     monkeypatch.setenv("WHISPER_MODEL", model)
     assert TranscriptionConfig.from_env().whisper_model == model
 
 
-@pytest.mark.parametrize("model", ["large-v3", "large-v3-turbo"])
+@pytest.mark.parametrize("model", WHISPER_MODELS)
 def test_transcription_for_task_uses_snapshot_over_env(monkeypatch, model):
-    """Снимок настроек в задаче важнее окружения: прогон исполняется тем, что выбрал
-    пользователь на момент запуска, а не тем, что стоит в compose сегодня."""
-    other = "large-v3-turbo" if model == "large-v3" else "large-v3"
-    monkeypatch.setenv("WHISPER_MODEL", other)
+    """
+    Снимок настроек в задаче важнее окружения: прогон исполняется тем, что выбрал
+    пользователь на момент запуска, а не тем, что стоит в compose сегодня.
+
+    В окружении намеренно лежит невалидное значение. Проверка выходит острее,
+    чем со вторым валидным именем: если бы окружение всё-таки читалось, вызов не
+    вернул бы другую модель, а упал бы с ConfigError — и разница была бы видна.
+    """
+    monkeypatch.setenv("WHISPER_MODEL", "tiny")
     assert TranscriptionConfig.for_task(model).whisper_model == model
 
 
 def test_transcription_for_task_falls_back_to_env_when_snapshot_empty(monkeypatch):
     """Задачи, поставленные до появления настроек, обязаны остаться исполнимыми."""
-    monkeypatch.setenv("WHISPER_MODEL", "large-v3-turbo")
-    assert TranscriptionConfig.for_task(None).whisper_model == "large-v3-turbo"
+    monkeypatch.setenv("WHISPER_MODEL", WHISPER_MODELS[0])
+    assert TranscriptionConfig.for_task(None).whisper_model == WHISPER_MODELS[0]
 
 
 def test_transcription_for_task_rejects_unsupported_model(monkeypatch):

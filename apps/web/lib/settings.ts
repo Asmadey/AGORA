@@ -11,8 +11,14 @@
  * (задача #2 + #3). До появления auth роут работает с одним арендатором.
  */
 
-/** Модели транскрипции. Список закрыт: воркер грузит веса по этому идентификатору. */
-export const WHISPER_MODELS = ["large-v3", "large-v3-turbo"] as const;
+/**
+ * Модели транскрипции — ровно те, что лежат в образе воркера.
+ *
+ * `large-v3-turbo` убран: его в кэше нет, и выбор уводил прогон качать веса уже
+ * после заливки ролика. Список закреплён тестом вместе с перечнем воркера —
+ * два списка в двух языках расходятся молча.
+ */
+export const WHISPER_MODELS = ["large-v3"] as const;
 export type WhisperModel = (typeof WHISPER_MODELS)[number];
 
 export const COST_CAP_MODES = ["auto", "hard"] as const;
