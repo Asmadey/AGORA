@@ -796,11 +796,42 @@ def evaluate_personas(state: PipelineState) -> dict[str, Any]:
         # на момент чтения отчёта.
         "survey_asked": outcome.asked,
     }
-    if outcome.failures:
-        degraded.append(f"evaluate_personas: отказов {outcome.failures}")
+    degraded.extend(_respondent_degraded(outcome))
     if degraded:
         update["degraded"] = degraded
     return update
+
+
+#: Сколько причин отказа показывать. Три — не круглое число: одинаковых строк
+#: среди отказов обычно большинство, и человеку нужен ВИД отказа, а не перечень.
+#: На пятистах персонах полный список превратил бы экран в лог, а лог на экране
+#: перестают читать целиком.
+MAX_SHOWN_REASONS = 3
+
+
+def _respondent_degraded(outcome: Any) -> list[str]:
+    """
+    Отказы опроса словами, а не только числом.
+
+    Владелец увидел «evaluate_personas: отказов 1» и спросил почему — ответить
+    было нечем: причины складывались в `failure_reasons`, но наружу уходило одно
+    число, а сами объяснения писались в `persona_answers.json` в рабочем
+    каталоге контейнера и умирали вместе с ним.
+
+    Отказ одной персоны из двадцати — законное событие: провайдер отвечает
+    ошибкой, модель возвращает неразбираемый JSON. Ненормально то, что по экрану
+    нельзя отличить «сеть моргнула» от «промпт сломан»: в первом случае прогон
+    перезапускают, во втором чинят.
+    """
+    if not outcome.failures:
+        return []
+
+    lines = [f"evaluate_personas: отказов {outcome.failures}"]
+    reasons = list(outcome.failure_reasons or [])
+    lines.extend(f"  · {r}" for r in reasons[:MAX_SHOWN_REASONS])
+    if len(reasons) > MAX_SHOWN_REASONS:
+        lines.append(f"  · и ещё {len(reasons) - MAX_SHOWN_REASONS} такого же рода")
+    return lines
 
 
 def _load_personas(state: PipelineState) -> list[dict[str, Any]]:

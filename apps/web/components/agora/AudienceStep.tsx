@@ -69,6 +69,11 @@ interface PersonaSetSummary {
   status: "generating" | "ready" | "failed";
   generatedCount: number;
   error: string | null;
+  /**
+   * Критерии, по которым набор собран. Нужны резюме визарда: без них оно
+   * показывало прочерк вместо возраста и географии выбранного набора.
+   */
+  generationConfig?: Record<string, unknown>;
 }
 
 export interface AudienceStepProps {
@@ -83,7 +88,19 @@ export interface AudienceStepProps {
    * подставить туда что-то приблизительное значило бы назвать пользователю
    * стоимость прогона наугад.
    */
-  onPersonaSetChange: (id: string | null, size?: number) => void;
+  /**
+   * Выбран набор персон.
+   *
+   * Третьим аргументом едут КРИТЕРИИ, по которым набор собран
+   * (`persona_sets.generation_config`). Без них резюме визарда показывало
+   * прочерк вместо возраста и географии: критерии шага «Аудитория» к готовому
+   * набору не относятся, а его собственные никто наверх не передавал.
+   */
+  onPersonaSetChange: (
+    id: string | null,
+    size?: number,
+    config?: Record<string, unknown>,
+  ) => void;
   /** Приложенный файл контекста: имя и размер для плашки. */
   contextFile: { name: string; size: number } | null;
   onContextFileChange: (file: { name: string; size: number } | null) => void;
@@ -243,7 +260,13 @@ export function AudienceStep({
       // Раньше здесь ждали конца генерации, и на шестидесяти персонах маршрут
       // просто отваливался по таймауту, теряя всё написанное.
       const newId = data.personaSetId as string;
-      onPersonaSetChange(newId, 0);
+      // Только что созданный набор собран по критериям этого шага — их и
+      // передаём: резюме обязано показать состав, а не прочерк.
+      onPersonaSetChange(newId, 0, {
+        age_groups: criteria.ageGroups,
+        geos: criteria.geos,
+        genders: criteria.genders,
+      });
       await refreshSets();
     } catch (e) {
       setGenError((e as Error).message);
@@ -265,7 +288,13 @@ export function AudienceStep({
           Создать аудиторию
         </button>
         <button
-          onClick={() => onPersonaSetChange(sets?.[0]?.id ?? null, sets?.[0]?.personaCount)}
+          onClick={() =>
+            onPersonaSetChange(
+              sets?.[0]?.id ?? null,
+              sets?.[0]?.personaCount,
+              sets?.[0]?.generationConfig,
+            )
+          }
           disabled={!sets || sets.length === 0}
           className={cn(
             "flex-1 rounded-md border p-3 text-sm transition-colors disabled:opacity-40",
@@ -301,7 +330,7 @@ export function AudienceStep({
             {(sets ?? []).map((s) => (
               <button
                 key={s.id}
-                onClick={() => onPersonaSetChange(s.id, s.personaCount)}
+                onClick={() => onPersonaSetChange(s.id, s.personaCount, s.generationConfig)}
                 // Набор в работе выбрать нельзя: запуск на неполной аудитории
                 // дал бы отчёт по случайной её части, и понять это было бы
                 // неоткуда — размер в резюме показал бы заказанное число.

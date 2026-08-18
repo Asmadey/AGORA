@@ -130,6 +130,16 @@ export default function NewStudyPage() {
   // этому числу оценку вызовов модели — приблизительное значение здесь
   // означало бы названную наугад стоимость прогона.
   const [personaSetSize, setPersonaSetSize] = useState<number | null>(null);
+  /**
+   * Критерии, по которым собран ВЫБРАННЫЙ набор.
+   *
+   * Резюме показывало прочерк вместо возраста и географии, как только набор был
+   * выбран: критерии шага «Аудитория» к готовому набору не относятся, а его
+   * собственные наверх не передавались. Прочерк при этом читается как «данных
+   * нет», хотя набор описан полностью — они лежат в
+   * `persona_sets.generation_config`.
+   */
+  const [personaSetConfig, setPersonaSetConfig] = useState<Record<string, unknown> | null>(null);
   const [contextFile, setContextFile] = useState<{ name: string; size: number } | null>(null);
   const [videoRef, setVideoRef] = useState<string | null>(null);
   const [videoName, setVideoName] = useState<string | null>(null);
@@ -146,6 +156,20 @@ export default function NewStudyPage() {
   // заказанный размер генерации. null — набор выбран, а его размер ещё не
   // приехал; оценка в резюме тогда честно показывает прочерк.
   const audienceSize = personaSetId ? personaSetSize : criteria.size;
+
+  /**
+   * Значение из состава выбранного набора либо null, если набор не выбран.
+   *
+   * Пустой список у набора — законный случай: «любой возраст» при генерации.
+   * Так и пишем, а не прочерком: прочерк означает «неизвестно», а здесь
+   * известно, что ограничения не было.
+   */
+  function setList(key: string): string | null {
+    if (!personaSetId || !personaSetConfig) return null;
+    const raw = personaSetConfig[key];
+    if (!Array.isArray(raw)) return null;
+    return raw.length ? raw.map(String).join(", ") : "без ограничения";
+  }
 
   // Загрузка идёт по маршрутам #8, уже подтверждённым на стенде: presign → PUT
   // байтов прямо в S3 → complete с ffprobe-валидацией. Веб файл не проксирует:
@@ -357,9 +381,10 @@ export default function NewStudyPage() {
             criteria={criteria}
             onCriteriaChange={setCriteria}
             personaSetId={personaSetId}
-            onPersonaSetChange={(id, size) => {
+            onPersonaSetChange={(id, size, config) => {
               setPersonaSetId(id);
               setPersonaSetSize(size ?? null);
+              setPersonaSetConfig(config ?? null);
             }}
             contextFile={contextFile}
             onContextFileChange={setContextFile}
@@ -414,8 +439,12 @@ export default function NewStudyPage() {
                       : "выбранный набор персон"
                     : `${criteria.size} персон`,
                 ],
-                ["Возраст", personaSetId ? "—" : criteria.ageGroups.join(", ") || "не выбран"],
-                ["География", personaSetId ? "—" : criteria.geos.join(", ") || "не выбрана"],
+                // У выбранного набора показывается ЕГО состав, а не критерии
+                // этого шага: критерии описывают будущую генерацию, а прогон
+                // пойдёт по уже собранному набору. Прочерк, стоявший здесь
+                // раньше, читался как «данных нет», хотя набор описан целиком.
+                ["Возраст", setList("age_groups") ?? (criteria.ageGroups.join(", ") || "не выбран")],
+                ["География", setList("geos") ?? (criteria.geos.join(", ") || "не выбрана")],
                 ["Доп. контекст", contextFile?.name ?? "не приложен"],
                 [
                   "Анкета",
