@@ -239,6 +239,32 @@ export async function createSnapshot(
 }
 
 /** Слепок набора персон. null — набор собран до появления слепков либо из файла. */
+/**
+ * Записи слепка, по которому собран набор.
+ *
+ * Отдельно от `snapshotOfPersonaSet`: тот отдаёт паспорт слепка (имя, размер,
+ * контрольную сумму) и зовётся на каждый показ набора, а записи — это весь
+ * корпус целиком, и тянуть его ради шапки было бы расточительством.
+ *
+ * Берётся именно слепок, а не датасет на сегодня: датасет правят, и сравнение с
+ * его текущей версией отвечало бы на другой вопрос — «похож ли старый набор на
+ * новые данные».
+ */
+export async function snapshotRecordsOfPersonaSet(
+  client: PoolClient,
+  personaSetId: string,
+): Promise<Record<string, unknown>[]> {
+  const { rows } = await client.query<{ records: unknown }>(
+    `SELECT s.records
+     FROM corpus_snapshots s
+     JOIN persona_sets p ON p.corpus_snapshot_id = s.id
+     WHERE p.id = $1`,
+    [personaSetId],
+  );
+  const records = rows[0]?.records;
+  return Array.isArray(records) ? (records as Record<string, unknown>[]) : [];
+}
+
 export async function snapshotOfPersonaSet(
   client: PoolClient,
   personaSetId: string,
