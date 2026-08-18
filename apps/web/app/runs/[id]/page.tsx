@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { MessageCircle, RotateCcw } from "lucide-react";
+import { Activity, MessageCircle, RotateCcw } from "lucide-react";
 import { PageHeader } from "@/components/AppShell";
 import { JsonTree } from "@/components/agora/JsonTree";
 import {
@@ -85,6 +85,18 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
         }
         actions={
           <>
+            {/*
+              Прогресс доступен и после конца прогона: там видно, сколько занял
+              каждый шаг. Раньше на эту страницу попадали только пока считается,
+              то есть ровно тогда, когда сравнивать не с чем.
+            */}
+            <Link
+              href={`/runs/${id}/progress`}
+              className="inline-flex items-center gap-2 rounded-md border border-hairline px-4 py-2 text-sm transition-colors hover:bg-secondary"
+            >
+              <Activity className="h-4 w-4" />
+              Прогресс
+            </Link>
             <Link
               href={`/runs/${id}/chat`}
               className="inline-flex items-center gap-2 rounded-md border border-hairline px-4 py-2 text-sm transition-colors hover:bg-secondary"

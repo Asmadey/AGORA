@@ -48,9 +48,19 @@ export function ProgressView({
   mode = "short",
   startedAt = null,
   finishedAt = null,
+  durations = {},
 }: {
   taskId: string;
   mode?: "short" | "long";
+  /**
+   * Сколько секунд занял каждый шаг: `{ имя узла: секунды }`.
+   *
+   * Приходит из `progress.timings`, которые воркер записывает В КОНЦЕ прогона
+   * (`_save_timings`). Поэтому на идущем прогоне словарь пуст, и длительность
+   * текущего шага считается здесь по времени события — иначе экран, ради
+   * которого всё затевалось, был бы пустым ровно тогда, когда на него смотрят.
+   */
+  durations?: Record<string, number>;
   /**
    * Когда воркер взял задачу — `tasks.started_at`, момент первого перехода в
    * RUNNING, то есть начало шага «Разбор файла». null — задача ещё в очереди.
@@ -136,6 +146,36 @@ export function ProgressView({
     const timer = setInterval(tick, 1000);
     return () => clearInterval(timer);
   }, [startedAt, finishedAt, firstEventAt, finished, failed]);
+
+  // Когда начался текущий шаг: по времени события, которое о нём сообщило.
+  // Событие приходит на КАЖДУЮ смену узла, поэтому отсчёт начинается заново
+  // вместе с шагом, а не тянется от старта прогона.
+  const [stepStartedAt, setStepStartedAt] = useState<number | null>(null);
+  const [stepElapsed, setStepElapsed] = useState<number | null>(null);
+  const currentNode = event?.node ?? null;
+
+  useEffect(() => {
+    setStepStartedAt(event?.at ? event.at * 1000 : Date.now());
+  }, [currentNode]);
+
+  useEffect(() => {
+    if (stepStartedAt === null || finished || failed) {
+      setStepElapsed(null);
+      return;
+    }
+    const tick = () => setStepElapsed(Math.max(0, Math.round((Date.now() - stepStartedAt) / 1000)));
+    tick();
+    const timer = setInterval(tick, 1000);
+    return () => clearInterval(timer);
+  }, [stepStartedAt, finished, failed]);
+
+  /** «(30 сек)» рядом с названием шага. Пусто — длительности пока нет. */
+  function stepTime(node: PipelineNode, state: NodeState): string {
+    const known = durations[node.name];
+    if (typeof known === "number") return ` (${Math.round(known)} сек)`;
+    if (state === "running" && stepElapsed !== null) return ` (${stepElapsed} сек)`;
+    return "";
+  }
 
   const currentIndex = nodes.findIndex((n) => n.name === event?.node);
   const doneCount = finished
@@ -232,6 +272,7 @@ export function ProgressView({
                   className={cn("block text-sm", state === "waiting" && "text-slate")}
                 >
                   {node.label}
+                  <span className="tabular-nums text-slate">{stepTime(node, state)}</span>
                 </span>
                 <span className="mt-0.5 block text-xs text-slate">
                   {state === "running" && event?.detail ? event.detail : node.detail}

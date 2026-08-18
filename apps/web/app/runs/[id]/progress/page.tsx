@@ -4,6 +4,7 @@ import { PageHeader } from "@/components/AppShell";
 import { ProgressView } from "@/components/agora/ProgressView";
 import { withTenant } from "@/lib/server/db";
 import { requireSession } from "@/lib/server/guard";
+import { loadRunTiming } from "@/lib/server/tasks";
 
 /**
  * Страница прогресса прогона (задача #12).
@@ -45,6 +46,14 @@ export default async function ProgressPage({
     return rows[0] ?? null;
   });
 
+  // Длительности шагов лежат в progress.timings — их пишет воркер в конце
+  // прогона. На идущем прогоне словарь пуст, и ProgressView считает текущий шаг
+  // сам по времени события.
+  const timing = await withTenant(tenantId, (client) => loadRunTiming(client, id));
+  const durations = Object.fromEntries(
+    timing.nodes.flatMap((n) => (n.durationSec === null ? [] : [[n.node, n.durationSec]])),
+  );
+
   // RLS уже отрезал чужих арендаторов: строки просто нет. «Не ваш прогон» и
   // «нет такого» отвечают одинаково намеренно — разные ответы сами по себе
   // сообщали бы о существовании чужого прогона.
@@ -62,6 +71,7 @@ export default async function ProgressPage({
           mode={row.mode === "long" ? "long" : "short"}
           startedAt={row.started_at?.toISOString() ?? null}
           finishedAt={row.finished_at?.toISOString() ?? null}
+          durations={durations}
         />
       </div>
     </>
