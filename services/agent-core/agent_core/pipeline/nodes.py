@@ -391,8 +391,10 @@ def transcribe_and_diarize(state: PipelineState) -> dict[str, Any]:
     """
     from concurrent.futures import ThreadPoolExecutor
 
+    from ..asr import budget
     from ..asr.diarize import DiarizationUnavailable
     from ..asr.diarize import diarize as run_diarize
+    from ..config import TranscriptionConfig
 
     audio = str(state["audio_ref"])
     spans = [(a, b) for a, b in state.get("speech_regions", [])]
@@ -407,24 +409,59 @@ def transcribe_and_diarize(state: PipelineState) -> dict[str, Any]:
             # самый нужный при разборе случай, и терять его незачем.
             stage_timings[name] = round(time.monotonic() - started, 3)
 
-    with ThreadPoolExecutor(max_workers=2, thread_name_prefix="asr") as pool:
-        transcription = pool.submit(timed, "transcribe", lambda: _asr(state)(audio))
-        diarization = pool.submit(
-            timed, "diarize", lambda: run_diarize(audio, spans=spans or None)
-        )
+    def do_transcribe():
+        return timed("transcribe", lambda: _asr(state)(audio))
 
-        # Расшифровка забирается первой: её отказ отменяет прогон, и ждать ради
-        # него ещё и диаризацию незачем. Пул при выходе из with всё равно
-        # дождётся второго потока — бросить его на середине нельзя, он держит
-        # модель.
-        segments = transcription.result()
+    def do_diarize():
+        return timed("diarize", lambda: run_diarize(audio, spans=spans or None))
 
-        degraded: list[str] = []
+    degraded: list[str] = []
+
+    # ─── Помещаются ли они в память вместе ────────────────────────────────
+    #
+    # Потоки одного процесса складывают пик. Замер 18.08.2026 на дорожке 15
+    # минут: pyannote 2,4 ГБ, whisper large-v3 5,0 ГБ, parakeet кусками 1,2 ГБ.
+    # С whisper пара просит 7,4 ГБ — и это те шесть убийств по OOM, что лежат в
+    # журнале ядра сервера. Убитый воркер не выглядит нехваткой памяти: прогон
+    # обрывается, следующий на том же ролике обрывается снова, и причину ищут
+    # в ролике.
+    model = TranscriptionConfig.for_task(
+        (state.get("settings_snapshot") or {}).get("whisperModel")
+    ).whisper_model
+
+    if budget.can_run_together(model):
+        with ThreadPoolExecutor(max_workers=2, thread_name_prefix="asr") as pool:
+            transcription = pool.submit(do_transcribe)
+            diarization = pool.submit(do_diarize)
+
+            # Расшифровка забирается первой: её отказ отменяет прогон, и ждать
+            # ради него ещё и диаризацию незачем. Пул при выходе из with всё
+            # равно дождётся второго потока — бросить его на середине нельзя,
+            # он держит модель.
+            segments = transcription.result()
+            try:
+                turns = diarization.result()
+            except DiarizationUnavailable as exc:
+                turns = []
+                degraded.append(f"diarize: {exc}")
+    else:
+        # По очереди. Дороже на время диаризации, но живой прогон дороже
+        # быстрого. В отчёт это идёт строкой: замедление, о котором не сказано,
+        # разбирают как дефект — а это решение, и у него есть причина.
+        segments = do_transcribe()
         try:
-            turns = diarization.result()
+            turns = do_diarize()
         except DiarizationUnavailable as exc:
             turns = []
             degraded.append(f"diarize: {exc}")
+        need = (
+            budget.TRANSCRIBE_PEAK_MB.get(model, budget.UNKNOWN_PEAK_MB)
+            + budget.DIARIZE_PEAK_MB
+        )
+        degraded.append(
+            f"расшифровка и диаризация выполнены по очереди: вместе они просят "
+            f"{need} МБ, а свободно {budget.available_mb():.0f} МБ"
+        )
 
     update: dict[str, Any] = {
         "transcript_raw": [

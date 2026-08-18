@@ -102,6 +102,14 @@ def _patch(monkeypatch, transcribe_work, diarize_work):
         importlib.import_module("agent_core.asr.diarize"),
         "diarize", diarize_work,
     )
+    # Свободная память задаётся явно. С 18.08.2026 узел решает по ней, идти в
+    # два потока или по очереди (см. agent_core/asr/budget.py), и без этой
+    # строки тест мерил бы не код, а объём памяти машины, на которой он идёт, —
+    # на macOS `available_mb()` честно отдаёт ноль, и параллельности не будет.
+    monkeypatch.setattr(
+        importlib.import_module("agent_core.asr.budget"),
+        "available_mb", lambda: 14000.0,
+    )
 
 
 def test_both_halves_overlap_in_time(monkeypatch):
