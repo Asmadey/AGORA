@@ -200,6 +200,49 @@ export async function deletePersonas(
   return rowCount ?? 0;
 }
 
+
+/**
+ * Удаление наборов. Набор, на котором стоит исследование, НЕ удаляется.
+ *
+ * ─── Почему отказ, а не удаление ───────────────────────────────────────────
+ * Внешний ключ `tasks.persona_set_id` объявлен `ON DELETE SET NULL`: удаление
+ * набора не ломает прогон, оно тихо обнуляет ссылку. Отчёт остаётся на месте, а
+ * ответ на вопрос «на ком это проверяли» исчезает — и исчезает молча, без следа
+ * в интерфейсе. Уборка в списке наборов задним числом лишала бы смысла уже
+ * принятые по отчётам решения.
+ *
+ * Поэтому такие наборы возвращаются отдельным списком с числом прогонов: пусть
+ * человек решает, а не узнаёт постфактум.
+ */
+export async function deletePersonaSets(
+  client: PoolClient,
+  ids: string[],
+): Promise<{ deleted: number; blocked: { id: string; name: string; runs: number }[] }> {
+  if (ids.length === 0) return { deleted: 0, blocked: [] };
+
+  const { rows: used } = await client.query<{ id: string; name: string; runs: string }>(
+    `SELECT ps.id, ps.name, COUNT(t.id)::text AS runs
+       FROM persona_sets ps
+       JOIN tasks t ON t.persona_set_id = ps.id
+      WHERE ps.id = ANY($1::uuid[])
+      GROUP BY ps.id, ps.name`,
+    [ids],
+  );
+  const blocked = used.map((r) => ({ id: r.id, name: r.name, runs: Number(r.runs) }));
+  const blockedIds = new Set(blocked.map((b) => b.id));
+  const free = ids.filter((id) => !blockedIds.has(id));
+
+  if (free.length === 0) return { deleted: 0, blocked };
+
+  // Персоны уезжают каскадом (`personas_persona_set_id_fkey ON DELETE CASCADE`)
+  // — отдельного запроса не нужно, и его отсутствие здесь намеренное.
+  const { rowCount } = await client.query(
+    "DELETE FROM persona_sets WHERE id = ANY($1::uuid[])",
+    [free],
+  );
+  return { deleted: rowCount ?? 0, blocked };
+}
+
 // ─── Персоны ───────────────────────────────────────────────────────────────
 
 export async function listPersonas(
