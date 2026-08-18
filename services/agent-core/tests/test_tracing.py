@@ -488,3 +488,71 @@ def test_export_hook_leaves_clean_batches_alone():
         )
     )
     assert result is None, "пачка без учётных данных обязана уйти нетронутой"
+
+
+# ─── 8. Имена наблюдений — как имена в API ───────────────────────────────────
+#
+# Правило из https://langfuse.com/docs/observability/best-practices : имя
+# идентифицирует ОПЕРАЦИЮ, а не отдельное её исполнение. Имя с идентификатором
+# внутри («прогон 0050») даёт новое имя на каждый прогон, и по нему нельзя ни
+# сгруппировать, ни отфильтровать, ни нацелить оценщика. Идентификатор для
+# этого есть в session_id и в метаданных.
+#
+# Первая редакция трассировки нарушала это правило, и заметить его я смог
+# только прочитав страницу заново, а не по памяти.
+
+def test_trace_name_carries_no_identifiers(with_keys, monkeypatch):
+    monkeypatch.setattr(tracing, "client", lambda: _FakeClient())
+
+    propagated: dict[str, object] = {}
+
+    import contextlib as _ctx
+
+    @_ctx.contextmanager
+    def fake_propagate(**kwargs):
+        propagated.update(kwargs)
+        yield
+
+    import langfuse
+
+    monkeypatch.setattr(langfuse, "propagate_attributes", fake_propagate)
+
+    with tracing.run(task_id="0050", tenant_id="de15d1e3"):
+        pass
+
+    name = str(propagated.get("trace_name") or "")
+    assert "0050" not in name and "de15d1e3" not in name, (
+        f"имя трассы «{name}» содержит идентификатор: каждый прогон даст новое "
+        f"имя, и фильтры, панели и оценщики перестанут по нему находиться"
+    )
+    assert name, "имя трассы пустое"
+
+
+def test_every_model_call_is_named(with_keys):
+    """
+    Стык. Без явного имени интеграция называет генерацию `OpenAI-generation` —
+    одинаково для ответа персоны, вердикта судьи и разбора кадра. В трассе они
+    станут неразличимы, а оценщик, который целится по имени, поймает все три.
+    """
+    import ast
+    from pathlib import Path
+
+    package = Path(__file__).resolve().parents[1] / "agent_core"
+
+    unnamed = []
+    for path in package.rglob("*.py"):
+        tree = ast.parse(path.read_text("utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            target = ast.unparse(node.func)
+            if not target.endswith("chat.completions.create"):
+                continue
+            if not any(kw.arg == "name" for kw in node.keywords):
+                unnamed.append(f"{path.relative_to(package)}:{node.lineno}")
+
+    assert not unnamed, (
+        "вызов модели без имени наблюдения: " + ", ".join(sorted(unnamed))
+        + ". Все такие вызовы лягут в трассу под одним именем "
+        "`OpenAI-generation` и станут неразличимы"
+    )

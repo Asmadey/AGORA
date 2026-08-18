@@ -206,6 +206,10 @@ class QwenTextClient:
             extra["max_tokens"] = self.max_tokens
 
         response = client.chat.completions.create(
+            # Имя наблюдения в трассе. Без него интеграция назовёт
+            # генерацию `OpenAI-generation` — одинаково для ответа
+            # персоны, вердикта судьи и разбора кадра.
+            name="enrich-persona",
             model=self.model,
             messages=[{"role": "user", "content": prompt}],
             temperature=self.temperature,

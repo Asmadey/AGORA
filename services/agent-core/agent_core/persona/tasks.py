@@ -128,6 +128,9 @@ def generate_audience(self: Any, payload: dict[str, Any]) -> dict[str, Any]:
     trace = tracing.run(
         task_id=set_id,
         tenant_id=tenant_id,
+        # Своё имя трассы: сборка аудитории и прогон исследования — разные
+        # операции, и под одним именем их метрики сложились бы в одну кучу.
+        trace_name="аудитория",
         kind="generate_audience",
         size=len(personas),
         tags=["audience"],

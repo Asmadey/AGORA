@@ -88,6 +88,10 @@ class QwenAnalystClient:
             timeout=REQUEST_TIMEOUT_SEC,
         )
         response = client.chat.completions.create(
+            # Имя наблюдения в трассе. Без него интеграция назовёт
+            # генерацию `OpenAI-generation` — одинаково для ответа
+            # персоны, вердикта судьи и разбора кадра.
+            name="build-report",
             model=self.config.text_model,
             messages=[
                 {"role": "system", "content": system},

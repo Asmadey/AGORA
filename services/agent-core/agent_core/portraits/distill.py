@@ -366,6 +366,10 @@ def distill_portrait_llm(
     try:
         client = llm_client(api_key=key, base_url=url)
         response = client.chat.completions.create(
+            # Имя наблюдения в трассе. Без него интеграция назовёт
+            # генерацию `OpenAI-generation` — одинаково для ответа
+            # персоны, вердикта судьи и разбора кадра.
+            name="distill-portrait",
             model=mdl,
             messages=[{"role": "user", "content": prompt}],
             temperature=stage_temperature,

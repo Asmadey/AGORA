@@ -431,6 +431,10 @@ class QwenVlmClient:
 
         data_url = "data:image/jpeg;base64," + base64.b64encode(image).decode("ascii")
         response = client.chat.completions.create(
+            # Имя наблюдения в трассе. Без него интеграция назовёт
+            # генерацию `OpenAI-generation` — одинаково для ответа
+            # персоны, вердикта судьи и разбора кадра.
+            name="analyze-frame",
             model=self.model,
             messages=[{
                 "role": "user",

@@ -198,7 +198,7 @@ def llm_client(
 # ─────────────────────────────────────────────────────────────────────────
 
 @contextlib.contextmanager
-def run(task_id: str, tenant_id: str, **attrs: Any):
+def run(task_id: str, tenant_id: str, trace_name: str = "исследование", **attrs: Any):
     """
     Корневой спан прогона. Всё, что случится внутри, ляжет под него.
 
@@ -232,7 +232,11 @@ def run(task_id: str, tenant_id: str, **attrs: Any):
     try:
         with lf.start_as_current_observation(as_type="span", name="pipeline") as span:
             with propagate_attributes(
-                trace_name=f"прогон {task_id}",
+                # Имя без идентификатора: оно называет ОПЕРАЦИЮ, а не отдельное
+                # её исполнение. Имя вида «прогон 0050» даёт новое значение на
+                # каждый прогон, и по нему нельзя ни сгруппировать, ни нацелить
+                # оценщика — а идентификатор для этого есть в session_id.
+                trace_name=trace_name,
                 session_id=task_id,
                 user_id=tenant_id,
                 tags=tags,
