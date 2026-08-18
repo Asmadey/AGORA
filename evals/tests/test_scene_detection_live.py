@@ -89,7 +89,7 @@ else:
     cut_video = tmp / "cuts.mp4"
     build(cut_video, [("red", 4), ("lime", 4), ("blue", 4), ("yellow", 4)])
     scenes = detect_scenes(cut_video)
-    starts = [round(s.timestamp_sec, 1) for s in scenes]
+    starts = [round(s.start_sec, 1) for s in scenes]
 
     expected = [0.0, 4.0, 8.0, 12.0]
     matched = all(
@@ -105,7 +105,7 @@ else:
     flat_video = tmp / "flat.mp4"
     build(flat_video, [("red", int(MAX_SCENE_SEC) + 10)])
     flat = detect_scenes(flat_video)
-    longest = max((s.end_sec - s.timestamp_sec for s in flat), default=0.0)
+    longest = max((s.end_sec - s.start_sec for s in flat), default=0.0)
 
     check(
         CASES[1],
