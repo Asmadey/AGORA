@@ -119,13 +119,24 @@ _UPDATE = re.compile(
     r"SET template = '(?P<tpl>(?:[^']|'')*)'.*?key = '(?P<key>[a-z._]+)'",
     re.DOTALL,
 )
+# Третья форма засева: INSERT ... SELECT вместо VALUES. Так написана миграция 21
+# — ей нужен WHERE NOT EXISTS для идемпотентности, а VALUES его не принимает.
+#
+# Разбирать её обязательно, а не «желательно». Проверка, не видящая форму
+# записи, молчит там, где текст разошёлся с файлом, — то есть даёт ровно то
+# ложное спокойствие, против которого написан комментарий выше. Ключ
+# persona.validate так и висел «не найден в засеве», хотя засев был.
+_SELECT = re.compile(
+    r"SELECT\s+NULL,\s*'(?P<key>[a-z._]+)',\s*'(?:[^']|'')*?',\s*'(?P<tpl>(?:[^']|'')*)'",
+    re.DOTALL,
+)
 
 # Порядок — по положению в тексте, а не по типу оператора: файлы склеены
 # отсортированными, и последний по счёту оператор для ключа и есть тот, что
 # останется в базе после прогона всех миграций.
 _assignments = [
     (m.start(), m.group("key"), m.group("tpl").replace("''", "'"))
-    for pattern in (_INSERT, _UPDATE)
+    for pattern in (_INSERT, _SELECT, _UPDATE)
     for m in pattern.finditer(seed_text)
 ]
 latest_template: dict[str, str] = {

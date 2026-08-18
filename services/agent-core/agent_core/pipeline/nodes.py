@@ -106,8 +106,18 @@ def _models_used(state: PipelineState) -> dict[str, str]:
 
     Ключа здесь нет: отчёт живёт долго и уезжает в Mongo, а секрет, попавший
     туда, не отозвать.
+
+    Отсутствие конфигурации — не отказ. Узел analytics считает агрегат и без
+    провайдера (числа не требуют модели), и падение здесь роняло бы весь отчёт
+    ради подписи под ним. Пустой словарь означает «не знаем», и карточка так и
+    напишет.
     """
-    config = _model_config(state)
+    from ..config import ConfigError
+
+    try:
+        config = _model_config(state)
+    except ConfigError:
+        return {}
     return {
         "text": config.text_model,
         "vision": config.vlm_model,

@@ -205,6 +205,79 @@
             }
           }
         }
+      },
+      "delete": {
+        "summary": "Удаление наборов аудитории",
+        "description": "Набор, на котором стоит хоть одно исследование, НЕ удаляется: внешний ключ tasks.persona_set_id объявлен ON DELETE SET NULL, и удаление тихо обнулило бы у прогона ссылку на аудиторию. Такие наборы возвращаются в blocked.",
+        "tags": [
+          "Аудитория"
+        ],
+        "operationId": "deletePersonaSets",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "ids"
+                ],
+                "properties": {
+                  "ids": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "description": "Идентификаторы. Чужие не находятся: RLS не покажет строку другого арендатора."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Удалённые и отклонённые наборы",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "deleted": {
+                      "type": "integer"
+                    },
+                    "requested": {
+                      "type": "integer"
+                    },
+                    "blocked": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "format": "uuid"
+                          },
+                          "name": {
+                            "type": "string"
+                          },
+                          "runs": {
+                            "type": "integer",
+                            "description": "Сколько исследований ссылается"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "ids отсутствует, пуст или содержит не-идентификаторы"
+          }
+        }
       }
     },
     "/api/auth/{nextauth}": {
@@ -524,6 +597,60 @@
                 }
               }
             }
+          }
+        }
+      },
+      "delete": {
+        "summary": "Удаление персон",
+        "description": "Персона удаляется из реестра, но не из отчёта: карточки ответов живут в Mongo и ссылаются на идентификатор, а не на строку.",
+        "tags": [
+          "Персоны"
+        ],
+        "operationId": "deletePersonas",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "ids"
+                ],
+                "properties": {
+                  "ids": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "description": "Идентификаторы. Чужие не находятся: RLS не покажет строку другого арендатора."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Сколько удалено и сколько запрошено",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "deleted": {
+                      "type": "integer"
+                    },
+                    "requested": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "ids отсутствует, пуст или содержит не-идентификаторы"
           }
         }
       }
@@ -2482,6 +2609,70 @@
             "application/json": {
               "schema": {
                 "type": "object"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/models": {
+      "get": {
+        "summary": "Модели провайдера",
+        "description": "Живой список от провайдера вместо зашитого перечня: зашитый устаревает молча. Ключ наружу не выходит ни в каком виде — маршрут ходит к провайдеру сам и отдаёт только имена и маску ключа.",
+        "tags": [
+          "Настройки"
+        ],
+        "operationId": "listProviderModels",
+        "responses": {
+          "200": {
+            "description": "Список моделей и то, что действует сейчас",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "current": {
+                      "type": "object",
+                      "properties": {
+                        "endpoint": {
+                          "type": "string"
+                        },
+                        "keyMask": {
+                          "type": "string",
+                          "description": "Маска вида sk-1a…9f. Ключ не восстановим."
+                        },
+                        "text": {
+                          "type": "string"
+                        },
+                        "vision": {
+                          "type": "string"
+                        }
+                      }
+                    },
+                    "models": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "vision": {
+                            "type": "boolean"
+                          }
+                        }
+                      }
+                    },
+                    "guessed": {
+                      "type": "boolean",
+                      "description": "Модальность опознана по имени, а не по паспорту модели"
+                    },
+                    "error": {
+                      "type": "string",
+                      "nullable": true
+                    }
+                  }
+                }
               }
             }
           }
