@@ -88,3 +88,62 @@ describe("endpoint провайдера", () => {
     assert.equal(normalizeEndpoint("user@example.com").ok, false);
   });
 });
+
+/**
+ * ─── Потолок переспроса ────────────────────────────────────────────────────
+ *
+ * До 19.08 переспрос забракованных включался порогом в треть, зашитым в код.
+ * На прогоне № 0050 забраковали 8 ответов из 27 — 29,6 %, ниже порога, — и
+ * переспроса не было. Механизм отказывал ровно там, где он дёшев.
+ *
+ * Порог убран, вместо него потолок, и он принадлежит команде: у одной каждый
+ * вызов на счету, у другой на счету достоверность отчёта.
+ */
+describe("потолок переспроса", () => {
+  const base = {
+    costCap: "auto",
+    costCapValue: 500,
+    whisperModel: "parakeet-tdt-0.6b-v3",
+    defaultReplication: 1,
+  };
+
+  it("умолчание есть и оно не ноль", () => {
+    assert.equal(typeof DEFAULT_SETTINGS.requestionCap, "number");
+    assert.ok(DEFAULT_SETTINGS.requestionCap > 0);
+  });
+
+  it("значение принимается", () => {
+    const parsed = parseSettings({ ...base, requestionCap: 5 });
+    assert.ok(parsed.ok);
+    if (parsed.ok) assert.equal(parsed.value.requestionCap, 5);
+  });
+
+  it("ноль законен — это «не переспрашивать»", () => {
+    // Без нуля тот, кто считает вызовы, выключал бы QA целиком.
+    const parsed = parseSettings({ ...base, requestionCap: 0 });
+    assert.ok(parsed.ok);
+    if (parsed.ok) assert.equal(parsed.value.requestionCap, 0);
+  });
+
+  it("отсутствие поля — это умолчание, а не отказ", () => {
+    // Настройки, сохранённые до появления поля, не содержат его вовсе.
+    const parsed = parseSettings(base);
+    assert.ok(parsed.ok);
+    if (parsed.ok) assert.equal(parsed.value.requestionCap, DEFAULT_SETTINGS.requestionCap);
+  });
+
+  it("отрицательное и дробное отвергаются с внятной претензией", () => {
+    for (const bad of [-1, 1.5, "5", null]) {
+      const parsed = parseSettings({ ...base, requestionCap: bad });
+      assert.ok(!parsed.ok, `принято непригодное: ${JSON.stringify(bad)}`);
+      if (!parsed.ok) assert.match(parsed.errors.join(" "), /requestionCap/);
+    }
+  });
+
+  it("выше потолка воркера отвергается, а не обрезается", () => {
+    // Обрезка означала бы, что человек видит в настройках одно, а прогон
+    // исполняет другое. Граница та же, что в RequestionConfig.MAX.
+    const parsed = parseSettings({ ...base, requestionCap: 101 });
+    assert.ok(!parsed.ok);
+  });
+});

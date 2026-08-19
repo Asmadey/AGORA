@@ -1076,10 +1076,28 @@ def _requestion_flagged(
     from ..respondent import requestion as rq
 
     flagged = outcome.flagged
-    if not rq.needs_requestion(answers, flagged):
+    # Потолок берётся из снимка настроек прогона, а не из константы: пока
+    # задача стоит в очереди, настройку можно сменить, и тогда часть ответов
+    # переспрошена, часть нет — внутри одного прогона, который читают как целое.
+    from ..config import RequestionConfig
+
+    cap = RequestionConfig.for_task(state.get("settings_snapshot")).cap
+
+    if not rq.needs_requestion(answers, flagged, cap=cap):
         return answers, 0
 
-    targets = rq.personas_to_ask(flagged)
+    all_targets = rq.personas_to_ask(flagged)
+    targets = rq.limit_to_cap(all_targets, cap=cap)
+    if rq.cap_exhausted(all_targets, cap=cap):
+        # Названо до вызова модели: если переспрос дальше отвалится, эта строка
+        # всё равно доедет до отчёта. Отчёт, стоящий на остатке и молчащий об
+        # этом, — то самое, ради чего переспрос и заводился.
+        degraded.append(
+            f"qa: потолок переспроса исчерпан — переспрошено {len(targets)} "
+            f"ответов из {len(all_targets)} забракованных; остальные "
+            f"{len(all_targets) - len(targets)} остались исключёнными. "
+            f"Потолок меняется в настройках команды"
+        )
     personas = {str(p.get("id")): p for p in _load_personas(state)}
     to_ask = [personas[pid] for pid, _ in sorted(targets) if pid in personas]
     if not to_ask:
@@ -1128,8 +1146,8 @@ def _requestion_flagged(
         for a in answers
     ]
     degraded.append(
-        f"qa: переспрошено персон {len(fresh)} из {len(answers)} — доля отбраковки "
-        f"выше {rq.REQUESTION_SHARE:.0%}; вторая отбраковка окончательна"
+        f"qa: переспрошено ответов {len(fresh)} из {len(answers)}; "
+        f"вторая отбраковка окончательна"
     )
     return merged, len(fresh)
 

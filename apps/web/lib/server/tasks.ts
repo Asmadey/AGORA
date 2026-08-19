@@ -5,7 +5,7 @@ import { createHash } from "node:crypto";
 import type { PoolClient } from "pg";
 
 import { listActivePromptsByStage } from "@/lib/server/prompts";
-import { DEFAULT_TEMPERATURES, TEMPERATURE_STAGES } from "@/lib/settings";
+import { DEFAULT_SETTINGS, DEFAULT_TEMPERATURES, TEMPERATURE_STAGES } from "@/lib/settings";
 
 /**
  * Запуск исследования (задача #11).
@@ -196,14 +196,16 @@ export async function buildSettingsSnapshot(
   // модель, пока задача стоит в очереди, команда получила бы отчёт, у которого
   // в карточке одна модель, а считала его другая.
   const provider = pickProvider(row?.provider_config);
-  if (!row) return { costCap: "auto", temperatures, ...provider };
+  const requestionCap = pickRequestionCap(row?.provider_config);
+  if (!row) return { costCap: "auto", temperatures, requestionCap, ...provider };
   return row.cost_cap_calls === null
-    ? { costCap: "auto", whisperModel: row.whisper_model, temperatures, ...provider }
+    ? { costCap: "auto", whisperModel: row.whisper_model, temperatures, requestionCap, ...provider }
     : {
         costCap: "hard",
         costCapValue: row.cost_cap_calls,
         whisperModel: row.whisper_model,
         temperatures,
+        requestionCap,
         ...provider,
       };
 }
@@ -215,6 +217,20 @@ export async function buildSettingsSnapshot(
  * копия ключа в каждой строке `tasks` — это тот же секрет, размноженный по
  * резервным копиям базы без единого способа его отозвать.
  */
+/**
+ * Потолок переспроса из настроек команды.
+ *
+ * Пиннится в снимок вместе с остальным: пока задача стоит в очереди, настройку
+ * можно сменить, и тогда часть забракованных ответов переспрошена, часть нет —
+ * внутри одного прогона, который потом читают как целое.
+ */
+function pickRequestionCap(providerConfig: unknown): number {
+  const stored = (providerConfig ?? {}) as { requestionCap?: unknown };
+  return typeof stored.requestionCap === "number" && Number.isInteger(stored.requestionCap)
+    ? stored.requestionCap
+    : DEFAULT_SETTINGS.requestionCap;
+}
+
 function pickProvider(
   providerConfig: Record<string, unknown> | null | undefined,
 ): Record<string, unknown> {

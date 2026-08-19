@@ -8,7 +8,7 @@ from __future__ import annotations
 import os
 import re
 from dataclasses import dataclass, field, replace
-from typing import Any
+from typing import Any, ClassVar
 
 
 class ConfigError(RuntimeError):
@@ -593,3 +593,52 @@ def _thinking_roles() -> frozenset[str]:
     if raw == "all":
         return frozenset(ModelConfig.ROLES)
     return frozenset(part.strip() for part in raw.split(",") if part.strip())
+
+
+@dataclass(frozen=True)
+class RequestionConfig:
+    """
+    Потолок переспроса забракованных ответов.
+
+    ─── Почему настройка, а не константа ──────────────────────────────────
+    До 19.08 переспрос включался порогом: только при отбраковке выше трети.
+    Порог защищал бюджет не с той стороны — он отказывал там, где переспрос
+    дёшев (восемь вызовов на прогоне № 0050) и разрешал там, где дорог. Порог
+    убран, вместо него потолок: сколько ответов разрешено переспросить за
+    прогон.
+
+    Значение принадлежит команде: у одной каждый вызов на счету, у другой на
+    счету достоверность отчёта. Ноль — законное значение «не переспрашивать»;
+    без него тот, кто считает вызовы, выключал бы QA целиком.
+
+    ─── Почему из снимка ──────────────────────────────────────────────────
+    По той же причине, что температуры и версии промптов: пока задача стоит в
+    очереди, настройку можно сменить, и тогда часть ответов переспрошена, часть
+    нет — внутри одного прогона, который потом читают как целое.
+    """
+
+    cap: int = 15
+
+    #: Верхняя граница настройки. Не про здравый смысл, а про гейт #22: каждый
+    #: переспрос — вызов модели с полным пакетом материала, и сотня таких не
+    #: укладывается в отведённое прогону время ни при каком провайдере.
+    MAX: ClassVar[int] = 100
+
+    @classmethod
+    def defaults(cls) -> RequestionConfig:
+        return cls()
+
+    @classmethod
+    def for_task(cls, settings_snapshot: dict[str, Any] | None) -> RequestionConfig:
+        raw = (settings_snapshot or {}).get("requestionCap")
+        if raw is None:
+            return cls()
+        try:
+            cap = int(raw)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"потолок переспроса не число: {raw!r}") from exc
+        if not 0 <= cap <= cls.MAX:
+            # Отвергаем здесь, а не молча обрезаем: обрезка означала бы, что
+            # человек видит в настройках одно, а прогон исполняет другое.
+            raise ValueError(f"потолок переспроса {cap} вне диапазона 0..{cls.MAX}")
+        return cls(cap=cap)

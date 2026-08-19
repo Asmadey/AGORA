@@ -12,6 +12,7 @@ import { cn } from "@/lib/utils";
 import {
   DEFAULT_SETTINGS,
   COST_CAP_BOUNDS,
+  REQUESTION_CAP_BOUNDS,
   REPLICATION_VALUES,
   TEMPERATURE_BOUNDS,
   TEMPERATURE_STAGES,
@@ -230,6 +231,42 @@ export default function SettingsPage() {
                 ×{n}
               </button>
             ))}
+          </div>
+        </section>
+
+        {/*
+          Потолок переспроса.
+
+          Здесь стоял порог, зашитый в код воркера: переспрашивать, только если
+          забраковано больше трети. Он отказывал ровно там, где переспрос
+          дёшев — на прогоне № 0050 забраковали 8 ответов из 27 (29,6 %), и
+          переспроса не было. Порог убран; настройка отвечает на обратный
+          вопрос — сколько владелец готов оплатить за достоверность отчёта.
+        */}
+        <section className="rounded-lg border border-hairline bg-card p-6">
+          <h2 className="text-sm font-semibold">Переспрос забракованных</h2>
+          <p className="mt-1 text-xs leading-relaxed text-slate">
+            Ответ, забракованный проверкой, спрашивается заново — один раз, с
+            процедурной подсказкой и без текста претензии. Здесь потолок: сколько
+            ответов разрешено переспросить за прогон. Каждый переспрос — вызов
+            модели с полным пакетом материала. Ноль отключает переспрос: отчёт
+            тогда строится на остатке, и на экране прогона будет сказано, сколько
+            ответов в него не вошло.
+          </p>
+          <div className="mt-4 flex items-center gap-4">
+            <input
+              type="range"
+              min={REQUESTION_CAP_BOUNDS.min}
+              max={REQUESTION_CAP_BOUNDS.max}
+              step={REQUESTION_CAP_BOUNDS.step}
+              value={draft.requestionCap}
+              onChange={(e) => patch({ requestionCap: Number(e.target.value) })}
+              className="flex-1"
+              aria-label="Потолок переспроса"
+            />
+            <span className="w-28 shrink-0 text-right font-mono text-sm tabular-nums">
+              {draft.requestionCap === 0 ? "выключен" : `${draft.requestionCap} отв.`}
+            </span>
           </div>
         </section>
 

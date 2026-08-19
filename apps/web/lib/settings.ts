@@ -189,6 +189,11 @@ export interface TenantSettings {
   reasoning: Reasoning;
   /** Рассуждение судьи — отдельно от основного: у проверки другая цена ошибки. */
   judgeReasoning: Reasoning;
+  /**
+   * Сколько забракованных ответов разрешено переспросить за прогон.
+   * 0 — не переспрашивать.
+   */
+  requestionCap: number;
   /** Адрес провайдера. Пустая строка — брать из окружения сервера. */
   endpoint: string;
   /**
@@ -214,11 +219,30 @@ export const DEFAULT_SETTINGS: TenantSettings = {
   models: DEFAULT_MODELS,
   reasoning: DEFAULT_REASONING,
   judgeReasoning: DEFAULT_REASONING,
+  requestionCap: 15,
   endpoint: "",
   apiKeyMask: "не задан",
 };
 
 export const COST_CAP_BOUNDS = { min: 100, max: 5000, step: 100 } as const;
+
+/**
+ * ─── Потолок переспроса забракованных ──────────────────────────────────────
+ *
+ * Здесь стоял порог, зашитый в код воркера: переспрашивать, только если
+ * забраковано больше трети. Он защищал бюджет не с той стороны. На прогоне
+ * № 0050 забраковали восемь ответов из двадцати семи — 29,6 %, ниже порога, — и
+ * переспроса не было. То есть механизм отказывал ровно там, где он дёшев.
+ *
+ * Опасна обратная сторона: прогон, где забраковано почти всё. Там переспрос
+ * удваивает стоимость и почти ничего не спасает — если промпт или материал
+ * таковы, что модель врёт систематически, вторая попытка врёт так же.
+ *
+ * Ноль — законное значение «не переспрашивать». Без него тот, кто считает
+ * вызовы, выключал бы QA целиком. Верхняя граница совпадает с
+ * `RequestionConfig.MAX` воркера: два перечня в двух языках расходятся молча.
+ */
+export const REQUESTION_CAP_BOUNDS = { min: 0, max: 100, step: 1 } as const;
 
 /**
  * Похоже на хост: точка есть, пробелов и `@` нет.
@@ -392,6 +416,26 @@ export function parseSettings(input: unknown): { ok: true; value: TenantSettings
   const reasoning = parseReasoning(raw.reasoning, "reasoning");
   const judgeReasoning = parseReasoning(raw.judgeReasoning, "judgeReasoning");
 
+  // Отсутствие поля — умолчание: настройки, сохранённые до его появления, его
+  // не содержат, и требовать зайти в настройки прежде, чем что-либо запустить,
+  // незачем. А вот мусор в присланном поле — отказ.
+  let requestionCap = DEFAULT_SETTINGS.requestionCap;
+  if (raw.requestionCap !== undefined) {
+    const value = raw.requestionCap;
+    if (
+      typeof value !== "number" ||
+      !Number.isInteger(value) ||
+      value < REQUESTION_CAP_BOUNDS.min ||
+      value > REQUESTION_CAP_BOUNDS.max
+    ) {
+      errors.push(
+        `requestionCap: целое в диапазоне ${REQUESTION_CAP_BOUNDS.min}–${REQUESTION_CAP_BOUNDS.max}`,
+      );
+    } else {
+      requestionCap = value;
+    }
+  }
+
   let endpoint = "";
   if (raw.endpoint !== undefined) {
     if (typeof raw.endpoint !== "string" || raw.endpoint.length > 500) {
@@ -416,6 +460,7 @@ export function parseSettings(input: unknown): { ok: true; value: TenantSettings
       models,
       reasoning,
       judgeReasoning,
+      requestionCap,
       endpoint,
       // Маска приходит с сервера и на вход не принимается: сам ключ едет
       // отдельным полем `apiKey`, а обратно не возвращается никогда.
@@ -434,6 +479,7 @@ export function settingsEqual(a: TenantSettings, b: TenantSettings): boolean {
     a.costCapValue === b.costCapValue &&
     a.whisperModel === b.whisperModel &&
     a.defaultReplication === b.defaultReplication &&
+    a.requestionCap === b.requestionCap &&
     a.endpoint === b.endpoint &&
     a.models.text === b.models.text &&
     a.models.vision === b.models.vision &&

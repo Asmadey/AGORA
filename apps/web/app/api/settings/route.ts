@@ -99,6 +99,12 @@ function rowToSettings(row: SettingsRow): TenantSettings {
     models,
     reasoning: reasoningOf("reasoning"),
     judgeReasoning: reasoningOf("judgeReasoning"),
+    // Целое и неотрицательное — иначе умолчание. Мусор в jsonb отсекается здесь
+    // по той же причине, что мусор из HTTP: до экрана он доезжает одинаково.
+    requestionCap:
+      typeof stored.requestionCap === "number" && Number.isInteger(stored.requestionCap)
+        ? stored.requestionCap
+        : DEFAULT_SETTINGS.requestionCap,
     endpoint: typeof stored.endpoint === "string" ? stored.endpoint : "",
     // Только маска. Сам ключ не покидает сервер ни в одном ответе: даже
     // владельцу — потому что ответ уезжает в браузер, в его историю и в любой
@@ -213,6 +219,7 @@ export async function PUT(request: Request) {
             models: value.models,
             reasoning: value.reasoning,
             judgeReasoning: value.judgeReasoning,
+            requestionCap: value.requestionCap,
             endpoint: value.endpoint,
           }),
           encryptedKey,
