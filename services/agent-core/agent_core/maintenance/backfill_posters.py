@@ -75,32 +75,58 @@ def plan_backfill(
     return out
 
 
-def _load(tenant_id: str | None) -> tuple[dict[str, str | None], dict[str, Any], dict[str, str]]:
-    """Задачи, пакеты и владельцы задач. Живые хранилища — только отсюда."""
-    import psycopg
+def _load(only_tenant: str | None) -> tuple[dict[str, str | None], dict[str, Any], dict[str, str]]:
+    """
+    Задачи, пакеты и владельцы задач.
 
+    ─── Почему список арендаторов берётся из Mongo ───────────────────────────
+    Первая редакция читала `SELECT … FROM tasks` без тенант-контекста, чтобы
+    пройти по всем командам разом, и получила `permission denied for table
+    tasks`. Это не помеха, а работающая защита: `agora_login` объявлен
+    NOINHERIT ровно затем, чтобы забытый `SET LOCAL ROLE agora_app` падал с
+    внятной ошибкой, а не тихо работал (CLAUDE.md §5).
+
+    Поэтому арендаторы берутся оттуда, где они лежат без RLS, — из пакетов
+    Mongo, — а каждое обращение к Postgres идёт под своим `tenant_scope`. Это и
+    честнее: перенос трогает ровно те команды, у которых есть что переносить.
+    """
     from ..mongo import mongo_db
 
-    dsn = os.environ["DATABASE_URL"]
-    owners: dict[str, str] = {}
-    tasks: dict[str, str | None] = {}
-
-    # Список задач читается БЕЗ tenant_scope: перенос идёт по всем арендаторам,
-    # и подставить один tenant_id значило бы молча починить одну команду.
-    # Запись ниже — уже под scope каждой команды, как и любая правка данных.
-    with psycopg.connect(dsn) as conn, conn.cursor() as cur:
-        cur.execute("SELECT id::text, tenant_id::text, poster_ref FROM tasks")
-        for task_id, tenant, poster in cur.fetchall():
-            if tenant_id and tenant != tenant_id:
-                continue
-            tasks[task_id] = poster
-            owners[task_id] = tenant
-
     db = mongo_db()
-    packs = {
-        str(doc.get("task_id")): doc
-        for doc in db.content_packs.find({}, {"task_id": 1, "pack.scenes.screenshot": 1})
-    }
+    packs: dict[str, Any] = {}
+    owners: dict[str, str] = {}
+    for doc in db.content_packs.find(
+        {}, {"task_id": 1, "tenant_id": 1, "pack.scenes.screenshot": 1}
+    ):
+        task_id = str(doc.get("task_id") or "")
+        tenant = str(doc.get("tenant_id") or "")
+        if not task_id or not tenant:
+            continue
+        if only_tenant and tenant != only_tenant:
+            continue
+        packs[task_id] = doc
+        owners[task_id] = tenant
+
+    tasks: dict[str, str | None] = {}
+    if owners:
+        import psycopg
+
+        from ..db import tenant_scope
+
+        by_tenant: dict[str, list[str]] = {}
+        for task_id, tenant in owners.items():
+            by_tenant.setdefault(tenant, []).append(task_id)
+
+        with psycopg.connect(os.environ["DATABASE_URL"]) as conn:
+            for tenant, ids in by_tenant.items():
+                with tenant_scope(conn, tenant) as cur:
+                    cur.execute(
+                        "SELECT id::text, poster_ref FROM tasks WHERE id = ANY(%s::uuid[])",
+                        (ids,),
+                    )
+                    for task_id, poster in cur.fetchall():
+                        tasks[task_id] = poster
+
     return tasks, packs, owners
 
 
