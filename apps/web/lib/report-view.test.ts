@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import {
-  answerForQuestion, avatarHue, initials, parseAnswer, parseReport, segmentLabel,
+  answerForQuestion, avatarHue, initials, parseAnswer, parseReport, retentionShort, segmentLabel,
   type AnswerView, type AskedQuestion,
 } from "./report-view.ts";
 
@@ -303,4 +303,32 @@ test("вопрос без ответа остаётся без ответа", ()
   const q: AskedQuestion = { id: "q-99", label: "чужой вопрос", type: "открытый" };
 
   assert.equal(answerForQuestion(answer, q), null);
+});
+
+/**
+ * ─── Досмотр: категория и доля — две разные величины ───────────────────────
+ *
+ * В строке персоны они делили одну колонку: процент, если он есть, иначе
+ * категория словами. Владелец увидел разнобой — «часть отвечает в процентах,
+ * часть словами» — и был прав: это два разных вопроса анкеты.
+ *
+ * `retentionShort` даёт короткую подпись категории для узкой колонки. Полная
+ * формулировка корпуса («Скорее хотелось досмотреть до конца») в такую колонку
+ * не влезает и обрезалась бы многоточием на середине слова.
+ */
+test("три значения корпуса получают короткую подпись", () => {
+  assert.equal(retentionShort("Скорее хотелось досмотреть до конца"), "Досмотрит");
+  assert.equal(retentionShort("Скорее хотелось остановить просмотр"), "Выключит");
+  assert.equal(retentionShort("Затрудняюсь ответить"), "Не решил");
+});
+
+test("неприведённая строка показывается как есть, а не прячется", () => {
+  // Если приведение не сработало, это видно на экране. Прочерк означал бы, что
+  // расхождение промпта с моделью заметит только тот, кто полезет в JSON.
+  assert.equal(retentionShort("ну как сказать"), "ну как сказать");
+});
+
+test("пусто — прочерк", () => {
+  assert.equal(retentionShort(null), "—");
+  assert.equal(retentionShort(""), "—");
 });

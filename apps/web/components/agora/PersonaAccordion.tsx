@@ -5,7 +5,7 @@ import Link from "next/link";
 import { ChevronDown, MessageCircle, AlertTriangle } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { CRITERIA, CRITERIA_LABELS } from "@/lib/agora-types";
-import { answerForQuestion } from "@/lib/report-view";
+import { answerForQuestion, retentionShort } from "@/lib/report-view";
 import type { AnswerView, AskedQuestion } from "@/lib/report-view";
 import { PersonaDialog } from "./PersonaDialog";
 import { TimecodeRef } from "./Primitives";
@@ -126,12 +126,24 @@ export function PersonaAccordion({
                 </span>
               )}
 
-              <div className="hidden w-32 shrink-0 text-right sm:block">
+              {/*
+                Две колонки, а не одна. Прежде здесь стояло одно поле: процент
+                доли просмотра, если он есть, иначе категория словами. Это два
+                РАЗНЫХ вопроса анкеты, и в одной колонке они читались как
+                «часть персон отвечает в процентах, часть словами» — именно так
+                это и увидел владелец.
+              */}
+              <div className="hidden w-24 shrink-0 text-right sm:block">
                 <p className="text-xs text-slate">Досмотрит</p>
-                <p className="truncate text-sm">
-                  {a.watchedShare !== null
-                    ? `${a.watchedShare}%`
-                    : (a.retentionIntent ?? "—")}
+                <p className="truncate text-sm" title={a.retentionIntent ?? undefined}>
+                  {retentionShort(a.retentionIntent)}
+                </p>
+              </div>
+
+              <div className="hidden w-16 shrink-0 text-right sm:block">
+                <p className="text-xs text-slate">Доля</p>
+                <p className="text-sm tabular-nums">
+                  {a.watchedShare !== null ? `${a.watchedShare}%` : "—"}
                 </p>
               </div>
 

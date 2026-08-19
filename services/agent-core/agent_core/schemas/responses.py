@@ -34,6 +34,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from .answer import RETENTION_VALUES
+
 
 def assert_strict(schema: dict[str, Any], path: str = "") -> None:
     """
@@ -200,7 +202,11 @@ _PERCEPTION = _obj({
     "emotions_evoked": _str_array(),
     "idea_comprehension": {"type": "string"},
     "realism_perception": {"type": "string"},
-    "retention_intent": {"type": "string"},
+    # Enum из словаря корпуса. Схема в рантайме не используется (строгий режим
+    # для ответа персоны выключен по замеру), но разойтись с живым словарём ей
+    # нельзя: оживят её в день, когда провайдер начнёт держать грамматику, и
+    # расхождение обнаружится не тогда.
+    "retention_intent": {"type": "string", "enum": list(RETENTION_VALUES)},
     "watched_share_pct": {"type": "integer"},
     "recommendation_nps_1_to_10": {"type": "integer"},
 })

@@ -305,7 +305,35 @@ def parse_answer(text: str) -> dict[str, Any]:
     # правило покрытия эти случаи различает.
     if "survey_answers" in parsed:
         parsed["survey_answers"] = _answers_to_map(parsed["survey_answers"])
+    _normalize_perception(parsed)
     return parsed
+
+
+def _normalize_perception(parsed: dict[str, Any]) -> None:
+    """
+    Приводит «досмотрит» к словарю корпуса, сохраняя сказанное моделью.
+
+    Здесь, сразу после разбора, по той же причине, что и `_answers_to_map`:
+    иначе приведение расползлось бы по правилам QA, агрегату и карточке
+    персоны — трём местам, которые разъедутся при первой правке.
+
+    Приведение, а не ограничение провайдера: строгая схема для ответа персоны
+    выключена по замеру (8 разобранных из 12 против 12 из 12), и ограничить
+    формулировку на входе нечем. Разбор причины — в agent_core/schemas/answer.py.
+    """
+    from ..schemas.answer import normalize_retention
+
+    perception = parsed.get("perception")
+    if not isinstance(perception, dict) or "retention_intent" not in perception:
+        return
+
+    out = normalize_retention(perception.get("retention_intent"))
+    # Исходная строка кладётся рядом ВСЕГДА, а не только при расхождении: по
+    # ней видно, что промпт разошёлся с моделью, и видно это в данных прогона, а
+    # не в чьей-то памяти.
+    perception["retention_intent_raw"] = out.raw
+    if out.value is not None:
+        perception["retention_intent"] = out.value
 
 
 def _answers_to_map(raw: Any) -> dict[str, Any]:
