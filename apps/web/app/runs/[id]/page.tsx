@@ -16,8 +16,12 @@ import { withTenant } from "@/lib/server/db";
 import { requireSession } from "@/lib/server/guard";
 import { loadReport, loadReportPersonas } from "@/lib/server/reports";
 import { getTask, taskNumber, loadRunTiming } from "@/lib/server/tasks";
+import { notFound } from "next/navigation";
+import { resolveRun } from "@/lib/server/run-ref";
+import { runSlug } from "@/lib/run-slug";
 import { safePresign } from "@/lib/server/content-pack";
 import { DownloadMenu } from "@/components/agora/DownloadMenu";
+import { audienceNote } from "@/lib/audience-note";
 import { researchTitle } from "@/lib/research-title";
 import { parseAnswer, parseReport } from "@/lib/report-view";
 import { CRITERIA, CRITERIA_LABELS } from "@/lib/agora-types";
@@ -42,9 +46,24 @@ import { CRITERIA, CRITERIA_LABELS } from "@/lib/agora-types";
 const FIRST_PAGE = 50;
 
 export default async function ReportPage({ params }: { params: Promise<{ id: string }> }) {
-  const { id } = await params;
+  const { id: slug } = await params;
   const { tenantId, userId } = await requireSession();
   const session = { tenantId, userId };
+
+  // Адрес принимает и номер, и UUID; на UUID отвечает 308 на номер. Наружу
+  // отсюда идёт ТОЛЬКО идентификатор: маршруты API работают по нему, и подмена
+  // номером дала бы 404 из середины уже открытой страницы.
+  const run = await resolveRun(slug, tenantId);
+  if (!run) notFound();
+  const id = run.id;
+  // Свои ссылки страница строит по номеру: иначе переход «Прогресс» → «К
+  // отчёту» гонял бы браузер через перенаправление туда и обратно.
+  //
+  // Объявлено ЗДЕСЬ, а не ниже у прочих производных значений: первая ссылка
+  // стоит в раннем возврате «отчёт ещё не готов», и объявление после него
+  // давало бы ReferenceError ровно на том экране, который показывают, когда
+  // что-то пошло не так.
+  const ref = run.seqNo !== null ? runSlug(run.seqNo) : id;
 
   const envelope = await loadReport(session, id);
 
@@ -56,7 +75,7 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
       <div className="p-8">
         <p className="text-slate">
           Отчёт по этому прогону недоступен: он ещё не готов или принадлежит другой команде.{" "}
-          <Link href={`/runs/${id}/progress`} className="underline underline-offset-4">
+          <Link href={`/runs/${ref}/progress`} className="underline underline-offset-4">
             Смотреть прогресс
           </Link>
         </p>
@@ -72,9 +91,16 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
   // e81feb92-97a2-43ad-8112-de7503699c60» нельзя ни произнести, ни запомнить, а
   // сослаться на прогон в разговоре нужно каждый день.
   const task = await withTenant(tenantId, (client) => getTask(client, id));
-  const number = taskNumber(task?.seqNo ?? null);
+  const number = taskNumber(run.seqNo);
   // Подпись живёт час: записанная в базу ссылка протухла бы к первому открытию.
   const videoUrl = task?.videoRef ? safePresign(task.videoRef) : null;
+  // Считается один раз: подпись нужна и как условие показа, и как содержимое,
+  // а два вызова подряд — это две развилки, которые однажды разойдутся.
+  const qaNote = audienceNote({
+    shown: items.length,
+    surviving: envelope.audienceSize,
+    excludedByQa: view.excludedByQa,
+  });
 
   return (
     <>
@@ -99,7 +125,7 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
               то есть ровно тогда, когда сравнивать не с чем.
             */}
             <Link
-              href={`/runs/${id}/progress`}
+              href={`/runs/${ref}/progress`}
               className="inline-flex items-center gap-2 rounded-md border border-hairline px-4 py-2 text-sm transition-colors hover:bg-secondary"
             >
               <Activity className="h-4 w-4" />
@@ -111,7 +137,7 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
                 целиком. */}
             <DownloadMenu runId={id} videoUrl={videoUrl} />
             <Link
-              href={`/runs/${id}/chat`}
+              href={`/runs/${ref}/chat`}
               className="inline-flex items-center gap-2 rounded-md border border-hairline px-4 py-2 text-sm transition-colors hover:bg-secondary"
             >
               <MessageCircle className="h-4 w-4" />
@@ -571,11 +597,24 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
         {/* Персоны */}
         <section>
           <h2 className="mb-1 text-sm font-semibold">Ответы по персонам</h2>
+          {/*
+            Подпись про отбраковку стоит здесь, а не только в шапке.
+
+            Владелец запустил двенадцать персон, увидел три и решил, что прогон
+            ненастоящий. Девять забраковал QA — законная работа проверки, — но
+            число исключённых показывалось мелким шрифтом в подписи заголовка,
+            далеко от самого списка. Там, где его ищут, его не было.
+          */}
           <p className="mb-4 text-xs text-slate">
             Разверните строку, чтобы увидеть обоснование с таймкодами
-            {envelope.audienceSize > answers.length &&
+            {view.excludedByQa === 0 && envelope.audienceSize > answers.length &&
               ` · показаны первые ${answers.length} из ${envelope.audienceSize}`}
           </p>
+          {qaNote && (
+            <p className="mb-4 rounded-md border border-warning/30 bg-warning-soft/60 px-4 py-3 text-xs leading-relaxed">
+              {qaNote}
+            </p>
+          )}
           <PersonaAccordion answers={answers} runId={id} asked={view.asked} />
         </section>
 

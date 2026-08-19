@@ -485,6 +485,27 @@ export async function listTasks(client: PoolClient): Promise<LaunchedTask[]> {
  * строки. Дополнительный `SELECT` перед этим создавал бы окно между проверкой и
  * записью — и ложное ощущение, что защита именно в нём.
  */
+/**
+ * Задача по человеческому номеру.
+ *
+ * Пара (арендатор, номер) уникальна — уникальный индекс заведён миграцией 28, —
+ * но условия на tenant_id здесь нет намеренно: его накладывает RLS. Дописать
+ * его руками значило бы завести второй способ ограничить выборку, и однажды
+ * один из них поправили бы, а другой нет.
+ */
+export async function getTaskBySeqNo(
+  client: PoolClient,
+  seqNo: number,
+): Promise<LaunchedTask | null> {
+  const { rows } = await client.query<TaskRow>(
+    `SELECT id, seq_no, mode, video_ref, source_name, title, poster_ref, replication_count, prompts_snapshot, settings_snapshot, status, created_at, (SELECT COALESCE(u.name, u.email) FROM users u WHERE u.id = tasks.created_by) AS author
+       FROM tasks WHERE seq_no = $1`,
+    [seqNo],
+  );
+  return rows[0] ? toTask(rows[0], false) : null;
+}
+
+
 export async function renameTask(
   client: PoolClient,
   id: string,

@@ -4,6 +4,7 @@ import { PageHeader } from "@/components/AppShell";
 import { ProgressView } from "@/components/agora/ProgressView";
 import { withTenant } from "@/lib/server/db";
 import { requireSession } from "@/lib/server/guard";
+import { resolveRun } from "@/lib/server/run-ref";
 import { loadRunTiming } from "@/lib/server/tasks";
 
 /**
@@ -27,8 +28,14 @@ export default async function ProgressPage({
 }: {
   params: Promise<{ id: string }>;
 }) {
-  const { id } = await params;
+  const { id: slug } = await params;
   const { tenantId } = await requireSession();
+
+  // Тот же разбор, что у отчёта: страницы обязаны понимать одинаковые адреса,
+  // иначе переход между вкладками одного прогона даёт 404.
+  const run = await resolveRun(slug, tenantId, "/progress");
+  if (!run) notFound();
+  const id = run.id;
 
   // started_at/finished_at нужны таймеру. Без них он считал бы от загрузки
   // страницы: обновление на десятой минуте показывало бы «0:03», а открытая со

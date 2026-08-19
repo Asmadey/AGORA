@@ -2,6 +2,9 @@ import Link from "next/link";
 import { ArrowLeft, BarChart3, MessageCircle, User } from "lucide-react";
 import { PageHeader } from "@/components/AppShell";
 import { EmptyState } from "@/components/agora/States";
+import { notFound } from "next/navigation";
+import { requireSession } from "@/lib/server/guard";
+import { resolveRun } from "@/lib/server/run-ref";
 
 /**
  * Чат по результатам исследования — задача #28, ещё не реализована.
@@ -28,7 +31,15 @@ import { EmptyState } from "@/components/agora/States";
  */
 
 export default async function ChatPage({ params }: { params: Promise<{ id: string }> }) {
-  const { id } = await params;
+  const { id: slug } = await params;
+  const { tenantId } = await requireSession();
+
+  // Разбор адреса тот же, что у отчёта и прогресса. Экран пока заглушка, но
+  // ссылка «К отчёту» с него ведёт настоящая — с непонятым адресом она вела бы
+  // в 404.
+  const run = await resolveRun(slug, tenantId, "/chat");
+  if (!run) notFound();
+  const id = run.id;
 
   return (
     <>

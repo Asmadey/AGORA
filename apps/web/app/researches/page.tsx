@@ -10,6 +10,7 @@ import { listTasks, taskNumber } from "@/lib/server/tasks";
 import { safePresign } from "@/lib/server/content-pack";
 import { InlineRename } from "@/components/agora/InlineRename";
 import { researchTitle } from "@/lib/research-title";
+import { runSlug } from "@/lib/run-slug";
 import { renameResearchAction } from "./actions";
 
 /**
@@ -97,7 +98,11 @@ export default async function RunsPage() {
           <div className="space-y-3">
             {tasks.map((task) => {
               const ready = task.status === "REPORT_READY";
-              const href = ready ? `/runs/${task.id}` : `/runs/${task.id}/progress`;
+              // Номер в адресе, когда он есть. UUID тоже понимается — маршрут
+              // ответит на него постоянным перенаправлением, — но лишний виток
+              // на каждый переход из списка платить незачем.
+              const ref = task.seqNo !== null ? runSlug(task.seqNo) : task.id;
+              const href = ready ? `/runs/${ref}` : `/runs/${ref}/progress`;
               return (
                 /*
                   Ссылка — накладкой поверх карточки, а не обёрткой вокруг неё.

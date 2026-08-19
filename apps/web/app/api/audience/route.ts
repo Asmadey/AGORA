@@ -1,3 +1,4 @@
+import { resolveSeed } from "@/lib/seed";
 import { parseAudienceChoice, toGenerationConfig } from "@/lib/audience";
 import { audienceGrounding, warningsFor } from "@/lib/audience-grounding";
 import { createSnapshot, listDatasets } from "@/lib/server/corpus-db";
@@ -104,10 +105,10 @@ export async function POST(request: Request) {
       education: criteria.education,
     });
 
-    const rawSeed = (body as { seed?: unknown }).seed;
-    const seed = typeof rawSeed === "number" && Number.isInteger(rawSeed) && rawSeed >= 0
-      ? rawSeed
-      : 42;
+    // Случайный, если не передан. Зашитое 42 давало одну и ту же аудиторию на
+    // одних критериях — разбор в lib/seed.ts. Явный seed по-прежнему
+    // исполняется как есть, и выбранное значение пишется в persona_sets.seed.
+    const seed = resolveSeed((body as { seed?: unknown }).seed);
     // use_llm — обогащение narrative моделью поверх заземлённого скелета.
     // Включено по умолчанию: продукт обещает живые портреты, а не строки
     // таблицы. Выключается телом запроса — это нужно эталонному прогону
