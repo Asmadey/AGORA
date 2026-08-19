@@ -74,7 +74,12 @@ export function PersonaDialog({
     <>
       <button
         type="button"
-        onClick={() => setOpen(true)}
+        onClick={(e) => {
+          // Всплытие гасится: строка персоны раскрывается кликом по всей
+          // площади, и без этого «О персоне» открывала бы заодно и ответ.
+          e.stopPropagation();
+          setOpen(true);
+        }}
         className="inline-flex shrink-0 items-center gap-1 rounded-md border border-hairline px-2 py-1 text-xs text-slate transition-colors hover:border-hairline-strong hover:text-foreground"
       >
         <Info className="h-3.5 w-3.5" />

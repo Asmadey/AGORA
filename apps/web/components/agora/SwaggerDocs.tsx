@@ -28,9 +28,50 @@ import "swagger-ui-dist/swagger-ui.css";
 const SPEC_URL = "/api-docs/openapi";
 const MOUNT_ID = "agora-swagger-ui";
 
+/**
+ * Каркас на время загрузки бандла.
+ *
+ * ─── Зачем ────────────────────────────────────────────────────────────────
+ * Страница — серверный компонент, отрисовывается мгновенно. Ждать приходится
+ * клиентскую загрузку сборки Swagger (около мегабайта) и запрос спецификации;
+ * всё это время в DOM пустой div, и белый экран читается как зависание.
+ *
+ * `loading.tsx` тут не помог бы: медленная не серверная часть, а клиентская,
+ * и к моменту его показа страница уже отрисована.
+ *
+ * Форма повторяет Swagger: шапка, строка поиска, полосы эндпоинтов. Каркас,
+ * не похожий на то, что появится, вызывает второй скачок содержимого — тот
+ * самый, от которого он должен избавлять.
+ */
+function SwaggerSkeleton() {
+  return (
+    <div className="animate-pulse space-y-6" aria-hidden="true">
+      <div className="space-y-2">
+        <div className="h-8 w-72 rounded bg-black/10" />
+        <div className="h-4 w-96 rounded bg-black/5" />
+      </div>
+      <div className="h-10 w-full rounded bg-black/5" />
+      <div className="space-y-2">
+        {Array.from({ length: 8 }).map((_, i) => (
+          <div key={i} className="flex items-center gap-3 rounded border border-black/10 p-3">
+            <div className="h-6 w-16 shrink-0 rounded bg-black/10" />
+            <div className="h-4 flex-1 rounded bg-black/5" />
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export function SwaggerDocs() {
   const mounted = useRef(false);
   const [error, setError] = useState<string | null>(null);
+  /**
+   * Виджет смонтирован. Не «бандл загружен»: между загрузкой и появлением
+   * содержимого Swagger успевает сходить за спецификацией, и снятый раньше
+   * каркас оставил бы тот же белый экран, только короче.
+   */
+  const [ready, setReady] = useState(false);
 
   useEffect(() => {
     // React в строгом режиме исполняет эффект дважды; Swagger UI при повторном
@@ -39,6 +80,7 @@ export function SwaggerDocs() {
     mounted.current = true;
 
     let cancelled = false;
+    let fallback: ReturnType<typeof setTimeout> | undefined;
     (async () => {
       try {
         const mod = await import("swagger-ui-dist/swagger-ui-es-bundle.js");
@@ -56,7 +98,13 @@ export function SwaggerDocs() {
             req.credentials = "same-origin";
             return req;
           },
+          onComplete: () => setReady(true),
         });
+        // Запасной путь: `onComplete` зовётся не во всех сборках Swagger, и
+        // каркас, оставшийся навсегда, хуже снятого на мгновение раньше.
+        // Таймер запоминается, чтобы уход со страницы не оставил вызов
+        // setState на размонтированном компоненте.
+        fallback = setTimeout(() => setReady(true), 1500);
       } catch (e) {
         setError(e instanceof Error ? e.message : "не удалось загрузить Swagger UI");
       }
@@ -64,6 +112,7 @@ export function SwaggerDocs() {
 
     return () => {
       cancelled = true;
+      if (fallback) clearTimeout(fallback);
     };
   }, []);
 
@@ -82,5 +131,10 @@ export function SwaggerDocs() {
     );
   }
 
-  return <div id={MOUNT_ID} />;
+  return (
+    <>
+      {!ready && <SwaggerSkeleton />}
+      <div id={MOUNT_ID} />
+    </>
+  );
 }

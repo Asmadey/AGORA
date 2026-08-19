@@ -132,10 +132,10 @@ export default async function RunsPage() {
                     <img
                       src={posters[task.id]!}
                       alt=""
-                      className="h-16 w-28 shrink-0 rounded-md object-cover"
+                      className="h-12 w-20 shrink-0 rounded object-cover"
                     />
                   ) : (
-                    <span className="h-16 w-28 shrink-0 rounded-md bg-secondary" />
+                    <span className="h-12 w-20 shrink-0 rounded bg-secondary" />
                   )}
 
                   <div className="min-w-0 flex-1">

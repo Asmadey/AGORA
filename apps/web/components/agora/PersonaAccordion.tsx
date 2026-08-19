@@ -80,12 +80,37 @@ export function PersonaAccordion({
               браузеры чинят каждый по-своему. Поэтому раскрытие повешено на два
               явных элемента: блок с именем слева и шеврон справа.
             */}
-            <div className="flex w-full items-center gap-4 px-5 py-4 transition-colors hover:bg-secondary/40">
-              <button
-                onClick={() => setOpenKey(open ? null : key)}
-                className="flex min-w-0 items-center gap-4 text-left"
-                aria-expanded={open}
-              >
+            {/*
+              Раскрытие по ВСЕЙ площади строки.
+
+              Прежде строка была обычным div с подсветкой при наведении и без
+              обработчика: раскрывали её две кнопки — блок с именем и шеврон.
+              Подсветка обманывала, обещая клик, которого не было.
+
+              Обработчик стоит здесь ОДИН. Оставить его ещё и на блоке с именем
+              значило бы получить двойное срабатывание: клик по имени раскрыл бы
+              и тут же свернул — выглядит как «кнопка не работает».
+
+              role/tabIndex/onKeyDown обязательны: раскрытие было доступно с
+              клавиатуры, пока висело на кнопках, и потерять это молча нельзя.
+            */}
+            <div
+              role="button"
+              tabIndex={0}
+              aria-expanded={open}
+              onClick={() => setOpenKey(open ? null : key)}
+              onKeyDown={(e) => {
+                if (e.key !== "Enter" && e.key !== " ") return;
+                // Пробел на кнопке иначе прокручивает страницу — стандартное
+                // поведение документа, которое здесь мешает.
+                e.preventDefault();
+                setOpenKey(open ? null : key);
+              }}
+              className="flex w-full cursor-pointer items-center gap-4 px-5 py-4 text-left transition-colors hover:bg-secondary/40"
+            >
+              {/* Обычный div: обработчик теперь на всей строке, и второй здесь
+                  дал бы двойное срабатывание. */}
+              <div className="flex min-w-0 items-center gap-4 text-left">
                 <div
                   className="grid h-9 w-9 shrink-0 place-items-center rounded-full text-xs font-semibold"
                   style={{
@@ -109,7 +134,7 @@ export function PersonaAccordion({
                     {a.segmentLabel ?? "срез не записан"}
                   </p>
                 </div>
-              </button>
+              </div>
 
               <PersonaDialog personaId={a.personaId} personaName={a.personaName} />
 
@@ -164,16 +189,13 @@ export function PersonaAccordion({
                 </p>
               </div>
 
-              <button
-                onClick={() => setOpenKey(open ? null : key)}
-                className="shrink-0 rounded-md p-1 text-slate transition-colors hover:text-foreground"
-                aria-expanded={open}
-                aria-label={open ? "Свернуть ответ" : "Раскрыть ответ"}
-              >
+              {/* Индикатор, а не кнопка: раскрывает вся строка. Кнопка здесь
+                  ловила бы тот же клик вторым обработчиком. */}
+              <span className="shrink-0 p-1 text-slate" aria-hidden="true">
                 <ChevronDown
                   className={cn("h-4 w-4 transition-transform", open && "rotate-180")}
                 />
-              </button>
+              </span>
             </div>
 
             {open && (

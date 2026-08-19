@@ -5,6 +5,7 @@ import Link from "next/link";
 import { AlertTriangle, Check, Circle, Loader2 } from "lucide-react";
 
 import { cn } from "@/lib/utils";
+import { mergeDurations, type TimingEntry } from "@/lib/progress-durations";
 import { nodesForMode, type PipelineNode } from "@/lib/pipeline-nodes";
 
 /**
@@ -39,6 +40,16 @@ export interface ProgressEvent {
   detail?: string;
   error?: string;
   degraded?: string[];
+  /**
+   * Длительности уже завершённых узлов.
+   *
+   * Воркер кладёт их в КАЖДОЕ событие (`progress.py`, `_track`), и поле
+   * приходило сюда с самого начала — просто не было объявлено, и клиент его
+   * выбрасывал. Отсюда жалоба владельца: завершённый шаг терял своё время до
+   * конца всего прогона, потому что серверный проп `durations` заполняется из
+   * Postgres только в `_save_timings`.
+   */
+  timings?: TimingEntry[];
 }
 
 type NodeState = "waiting" | "running" | "done" | "failed";
@@ -169,9 +180,14 @@ export function ProgressView({
     return () => clearInterval(timer);
   }, [stepStartedAt, finished, failed]);
 
+  // Живые длительности поверх серверных. Серверные приходят из Postgres в
+  // конце прогона и нужны вкладке, открытой после его завершения; живые — всё
+  // остальное время.
+  const knownDurations = mergeDurations(durations, event?.timings);
+
   /** «(30 сек)» рядом с названием шага. Пусто — длительности пока нет. */
   function stepTime(node: PipelineNode, state: NodeState): string {
-    const known = durations[node.name];
+    const known = knownDurations[node.name];
     if (typeof known === "number") return ` (${Math.round(known)} сек)`;
     if (state === "running" && stepElapsed !== null) return ` (${stepElapsed} сек)`;
     return "";
