@@ -17,6 +17,8 @@ import { requireSession } from "@/lib/server/guard";
 import { loadReport, loadReportPersonas } from "@/lib/server/reports";
 import { getTask, taskNumber, loadRunTiming } from "@/lib/server/tasks";
 import { safePresign } from "@/lib/server/content-pack";
+import { DownloadMenu } from "@/components/agora/DownloadMenu";
+import { researchTitle } from "@/lib/research-title";
 import { parseAnswer, parseReport } from "@/lib/report-view";
 import { CRITERIA, CRITERIA_LABELS } from "@/lib/agora-types";
 
@@ -77,8 +79,14 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
   return (
     <>
       <PageHeader
+        // Заголовок остаётся номером: владелец просил ОДИН порядковый
+        // идентификатор и назвал его сам — «№ 0050». Название исследования
+        // стоит подписью, а не вместо номера: по номеру на прогон ссылаются в
+        // разговоре, а название человек меняет, и меняющийся заголовок сделал
+        // бы ссылку «посмотри 0050» непроверяемой.
         title={number ? `Исследование ${number}` : `Исследование ${id}`}
         subtitle={
+          `${researchTitle(task ?? {})} · ` +
           `${envelope.audienceSize} ответов` +
           (view.replicationCount > 1 ? ` · перекрытие ×${view.replicationCount}` : "") +
           (view.excludedByQa > 0 ? ` · ${view.excludedByQa} исключено QA` : "")
@@ -97,6 +105,11 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
               <Activity className="h-4 w-4" />
               Прогресс
             </Link>
+            {/* Скачивание — сразу за «Прогрессом». Прежде три ссылки лежали
+                секцией в середине отчёта, между деревом JSON и метриками: тот,
+                кто пришёл забрать расшифровку, искал её в шапке и листал отчёт
+                целиком. */}
+            <DownloadMenu runId={id} videoUrl={videoUrl} />
             <Link
               href={`/runs/${id}/chat`}
               className="inline-flex items-center gap-2 rounded-md border border-hairline px-4 py-2 text-sm transition-colors hover:bg-secondary"
@@ -164,49 +177,6 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
             <JsonTree value={envelope.report as never} label="отчёт" />
           </div>
         </details>
-
-        {/*
-          Материалы прогона (п. 36).
-
-          Расшифровка и отчёт — то, чем пользуются ВНЕ продукта: вставляют в
-          презентацию, шлют монтажёру, ищут цитату. Пока их нельзя было забрать,
-          каждый такой случай означал переписывание с экрана.
-
-          Ссылка на ролик подписывается на час: она уедет в переписку и в
-          историю браузера, и вечная ссылка на чужое видео из этой переписки уже
-          не отзывается.
-        */}
-        <section className="rounded-lg border border-hairline bg-card p-6">
-          <h2 className="text-sm font-semibold">Материалы</h2>
-          <div className="mt-3 flex flex-wrap gap-2 text-sm">
-            <a
-              href={`/api/tasks/${id}/transcript`}
-              className="rounded-md border border-hairline px-3 py-1.5 transition-colors hover:bg-secondary"
-            >
-              Расшифровка · txt
-            </a>
-            <a
-              href={`/api/tasks/${id}/report`}
-              download={`report-${id}.json`}
-              className="rounded-md border border-hairline px-3 py-1.5 transition-colors hover:bg-secondary"
-            >
-              Отчёт · json
-            </a>
-            {videoUrl && (
-              <a
-                href={videoUrl}
-                className="rounded-md border border-hairline px-3 py-1.5 transition-colors hover:bg-secondary"
-              >
-                Исходный ролик
-              </a>
-            )}
-          </div>
-          {videoUrl && (
-            <p className="mt-2 text-xs text-slate">
-              Ссылка на ролик подписана на час — по истечении откройте страницу заново.
-            </p>
-          )}
-        </section>
 
         {/* Сводные метрики.
             «Досмотрят до конца» и «Досмотрено» — две разные величины, и стоят

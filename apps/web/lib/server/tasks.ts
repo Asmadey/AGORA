@@ -32,6 +32,14 @@ import { DEFAULT_TEMPERATURES, TEMPERATURE_STAGES } from "@/lib/settings";
 export interface LaunchParams {
   /** Имя файла, как его назвал пользователь. Для показа, не для доступа. */
   sourceName?: string | null;
+  /**
+   * Название исследования, заданное человеком на шаге «Резюме».
+   *
+   * Отдельно от `sourceName`: имя файла — факт о загрузке, название — то, зачем
+   * работа делалась. Держать их в одном поле значит терять исходник при первой
+   * же правке названия.
+   */
+  title?: string | null;
   mode: "short" | "long";
   videoRef: string | null;
   personaSetId: string | null;
@@ -58,6 +66,11 @@ export interface LaunchedTask {
    * либо файл загружен в обход визарда; тогда показывается ключ S3.
    */
   sourceName: string | null;
+  /**
+   * Название, заданное человеком. `null` — не задавали; тогда на экране
+   * показывается имя файла (см. lib/research-title.ts).
+   */
+  title: string | null;
   /** Ключ S3 кадра-заставки. `null` — кадров нет. */
   posterRef: string | null;
   videoRef: string | null;
@@ -106,6 +119,7 @@ interface TaskRow {
   mode: string;
   video_ref: string | null;
   source_name: string | null;
+  title: string | null;
   poster_ref: string | null;
   replication_count: number;
   prompts_snapshot: Record<string, PinnedPrompt>;
@@ -268,6 +282,7 @@ function toTask(row: TaskRow, created: boolean): LaunchedTask {
     id: row.id,
     seqNo: row.seq_no ?? null,
     sourceName: row.source_name ?? null,
+    title: row.title ?? null,
     posterRef: row.poster_ref ?? null,
     mode: row.mode,
     videoRef: row.video_ref,
@@ -337,13 +352,13 @@ export async function launchTask(
      )
      INSERT INTO tasks (project_id, persona_set_id, survey_id, mode, video_ref,
                         replication_count, prompts_snapshot, settings_snapshot,
-                        idempotency_key, created_by, tenant_id, seq_no, source_name)
+                        idempotency_key, created_by, tenant_id, seq_no, source_name, title)
      SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
-             current_setting('app.tenant_id')::uuid, next.value, $11
+             current_setting('app.tenant_id')::uuid, next.value, $11, $12
      FROM next
      ON CONFLICT (tenant_id, idempotency_key) WHERE idempotency_key IS NOT NULL
      DO NOTHING
-     RETURNING id, seq_no, mode, video_ref, source_name, poster_ref, replication_count, prompts_snapshot, settings_snapshot, status, created_at, (SELECT COALESCE(u.name, u.email) FROM users u WHERE u.id = tasks.created_by) AS author`,
+     RETURNING id, seq_no, mode, video_ref, source_name, title, poster_ref, replication_count, prompts_snapshot, settings_snapshot, status, created_at, (SELECT COALESCE(u.name, u.email) FROM users u WHERE u.id = tasks.created_by) AS author`,
     [
       params.projectId,
       params.personaSetId,
@@ -356,6 +371,7 @@ export async function launchTask(
       key,
       createdBy,
       params.sourceName ?? null,
+      params.title ?? null,
     ],
   );
 
@@ -364,7 +380,7 @@ export async function launchTask(
   // Конфликт: задача с таким ключом уже есть. Возвращаем её, а не ошибку —
   // для вызывающего повторный запуск обязан выглядеть как успешный.
   const existing = await client.query<TaskRow>(
-    `SELECT id, seq_no, mode, video_ref, source_name, poster_ref, replication_count, prompts_snapshot, settings_snapshot, status, created_at, (SELECT COALESCE(u.name, u.email) FROM users u WHERE u.id = tasks.created_by) AS author
+    `SELECT id, seq_no, mode, video_ref, source_name, title, poster_ref, replication_count, prompts_snapshot, settings_snapshot, status, created_at, (SELECT COALESCE(u.name, u.email) FROM users u WHERE u.id = tasks.created_by) AS author
      FROM tasks WHERE idempotency_key = $1`,
     [key],
   );
@@ -442,7 +458,7 @@ export async function getTask(
   id: string,
 ): Promise<LaunchedTask | null> {
   const { rows } = await client.query<TaskRow>(
-    `SELECT id, seq_no, mode, video_ref, source_name, poster_ref, replication_count, prompts_snapshot, settings_snapshot, status, created_at, (SELECT COALESCE(u.name, u.email) FROM users u WHERE u.id = tasks.created_by) AS author
+    `SELECT id, seq_no, mode, video_ref, source_name, title, poster_ref, replication_count, prompts_snapshot, settings_snapshot, status, created_at, (SELECT COALESCE(u.name, u.email) FROM users u WHERE u.id = tasks.created_by) AS author
      FROM tasks WHERE id = $1`,
     [id],
   );
@@ -451,8 +467,32 @@ export async function getTask(
 
 export async function listTasks(client: PoolClient): Promise<LaunchedTask[]> {
   const { rows } = await client.query<TaskRow>(
-    `SELECT id, seq_no, mode, video_ref, source_name, poster_ref, replication_count, prompts_snapshot, settings_snapshot, status, created_at, (SELECT COALESCE(u.name, u.email) FROM users u WHERE u.id = tasks.created_by) AS author
+    `SELECT id, seq_no, mode, video_ref, source_name, title, poster_ref, replication_count, prompts_snapshot, settings_snapshot, status, created_at, (SELECT COALESCE(u.name, u.email) FROM users u WHERE u.id = tasks.created_by) AS author
      FROM tasks ORDER BY created_at DESC LIMIT 100`,
   );
   return rows.map((r) => toTask(r, false));
+}
+
+
+/**
+ * Переименование исследования.
+ *
+ * Пустое название законно и означает «убрать своё» — заголовок вернётся к имени
+ * файла. Поэтому `null` здесь не ошибка, а значение.
+ *
+ * Проверка принадлежности не нужна отдельным запросом: RLS уже ограничивает
+ * `tasks` арендатором сессии, и `UPDATE` по чужому идентификатору не найдёт
+ * строки. Дополнительный `SELECT` перед этим создавал бы окно между проверкой и
+ * записью — и ложное ощущение, что защита именно в нём.
+ */
+export async function renameTask(
+  client: PoolClient,
+  id: string,
+  title: string | null,
+): Promise<boolean> {
+  const { rowCount } = await client.query(
+    "UPDATE tasks SET title = $2 WHERE id = $1::uuid",
+    [id, title],
+  );
+  return (rowCount ?? 0) > 0;
 }

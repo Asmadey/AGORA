@@ -1,3 +1,4 @@
+import { normalizeTitle } from "@/lib/research-title";
 import { DEFAULT_SETTINGS } from "@/lib/settings";
 import { withTenant } from "@/lib/server/db";
 import { HttpError, requireSession, toResponse } from "@/lib/server/guard";
@@ -23,6 +24,7 @@ interface LaunchBody {
   mode?: unknown;
   videoRef?: unknown;
   sourceName?: unknown;
+  title?: unknown;
   personaSetId?: unknown;
   surveyId?: unknown;
   projectId?: unknown;
@@ -62,6 +64,21 @@ export async function POST(request: Request) {
     }
     if (body.sourceName !== undefined && typeof body.sourceName !== "string") {
       errors.push("sourceName: строка либо отсутствует");
+    }
+    // Название разбирается общей функцией — той же, что и при переименовании.
+    // Своя проверка здесь разошлась бы с ней, и создание принимало бы то, что
+    // потом нельзя сохранить правкой.
+    let title: string | null = null;
+    if (body.title !== undefined && body.title !== null) {
+      if (typeof body.title !== "string") {
+        errors.push("title: строка либо отсутствует");
+      } else {
+        try {
+          title = normalizeTitle(body.title);
+        } catch (e) {
+          errors.push(`title: ${(e as Error).message}`);
+        }
+      }
     }
 
     // seed обязателен: без него идемпотентность бессмысленна — каждый запуск
@@ -115,6 +132,7 @@ export async function POST(request: Request) {
         mode: mode as "short" | "long",
         videoRef: optionalId(body.videoRef),
         sourceName: typeof body.sourceName === "string" ? body.sourceName.slice(0, 300) : null,
+        title,
         personaSetId: optionalId(body.personaSetId),
         surveyId: optionalId(body.surveyId),
         projectId: optionalId(body.projectId),

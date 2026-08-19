@@ -40,6 +40,11 @@ export default function NewStudyPage() {
   const [mode, setMode] = useState<"short" | "long">("short");
   const [criteria, setCriteria] = useState<AudienceCriteria>(DEFAULT_CRITERIA);
   const [replication, setReplication] = useState(1);
+  /**
+   * Название исследования. Спрашивается на шаге «Резюме»: к концу визарда
+   * человек знает, что именно собрал, а на шаге загрузки — ещё нет.
+   */
+  const [title, setTitle] = useState("");
   const [launching, setLaunching] = useState(false);
   const [launchError, setLaunchError] = useState<string | null>(null);
   // Идентификатор созданного исследования. Показывается до перехода в список:
@@ -96,6 +101,9 @@ export default function NewStudyPage() {
           // пользовательские имена содержат пробелы, кириллицу и повторяются, а
           // ключ обязан быть уникальным. Поэтому имя едет отдельным полем.
           sourceName: videoName,
+          // Название исследования, заданное на шаге «Резюме». Пустое —
+          // законно: заголовком станет имя файла.
+          title: title.trim() || null,
           projectId,
           personaSetId,
           replicationCount: replication,
@@ -401,6 +409,38 @@ export default function NewStudyPage() {
         {/* Шаг 4 — резюме */}
         {step === 3 && (
           <div className="space-y-6">
+            {/*
+              Название — первым в резюме, до параметров прогона.
+
+              Без него заголовком исследования становится имя файла, а файлы
+              называют «15 min.mp4» и «final_v3.mp4»: через месяц в списке из
+              двадцати прогонов ни один не опознаётся. Спрашиваем здесь, а не на
+              первом шаге, потому что к концу визарда человек уже знает, что
+              именно он собрал, — на шаге загрузки он этого ещё не знает.
+
+              Поле необязательное: заставлять придумывать название до запуска
+              значит держать прогон ради строки, которую можно дописать потом
+              карандашом в списке.
+            */}
+            <div>
+              <label htmlFor="study-title" className="text-sm font-semibold">
+                Укажите название исследования
+              </label>
+              <p className="mt-1 text-xs leading-relaxed text-slate">
+                Необязательно. Если оставить пустым, в списке будет имя файла
+                {videoName ? ` — «${videoName}»` : ""}. Название можно поменять
+                потом, карандашом рядом с заголовком.
+              </p>
+              <input
+                id="study-title"
+                value={title}
+                onChange={(e) => setTitle(e.target.value)}
+                maxLength={200}
+                placeholder="Например: Промо для ВК, апрельская версия"
+                className="mt-3 w-full max-w-xl rounded-md border border-hairline bg-background px-3 py-2 text-sm outline-none transition-colors focus:border-muted-foreground/60"
+              />
+            </div>
+
             <div>
               <h2 className="text-sm font-semibold">Перекрытие</h2>
               <p className="mt-1 text-xs leading-relaxed text-slate">
@@ -457,6 +497,7 @@ export default function NewStudyPage() {
                       ? ` (${questions.length - BASE_QUESTIONS.length} своих)`
                       : ""),
                 ],
+                ["Название", title.trim() || videoName || "по имени файла"],
                 ["Перекрытие", `×${replication}`],
                 [
                   "Вызовов модели",

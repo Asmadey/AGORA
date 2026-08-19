@@ -8,6 +8,9 @@ import { withTenant } from "@/lib/server/db";
 import { requireSession } from "@/lib/server/guard";
 import { listTasks, taskNumber } from "@/lib/server/tasks";
 import { safePresign } from "@/lib/server/content-pack";
+import { InlineRename } from "@/components/agora/InlineRename";
+import { researchTitle } from "@/lib/research-title";
+import { renameResearchAction } from "./actions";
 
 /**
  * Список прогонов (PRD §5.E).
@@ -96,11 +99,24 @@ export default async function RunsPage() {
               const ready = task.status === "REPORT_READY";
               const href = ready ? `/runs/${task.id}` : `/runs/${task.id}/progress`;
               return (
-                <Link
+                /*
+                  Ссылка — накладкой поверх карточки, а не обёрткой вокруг неё.
+                  Причина не в вёрстке: рядом с заголовком появилось
+                  переименование, а форма с полем ввода внутри <a> — это и
+                  недопустимая разметка, и сломанное поведение: Enter в поле
+                  одновременно отправляет форму и переходит по ссылке.
+
+                  Накладка решает обе задачи разом: кликом по любому свободному
+                  месту карточка по-прежнему открывается, а интерактивные
+                  элементы лежат выше неё по z-index и получают свои клики.
+                */
+                <div
                   key={task.id}
-                  href={href}
                   className="group relative flex items-center gap-6 rounded-xl border border-hairline bg-card p-5 pr-14 transition-colors hover:border-hairline-strong"
                 >
+                  <Link href={href} className="absolute inset-0 z-0 rounded-xl">
+                    <span className="sr-only">Открыть исследование</span>
+                  </Link>
                   {/*
                     Заставка слева, до всего текста. Ключ лежит в самой задаче
                     (`tasks.poster_ref`), а не достаётся из пакета в Mongo: сто
@@ -125,12 +141,24 @@ export default async function RunsPage() {
                         </span>
                       )}
                       {/*
-                        Имя файла, как его назвал человек. Раньше здесь стоял
-                        ключ S3 — узнать в нём свой ролик нельзя, а именно по
-                        нему исследование и ищут глазами.
+                        Название исследования: своё, если задано, иначе имя
+                        файла. Раньше здесь стоял ключ S3 — узнать в нём свой
+                        ролик нельзя, а именно по заголовку исследование и ищут
+                        глазами.
+
+                        `z-10` обязателен: под заголовком лежит накладная
+                        ссылка, и без подъёма карандаш ловил бы её клик вместо
+                        своего.
                       */}
-                      <h2 className="truncate font-medium">
-                        {task.sourceName ?? task.videoRef ?? "Прогон без материала"}
+                      <h2 className="relative z-10 min-w-0 font-medium">
+                        <InlineRename
+                          id={task.id}
+                          name={researchTitle(task)}
+                          action={renameResearchAction}
+                          label="Название исследования"
+                          required={false}
+                          inputClassName="text-base"
+                        />
                       </h2>
                       <StatusBadge status={task.status} />
                     </div>
@@ -153,8 +181,8 @@ export default async function RunsPage() {
 
                   {/* Крестик справа вверху, поверх карточки: в потоке он бы
                       сдвигал содержимое, когда превращается в подтверждение. */}
-                  <DeleteRunButton runId={task.id} className="absolute right-3 top-3" />
-                </Link>
+                  <DeleteRunButton runId={task.id} className="absolute right-3 top-3 z-10" />
+                </div>
               );
             })}
           </div>
