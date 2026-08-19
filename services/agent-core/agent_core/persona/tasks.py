@@ -140,6 +140,9 @@ def generate_audience(self: Any, payload: dict[str, Any]) -> dict[str, Any]:
     # иначе набор из двадцати даёт двадцать трасс, и вопрос «почему аудитория
     # собиралась двенадцать минут» снова остаётся без ответа.
     with trace:
+            # Один запрос на набор, а не на персону: словарь один и тот же.
+        portraits = _load_portraits(tenant_id)
+
         meta: dict[str, Any] = {"enriched": False, "llm_calls": 0, "cache_hits": 0}
         if config.use_llm:
             from .enrich import enrich_personas
@@ -158,6 +161,11 @@ def generate_audience(self: Any, payload: dict[str, Any]) -> dict[str, Any]:
                     personas,
                     on_progress=report,
                     temperature=temperatures.personaCreation,  # стадия personaCreation
+                    # Портреты сегментов из базы арендатора. До 19.08 раздел
+                    # «Портреты» был отключён от продукта целиком: ни один узел
+                    # конвейера и ни одна строка генератора его не читали, хотя
+                    # реестр промптов утверждал обратное.
+                    portraits=portraits,
                 )
             except Exception as exc:  # noqa: BLE001
                 return fail(f"обогащение не удалось: {type(exc).__name__}: {exc}")
@@ -201,7 +209,9 @@ def generate_audience(self: Any, payload: dict[str, Any]) -> dict[str, Any]:
                     if not fresh:
                         return None
                     return enrich_personas(
-                        fresh, temperature=temperatures.personaCreation
+                        fresh,
+                        temperature=temperatures.personaCreation,
+                        portraits=portraits,
                     ).personas[0]
                 except Exception:  # noqa: BLE001 — не сумели пересоздать, не отказ фазы
                     return None
@@ -286,3 +296,34 @@ def generate_audience(self: Any, payload: dict[str, Any]) -> dict[str, Any]:
             "enrichment": meta,
             "validation": validation_meta,
         }
+
+
+def _load_portraits(tenant_id: str) -> dict[str, str]:
+    """
+    Портреты сегментов команды: `{ключ сегмента: текст}`.
+
+    Отказ чтения — не отказ сборки аудитории. Портрет улучшает описание
+    персоны, а не делает её возможной; уронить из-за него набор значило бы
+    поменять надёжный результат на красивый.
+
+    Берутся только портреты С сегментом: заведённые вручную его не имеют, и
+    сопоставить их с персоной не по чему. Имя для этого не годится — человек
+    правит его руками, и матчинг по имени сломался бы на первом переименовании
+    молча, оставив персону без портрета.
+    """
+    dsn = os.environ.get("DATABASE_URL")
+    if not dsn:
+        return {}
+    try:
+        import psycopg
+
+        from ..db import tenant_scope
+
+        with psycopg.connect(dsn) as conn, tenant_scope(conn, tenant_id) as cur:
+            cur.execute(
+                "SELECT segment_key, body_md FROM audience_portraits "
+                "WHERE segment_key IS NOT NULL AND body_md <> ''"
+            )
+            return {str(k): str(v) for k, v in cur.fetchall()}
+    except Exception:  # noqa: BLE001
+        return {}

@@ -51,6 +51,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
 
+from .portraits import portrait_for
+
 DEFAULT_MODEL = "qwen3.6"
 
 def _find_prompt(name: str) -> Path:
@@ -105,7 +107,12 @@ GROUNDED_FIELDS = (
 # ─── Кэш ─────────────────────────────────────────────────────────────────────
 
 
-def cache_key(skeleton: dict[str, Any], prompt_template: str, model: str) -> str:
+def cache_key(
+    skeleton: dict[str, Any],
+    prompt_template: str,
+    model: str,
+    portrait_md: str = "",
+) -> str:
     """
     Ключ обогащения одной персоны.
 
@@ -120,6 +127,16 @@ def cache_key(skeleton: dict[str, Any], prompt_template: str, model: str) -> str
     h.update(json.dumps(skeleton, sort_keys=True, ensure_ascii=False).encode("utf-8"))
     h.update(prompt_template.encode("utf-8"))
     h.update(model.encode("utf-8"))
+    # Портрет — часть промпта, а не часть скелета, и в ключ обязан входить.
+    # Иначе две персоны с одинаковым скелетом из разных сегментов получат один
+    # кэшированный narrative, собранный по чужому портрету, — и выглядеть он
+    # будет совершенно нормально.
+    #
+    # Пустой портрет ничего не дописывает намеренно: ключ прогонов без портрета
+    # обязан остаться прежним, иначе весь накопленный кэш обесценится в день
+    # выкладки и первый же прогон оплатит обогащение заново.
+    if portrait_md:
+        h.update(portrait_md.encode("utf-8"))
     return h.hexdigest()
 
 
@@ -265,7 +282,9 @@ def _skeleton(persona: dict[str, Any]) -> dict[str, Any]:
     return {k: persona[k] for k in GROUNDED_FIELDS if k in persona}
 
 
-def render_prompt(template: str, persona: dict[str, Any]) -> str:
+def render_prompt(
+    template: str, persona: dict[str, Any], portrait_md: str = ""
+) -> str:
     """
     Подставляет скелет в шаблон persona.enrich.md.
 
@@ -278,6 +297,10 @@ def render_prompt(template: str, persona: dict[str, Any]) -> str:
     lifestyle = persona.get("lifestyle_and_interests", {})
     return (
         template
+        # Пустая строка, а не пропуск подстановки: оставленный `{{portrait_md}}`
+        # уехал бы в модель буквально, и она приняла бы фигурные скобки за часть
+        # задания.
+        .replace("{{portrait_md}}", portrait_md)
         .replace("{{skeleton_json}}", json.dumps(_skeleton(persona), ensure_ascii=False, indent=2))
         .replace("{{age}}", str(demo.get("age", "")))
         .replace("{{gender}}", str(demo.get("gender", "")))
@@ -299,6 +322,7 @@ def enrich_personas(
     model: str | None = None,
     on_progress: Callable[[int, int], None] | None = None,
     temperature: float | None = None,
+    portraits: dict[str, str] | None = None,
 ) -> EnrichResult:
     """
     Переписывает narrative каждой персоны моделью, оставляя скелет нетронутым.
@@ -353,7 +377,12 @@ def enrich_personas(
     result = EnrichResult()
     for index, persona in enumerate(personas, start=1):
         enriched = copy.deepcopy(persona)
-        key = cache_key(_skeleton(persona), prompt, model_name)
+        # Портрет сегмента — часть промпта этой персоны, поэтому входит и в
+        # ключ кэша. Иначе две персоны с одинаковым скелетом из разных
+        # сегментов получат один кэшированный narrative, собранный по чужому
+        # портрету, — и выглядеть он будет совершенно нормально.
+        portrait = portrait_for(persona, portraits or {})
+        key = cache_key(_skeleton(persona), prompt, model_name, portrait_md=portrait)
 
         cached = cache.get(key) if cache else None
         if cached is not None:
@@ -365,7 +394,9 @@ def enrich_personas(
             continue
 
         try:
-            text = client.complete(prompt=render_prompt(prompt, persona))
+            text = client.complete(
+                prompt=render_prompt(prompt, persona, portrait_md=portrait)
+            )
         except Exception as exc:
             # Отказ на середине списка: уже обогащённые персоны сохраняются,
             # остальные остаются с шаблонным narrative. Наполовину обогащённый

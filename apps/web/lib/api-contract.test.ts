@@ -172,3 +172,52 @@ test("маршруты, меняющие данные, объявляют nodejs
 
   assert.deepEqual(offenders, [], `маршрут с запросом к базе без runtime=nodejs: ${offenders}`);
 });
+
+// ─── Содержимое схем, а не только форма двери ────────────────────────────────
+//
+// Проверки выше сверяют пути и методы. Спецификация при этом разъехалась с
+// кодом и оставалась зелёной: в `Settings` было три поля из одиннадцати, одно
+// из них — `aiModel`, которого в продукте нет вовсе. Клиенты строятся по
+// спецификации, и поле, описанное неверно, — это код, который кто-то напишет и
+// который не сработает.
+
+import { DEFAULT_SETTINGS, WHISPER_MODELS } from "./settings.ts";
+
+test("схема Settings описывает те же поля, что и продукт", () => {
+  const schema = (SPEC as unknown as {
+    components: { schemas: Record<string, { properties?: Record<string, unknown> }> };
+  }).components.schemas.Settings;
+
+  const described = Object.keys(schema.properties ?? {}).sort();
+  // apiKeyMask отдаётся только на чтение и в схему входит; сам ключ — никогда.
+  const actual = Object.keys(DEFAULT_SETTINGS).sort();
+
+  const missing = actual.filter((k) => !described.includes(k));
+  const extra = described.filter((k) => !actual.includes(k));
+
+  assert.deepEqual(missing, [], `есть в продукте, нет в схеме: ${missing}`);
+  assert.deepEqual(extra, [], `описано и не существует: ${extra}`);
+});
+
+test("каталог моделей в схеме совпадает с каталогом продукта", () => {
+  const schema = (SPEC as unknown as {
+    components: { schemas: Record<string, { properties?: Record<string, { enum?: string[] }> }> };
+  }).components.schemas.Settings;
+
+  const described = schema.properties?.whisperModel?.enum;
+  assert.ok(described, "whisperModel описан свободной строкой — выбор не ограничен ничем");
+  assert.deepEqual([...described].sort(), [...WHISPER_MODELS].sort());
+});
+
+test("статусы прогона в схеме совпадают с теми, что показывает список", () => {
+  // CANCELLED появился вместе с отменой прогона и в схему не попал: клиент,
+  // построенный по ней, на отменённом прогоне упадёт на разборе enum.
+  const schema = (SPEC as unknown as {
+    components: { schemas: Record<string, { properties?: Record<string, { enum?: string[] }> }> };
+  }).components.schemas.LaunchedTask;
+
+  const described = schema.properties?.status?.enum ?? [];
+  for (const status of ["QUEUED", "RUNNING", "REPORT_READY", "FAILED", "CANCELLED"]) {
+    assert.ok(described.includes(status), `статус ${status} не описан`);
+  }
+});
