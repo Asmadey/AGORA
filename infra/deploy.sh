@@ -51,8 +51,16 @@ docker compose -f infra/docker-compose.yml --env-file .env.local \
 
 echo
 echo "── Проверка ──────────────────────────────────────────────────────────"
+# --env-file нужен и здесь: без него compose не подставит обязательные
+# переменные и упадёт на интерполяции, а `|| echo '?'` превратит отказ в
+# безобидный вопросительный знак. Проверка, которая молча не работает, хуже
+# отсутствующей — она создаёт ощущение, что развёртывание проверено.
 for s in "${SERVICES[@]}"; do
-    printf '%-8s %s\n' "$s" "$(docker compose -f infra/docker-compose.yml ps --format '{{.Status}}' "$s" 2>/dev/null || echo '?')"
+    status="$(docker compose -f infra/docker-compose.yml --env-file .env.local \
+        ps --format '{{.Status}}' "$s" 2>&1)" || {
+        echo >&2 "не удалось спросить состояние $s:"; echo "$status" >&2; exit 1; }
+    printf '%-8s %s\n' "$s" "${status:-НЕ ЗАПУЩЕН}"
+    [ -n "$status" ] || exit 1
 done
 
 # Ровно та ошибка, ради которой скрипт и появился. Если она вернётся, это
