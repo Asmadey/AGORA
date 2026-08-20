@@ -43,6 +43,14 @@ evals/artifacts
 *.mkv
 *.mov
 
+# Виртуальные окружения. На сервере services/agent-core/.venv занимает 2 ГБ —
+# больше всего остального репозитория вместе взятого, и уезжало в контекст
+# целиком.
+.venv
+**/.venv
+venv
+**/venv
+
 __pycache__
 **/__pycache__
 *.pyc
