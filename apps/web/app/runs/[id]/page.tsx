@@ -25,6 +25,7 @@ import { audienceNote } from "@/lib/audience-note";
 import { researchTitle } from "@/lib/research-title";
 import { parseAnswer, parseReport } from "@/lib/report-view";
 import { contributions, type MetricKey } from "@/lib/provenance";
+import { humanDuration } from "@/lib/progress-state";
 import { MetricProvenance } from "@/components/agora/MetricProvenance";
 import { CRITERIA, CRITERIA_LABELS } from "@/lib/agora-types";
 
@@ -301,7 +302,7 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
           )}
           <StatCard
             label="Время обработки"
-            value={timing.totalSec === null ? "—" : formatDuration(timing.totalSec)}
+            value={timing.totalSec === null ? "—" : humanDuration(timing.totalSec)}
             hint={
               timing.nodes.length > 0
                 ? `${timing.nodes.length} этапов · дольше всего ${longestNode(timing.nodes)}`
@@ -652,13 +653,10 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
 }
 
 /** Секунды → «4 мин 12 с». Часы появляются только когда они есть. */
-function formatDuration(sec: number): string {
-  const total = Math.max(0, Math.round(sec));
-  if (total < 60) return `${total} с`;
-  const m = Math.floor(total / 60) % 60;
-  const h = Math.floor(total / 3600);
-  return h > 0 ? `${h} ч ${m} мин` : `${m} мин ${total % 60} с`;
-}
+// Прежде здесь жила своя формула, и она теряла секунды при часах: «2 ч 52 мин»
+// вместо «2 часа 52 мин 14 сек». Вторая реализация одного и того же расходится
+// с первой при первой же правке — и молча, потому что оба экрана рядом никто не
+// держит открытыми. Формат один на весь продукт: lib/progress-state.ts.
 
 /** Самый долгий этап — то, чем объясняется длительность прогона. */
 function longestNode(
@@ -672,7 +670,7 @@ function longestNode(
     null,
   );
   return worst && worst.durationSec !== null
-    ? `${worst.node} (${formatDuration(worst.durationSec)})`
+    ? `${worst.node} (${humanDuration(worst.durationSec)})`
     : "неизвестно";
 }
 

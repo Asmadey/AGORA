@@ -79,6 +79,7 @@ export default async function ProgressPage({
           startedAt={row.started_at?.toISOString() ?? null}
           finishedAt={row.finished_at?.toISOString() ?? null}
           durations={durations}
+          taskStatus={row.status}
         />
       </div>
     </>

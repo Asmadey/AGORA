@@ -7,6 +7,7 @@ import { AlertTriangle, Check, Circle, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { mergeDurations, type TimingEntry } from "@/lib/progress-durations";
 import { nodesForMode, type PipelineNode } from "@/lib/pipeline-nodes";
+import { humanDuration, progressStates, type NodeState } from "@/lib/progress-state";
 
 /**
  * Экран прогресса прогона (задача #12).
@@ -52,14 +53,13 @@ export interface ProgressEvent {
   timings?: TimingEntry[];
 }
 
-type NodeState = "waiting" | "running" | "done" | "failed";
-
 export function ProgressView({
   taskId,
   mode = "short",
   startedAt = null,
   finishedAt = null,
   durations = {},
+  taskStatus = null,
 }: {
   taskId: string;
   mode?: "short" | "long";
@@ -79,6 +79,14 @@ export function ProgressView({
   startedAt?: string | null;
   /** Когда закончился последний шаг — `tasks.finished_at`. */
   finishedAt?: string | null;
+  /**
+   * Статус задачи из Postgres.
+   *
+   * Он переживает срок жизни снимка в Valkey, а событие SSE — нет. Без него
+   * завершённый вчера прогон выглядел как не начинавшийся: «Шаг 1 из 13» и ни
+   * одной галочки при полностью заполненных длительностях.
+   */
+  taskStatus?: string | null;
 }) {
   const [event, setEvent] = useState<ProgressEvent | null>(null);
   const [connected, setConnected] = useState(false);
@@ -110,6 +118,22 @@ export function ProgressView({
   // отрисовки React не отслеживает, поэтому перерисовки от него не будет.
   const nodes = useMemo<PipelineNode[]>(() => nodesForMode(mode), [mode]);
 
+  // Живые длительности поверх серверных. Серверные приходят из Postgres в
+  // конце прогона и нужны вкладке, открытой после его завершения; живые — всё
+  // остальное время.
+  const knownDurations = mergeDurations(durations, event?.timings);
+
+  // Состояние шагов — общим модулем, а не по месту: правило «шаг с записанной
+  // длительностью пройден» иначе жило бы только здесь и проверялось глазами.
+  const progress = progressStates({
+    nodes: nodes.map((n) => n.name),
+    currentNode: event?.node ?? null,
+    eventStatus: event?.status ?? null,
+    taskStatus,
+    durations: knownDurations,
+  });
+  const { finished, failed, currentIndex } = progress;
+
   useEffect(() => {
     const source = new EventSource(`/api/tasks/${taskId}/progress`);
 
@@ -132,8 +156,8 @@ export function ProgressView({
     return () => source.close();
   }, [taskId]);
 
-  const failed = event?.status === "FAILED";
-  const finished = event?.status === "REPORT_READY";
+  // Живые длительности поверх серверных объявлены ниже, поэтому состояние
+  // считается там же — сразу после них.
 
   useEffect(() => {
     const fromServer = startedAt ? Date.parse(startedAt) : NaN;
@@ -180,32 +204,20 @@ export function ProgressView({
     return () => clearInterval(timer);
   }, [stepStartedAt, finished, failed]);
 
-  // Живые длительности поверх серверных. Серверные приходят из Postgres в
-  // конце прогона и нужны вкладке, открытой после его завершения; живые — всё
-  // остальное время.
-  const knownDurations = mergeDurations(durations, event?.timings);
 
-  /** «(30 сек)» рядом с названием шага. Пусто — длительности пока нет. */
+  /** «(1 час 28 мин 30 сек)» рядом с названием шага. Пусто — длительности нет. */
   function stepTime(node: PipelineNode, state: NodeState): string {
     const known = knownDurations[node.name];
-    if (typeof known === "number") return ` (${Math.round(known)} сек)`;
-    if (state === "running" && stepElapsed !== null) return ` (${stepElapsed} сек)`;
+    if (typeof known === "number") return ` (${humanDuration(known)})`;
+    if (state === "running" && stepElapsed !== null) return ` (${humanDuration(stepElapsed)})`;
     return "";
   }
 
-  const currentIndex = nodes.findIndex((n) => n.name === event?.node);
-  const doneCount = finished
-    ? nodes.length
-    : Math.max(currentIndex, 0) + (event?.status === "DONE" ? 1 : 0);
+  const doneCount = progress.doneCount;
   const pct = Math.round((doneCount / nodes.length) * 100);
 
   function stateOf(index: number): NodeState {
-    if (finished) return "done";
-    if (currentIndex < 0) return "waiting";
-    if (index < currentIndex) return "done";
-    if (index > currentIndex) return "waiting";
-    if (failed) return "failed";
-    return event?.status === "DONE" ? "done" : "running";
+    return progress.states[index] ?? "waiting";
   }
 
   return (
@@ -224,7 +236,7 @@ export function ProgressView({
               ? "переподключение…"
               : elapsed === null
                 ? "в очереди"
-                : `${Math.floor(elapsed / 60)}:${String(elapsed % 60).padStart(2, "0")}`}
+                : humanDuration(elapsed)}
           </span>
         </div>
         <div className="h-1.5 overflow-hidden rounded-full bg-secondary">
