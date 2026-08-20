@@ -89,12 +89,16 @@ def _patch(monkeypatch, transcribe_work, diarize_work):
     """
     import importlib
 
-    # Заглушка ставится ОБОИМ движкам: с версии, где parakeet стал моделью по
-    # умолчанию, конвейер выбирает распознаватель по снимку настроек, и стаб
-    # только на whisper перестал перехватывать вызов — тест уходил в настоящий
-    # ONNX и падал на отсутствии весов. Проверяется здесь параллельность, а не
-    # то, какая модель считает, поэтому глушим обе.
-    for module in ("agent_core.asr.transcribe", "agent_core.asr.parakeet"):
+    # Заглушка ставится ВСЕМ движкам: конвейер выбирает распознаватель по снимку
+    # настроек, и стаб только на whisper перестал перехватывать вызов, когда
+    # умолчанием стал сначала parakeet, а потом GigaAM — тест уходил в
+    # настоящий движок и падал на отсутствии весов. Проверяется здесь
+    # параллельность, а не то, какая модель считает, поэтому глушим все.
+    for module in (
+        "agent_core.asr.transcribe",
+        "agent_core.asr.parakeet",
+        "agent_core.asr.gigaam",
+    ):
         monkeypatch.setattr(
             importlib.import_module(module), "transcribe", transcribe_work,
         )

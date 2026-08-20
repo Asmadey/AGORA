@@ -75,6 +75,50 @@ sys.stderr.write('opencv: стоит ' + ('opencv-python (GUI)' if gui else 'Н�
   'экстру opencv-headless убрали и pip тихо ставит GUI-сборку.\n') if not ok else None; \
 sys.exit(0 if ok else 1)"
 
+# ─── GigaAM: движок и веса ──────────────────────────────────────────────────
+#
+# Основной распознаватель с 20.08.2026 (docs/ASR_BAKEOFF_2026-08-20.md).
+#
+# ─── Почему --no-deps ─────────────────────────────────────────────────────
+# Пакет закрепляет `onnxruntime==1.23.*`, а в образе 1.29 под sherpa-onnx.
+# Обычная установка молча понизит его — и сломает parakeet, который до полного
+# отказа от него остаётся исполнимым для перезапуска старых прогонов. Понижение
+# не выглядит ошибкой: pip печатает предупреждение и продолжает.
+#
+# Поэтому зависимости перечислены руками. Torch и torchaudio уже стоят (CPU-сборка
+# выше), soundfile тянется вместе с pyannote, остальное — четыре лёгких пакета.
+#
+# ─── Почему из архива, а не из PyPI ───────────────────────────────────────
+# На PyPI лежит 0.1.0 — редакция v2, моделей v3 в ней нет. v3 живёт только в
+# репозитории. Пин на коммит здесь был бы честнее ветки, но у проекта нет тегов
+# релизов, и коммит пришлось бы обновлять вручную при каждом исправлении.
+RUN pip install "hydra-core==1.3.*" "omegaconf==2.3.*" sentencepiece soundfile \
+ && pip install --no-deps "https://github.com/salute-developers/GigaAM/archive/refs/heads/main.zip" \
+ && python -c "\
+import importlib.metadata as md, sys; \
+v = md.version('onnxruntime'); \
+sys.exit(0 if v.startswith('1.29') else sys.stderr.write( \
+  'onnxruntime понижен до ' + v + ': GigaAM протащил свой пин мимо --no-deps, ' \
+  'sherpa-onnx сломается на первом прогоне parakeet' + chr(10)) or 1)"
+
+# Веса GigaAM в образ — по той же причине, что и веса parakeet ниже: скачивание
+# посреди прогона выглядит случайно долгой транскрипцией, а не нехваткой модели.
+#
+# GIGAAM_HOME читает agent_core/asr/gigaam.py и передаёт в load_model как
+# download_root. Каталог внутри образа, а не на томе: образ обязан быть
+# самодостаточным.
+ENV GIGAAM_HOME=/opt/models/gigaam
+RUN mkdir -p /opt/models/gigaam \
+ && python -c "\
+import gigaam; \
+gigaam.load_model('v3_e2e_rnnt', device='cpu', download_root='/opt/models/gigaam')" \
+ && python -c "\
+import pathlib, sys; \
+files = list(pathlib.Path('/opt/models/gigaam').rglob('*')); \
+weight = sum(f.stat().st_size for f in files if f.is_file()); \
+sys.exit(0 if weight > 100 * 1024 * 1024 else sys.stderr.write( \
+  'веса GigaAM не скачались: ' + str(weight) + ' байт' + chr(10)) or 1)"
+
 # ─── Веса parakeet в образ ──────────────────────────────────────────────────
 #
 # 671 МБ int8-весов пекутся сюда намеренно. Скачивание модели посреди прогона —
@@ -115,7 +159,7 @@ RUN pip install -e .
 # посреди прогона, уже после загрузки видео.
 RUN useradd --create-home --uid 1001 celeryuser \
     && mkdir -p /home/celeryuser/.cache/huggingface \
-    && chown -R celeryuser:celeryuser /app /home/celeryuser
+    && chown -R celeryuser:celeryuser /app /home/celeryuser /opt/models
 USER celeryuser
 
 CMD ["celery", "-A", "agent_core.celery_app", "worker", "--loglevel=info"]

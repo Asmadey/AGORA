@@ -469,13 +469,36 @@ class TemperatureConfig:
 #:
 #: Восьмикратная разница. Транскрипция занимала около половины прогона, поэтому
 #: parakeet стоит первым и он же значение по умолчанию.
-WHISPER_MODELS = ("parakeet-tdt-0.6b-v3", "large-v3")
+#:
+#: 20.08.2026 первым стал GigaAM. Замер на пяти минутах диалога из прогона 0051
+#: (docs/ASR_BAKEOFF_2026-08-20.md): 64,8 слов на минуту речи против 40,3 у
+#: parakeet, 21 секунда против 67, 1694 МБ против 3285. У parakeet текст на
+#: русском не восстанавливается до смысла — «Сот мальчишек» вместо «Семьсот
+#: мальчишек», — и на этом тексте работают ответ персоны, проверка судьи и
+#: цитаты в отчёте.
+WHISPER_MODELS = ("gigaam-v3-e2e-rnnt", "large-v3")
+
+#: Модели, снятые с предложения, но остающиеся исполнимыми.
+#:
+#: Снимок настроек прогона пиннит имя модели (Decision Log #10). Убрать модель
+#: из `WHISPER_MODELS` и на этом закончить значило бы, что перезапуск прогона,
+#: сделанного на ней, падает ConfigError — то есть прошлый прогон перестаёт
+#: воспроизводиться из-за решения, принятого позже. Поэтому снятая модель
+#: исчезает из выбора, но продолжает исполняться.
+RETIRED_MODELS = ("parakeet-tdt-0.6b-v3",)
+
+#: Что вообще допустимо исполнить: предлагаемое плюс снятое.
+SUPPORTED_MODELS = WHISPER_MODELS + RETIRED_MODELS
 
 #: Модели, распознавание которыми идёт через ONNX, а не через faster-whisper.
 #: Перечень, а не признак в имени: имя — это то, что видит пользователь, и
 #: завязывать на его подстроку выбор кода значит однажды переименовать модель и
 #: сломать конвейер.
 ONNX_MODELS = ("parakeet-tdt-0.6b-v3",)
+
+#: Модели GigaAM. Свой движок: границы кусков берутся из нашего VAD, а не из
+#: его собственного longform — см. agent_core/asr/gigaam.py.
+GIGAAM_MODELS = tuple(m for m in WHISPER_MODELS if m.startswith("gigaam-"))
 
 
 @dataclass(frozen=True)
@@ -570,10 +593,17 @@ class DiarizationConfig:
 
 
 def _validate_model(model: str, *, source: str) -> str:
-    if model not in WHISPER_MODELS:
+    """
+    Имя модели, если её можно исполнить.
+
+    Сверка с `SUPPORTED_MODELS`, а не с `WHISPER_MODELS`: снятая с предложения
+    модель остаётся исполнимой, иначе перезапуск старого прогона падал бы из-за
+    решения, принятого после него.
+    """
+    if model not in SUPPORTED_MODELS:
         raise ConfigError(
             f"{source}={model!r} не поддерживается; допустимо "
-            f"{' или '.join(repr(m) for m in WHISPER_MODELS)} (Decision Log #6)"
+            f"{' или '.join(repr(m) for m in SUPPORTED_MODELS)} (Decision Log #6)"
         )
     return model
 

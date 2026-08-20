@@ -339,7 +339,7 @@ def _asr(state: PipelineState):
     пользователь, и завязывать на его подстроку выбор кода значит однажды
     переименовать модель и сломать конвейер.
     """
-    from ..config import ONNX_MODELS, TranscriptionConfig
+    from ..config import GIGAAM_MODELS, ONNX_MODELS, TranscriptionConfig
 
     snapshot = state.get("settings_snapshot") or {}
     name = TranscriptionConfig.for_task(snapshot.get("whisperModel")).whisper_model
@@ -350,9 +350,13 @@ def _asr(state: PipelineState):
     # `asr/__init__.py` стоит ре-экспорт `from .transcribe import transcribe`, и
     # это имя перекрывает одноимённый подмодуль. Импорт «как обычно» дал бы
     # функцию вместо модуля — и молча, потому что вызвать можно и то, и другое.
-    module = importlib.import_module(
-        "agent_core.asr.parakeet" if name in ONNX_MODELS else "agent_core.asr.transcribe"
-    )
+    if name in GIGAAM_MODELS:
+        where = "agent_core.asr.gigaam"
+    elif name in ONNX_MODELS:
+        where = "agent_core.asr.parakeet"
+    else:
+        where = "agent_core.asr.transcribe"
+    module = importlib.import_module(where)
     return partial(_call, module, name)
 
 

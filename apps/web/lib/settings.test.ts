@@ -103,7 +103,7 @@ describe("потолок переспроса", () => {
   const base = {
     costCap: "auto",
     costCapValue: 500,
-    whisperModel: "parakeet-tdt-0.6b-v3",
+    whisperModel: "gigaam-v3-e2e-rnnt",
     defaultReplication: 1,
   };
 

@@ -22,7 +22,7 @@
  * уже после заливки ролика. Список закреплён тестом вместе с перечнем воркера —
  * два списка в двух языках расходятся молча.
  */
-export const WHISPER_MODELS = ["parakeet-tdt-0.6b-v3", "large-v3"] as const;
+export const WHISPER_MODELS = ["gigaam-v3-e2e-rnnt", "large-v3"] as const;
 export type WhisperModel = (typeof WHISPER_MODELS)[number];
 
 /**
@@ -32,16 +32,17 @@ export type WhisperModel = (typeof WHISPER_MODELS)[number];
  * содержимым образа воркера, и подпись, забытая в другом файле, оставила бы на
  * экране кнопку с техническим именем и без объяснения, чем этот выбор платится.
  *
- * Цифры — замер на боевом железе 18.08.2026, дорожка 161,6 с, четыре потока CPU.
+ * Цифры — замер 20.08.2026 на пяти минутах диалога из прогона 0051, одна дорожка,
+ * один и тот же детектор речи (docs/ASR_BAKEOFF_2026-08-20.md).
  */
 export const WHISPER_LABELS: Record<WhisperModel, { title: string; hint: string }> = {
-  "parakeet-tdt-0.6b-v3": {
-    title: "parakeet-tdt-0.6b-v3",
-    hint: "быстрее в восемь раз: 25 с против 198 на трёхминутной дорожке",
+  "gigaam-v3-e2e-rnnt": {
+    title: "GigaAM v3",
+    hint: "русская речь: втрое быстрее parakeet и на 60 % больше распознанных слов",
   },
   "large-v3": {
     title: "whisper large-v3",
-    hint: "медленнее, но проверена на этом продукте дольше",
+    hint: "единственная многоязычная: медленнее и тяжелее, нужна для не-русского материала",
   },
 };
 
@@ -210,7 +211,7 @@ export const DEFAULT_REASONING: Reasoning = { thinking: false, effort: "max" };
 export const DEFAULT_SETTINGS: TenantSettings = {
   costCap: "auto",
   costCapValue: 500,
-  whisperModel: "parakeet-tdt-0.6b-v3",
+  whisperModel: "gigaam-v3-e2e-rnnt",
   defaultReplication: 1,
   temperatures: DEFAULT_TEMPERATURES,
   // Пустые строки означают «как задано в окружении сервера». Подставлять сюда
