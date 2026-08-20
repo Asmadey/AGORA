@@ -25,18 +25,28 @@
 -- А вот в ограничении схемы её быть не должно: ограничение описывает то, что
 -- можно СОХРАНИТЬ в настройках, то есть выбрать заново.
 --
--- Что со строками, где parakeet уже стоит. Их надо перевести ДО пересоздания
--- ограничения: обратный порядок падает на валидации существующих данных — так
--- уже было с turbo в миграции 31, и на боевой базе такая строка есть.
+-- Что со строками, где parakeet уже стоит. Порядок здесь другой, чем в миграции
+-- 31, и это важно.
+--
+-- В 31 сначала переводили данные, потом меняли ограничение: строки с turbo
+-- переезжали на large-v3, а large-v3 СТАРОЕ ограничение разрешало. Здесь
+-- переезд идёт на имя, которого в старом ограничении нет вовсе, и UPDATE
+-- отвергается им же:
+--
+--     ERROR: new row for relation "settings" violates check constraint
+--            "settings_whisper_model_check"
+--
+-- Поэтому ограничение снимается ПЕРВЫМ. Промежуточного состояния, в котором
+-- база без проверки, не возникает: всё внутри одной транзакции.
 
 BEGIN;
 
--- Сначала данные, потом ограничение.
+-- Сначала снять старое ограничение: оно не знает нового имени и отвергнет UPDATE.
+ALTER TABLE settings DROP CONSTRAINT IF EXISTS settings_whisper_model_check;
+
 UPDATE settings
    SET whisper_model = 'gigaam-v3-e2e-rnnt'
  WHERE whisper_model NOT IN ('gigaam-v3-e2e-rnnt', 'large-v3');
-
-ALTER TABLE settings DROP CONSTRAINT IF EXISTS settings_whisper_model_check;
 
 ALTER TABLE settings
   ADD CONSTRAINT settings_whisper_model_check

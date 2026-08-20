@@ -39,6 +39,7 @@ sherpa-onnx: обычная установка молча понизит его.
 from __future__ import annotations
 
 import os
+import tempfile
 from functools import lru_cache
 from pathlib import Path
 
@@ -143,6 +144,16 @@ def transcribe(audio: str | Path, model: str | None = None, **_: object) -> list
     Сигнатура повторяет `asr.transcribe.transcribe`: конвейер зовёт движки через
     одну обёртку и не должен знать, какой из них выбран.
 
+    ─── Откуда берутся границы реплики ───────────────────────────────────────
+    Из таймкодов СЛОВ, а не из границ куска. Кусок — это единица работы модели,
+    он может начинаться за полсекунды до первого слова и кончаться через
+    секунду после последнего. Выдавать его границы за границы реплики значит
+    ошибаться на эту же величину в ссылке персоны на момент — а именно её
+    проверяет судья.
+
+    Если модель таймкодов не дала, границы куска остаются запасным вариантом:
+    реплика без времени бесполезна и в отчёте, и в проверке.
+
     Кусок, на котором модель промолчала, в результат не попадает. Это не
     косметика: пустая реплика с таймкодами выглядела бы как распознанная тишина
     и завышала бы покрытие речи — метрику, по которой мы этот движок и меняем.
@@ -163,26 +174,38 @@ def transcribe(audio: str | Path, model: str | None = None, **_: object) -> list
 
     engine = _model(model_id)
     out: list[Segment] = []
-    for start, end in chunks:
-        piece = data[int(start * rate):int(end * rate)]
-        text = str(engine.transcribe_sample(piece) if hasattr(engine, "transcribe_sample")
-                   else _via_file(engine, piece, rate)).strip()
-        if text:
-            out.append(Segment(start=start, end=end, text=text))
+    with tempfile.TemporaryDirectory(prefix="gigaam-") as workdir:
+        piece_path = str(Path(workdir) / "piece.wav")
+        for start, end in chunks:
+            sf.write(piece_path, data[int(start * rate):int(end * rate)], rate)
+            result = engine.transcribe(piece_path, word_timestamps=True)
+            text = str(getattr(result, "text", result) or "").strip()
+            if not text:
+                continue
+            first, last = _bounds(result, start, end)
+            out.append(Segment(start=first, end=last, text=text))
     return out
 
 
-def _via_file(engine, piece, rate: int) -> str:
+def _bounds(result: object, start: float, end: float) -> tuple[float, float]:
     """
-    Запасной путь: у части версий пакета публичный вход только по файлу.
+    Границы реплики: по первому и последнему слову, со сдвигом на начало куска.
 
-    Временный файл на кусок дешевле, чем разбираться в приватном API: двадцать
-    пять секунд моно 16 кГц — это восемьсот килобайт.
+    Таймкоды слов модель отдаёт от начала КУСКА, а не дорожки: без сдвига весь
+    транскрипт лёг бы в первые двадцать пять секунд ролика — и выглядело бы это
+    не ошибкой, а фильмом, где все говорят в самом начале.
     """
-    import tempfile
-
-    import soundfile as sf
-
-    with tempfile.NamedTemporaryFile(suffix=".wav") as tmp:
-        sf.write(tmp.name, piece, rate)
-        return engine.transcribe(tmp.name)
+    words = getattr(result, "words", None) or []
+    times = [
+        (float(getattr(w, "start", 0.0)), float(getattr(w, "end", 0.0)))
+        for w in words
+        if hasattr(w, "start") and hasattr(w, "end")
+    ]
+    if not times:
+        return start, end
+    first = start + min(t[0] for t in times)
+    last = start + max(t[1] for t in times)
+    # Модель иногда отдаёт время последнего слова за пределом куска на доли
+    # секунды. Обрезаем: реплика, кончающаяся позже своего куска, ломает
+    # монотонность таймкодов у следующей.
+    return max(start, first), min(end, max(last, first + 0.01))
