@@ -88,3 +88,64 @@ def test_words_per_minute_is_measured_against_speech_not_wall_clock():
     музыки выглядел бы вдвое хуже разговорного ролика при той же расшифровке.
     """
     assert words_per_minute("раз два три четыре", speech_sec=120.0) == 2.0
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Приёмка по покрытию
+# ─────────────────────────────────────────────────────────────────────────────
+
+def test_target_is_the_one_the_owner_set():
+    """
+    Порог — величина, о которой договорились, а не догадка автора.
+
+    Тест выглядит тавтологией и не является ею: он держит константу от тихого
+    понижения. Снизить порог до пройденного значения — самый дешёвый способ
+    сделать красную проверку зелёной, и заметить такую правку в дифференциале
+    трудно: одна цифра.
+    """
+    from agent_core.asr.bakeoff import COVERAGE_TARGET
+
+    assert COVERAGE_TARGET == 0.95
+
+
+def test_measured_coverage_of_the_real_film(tmp_path):
+    """
+    Поведенческий уровень: покрытие на настоящей дорожке.
+
+    Идёт только при заданном ASR_COVERAGE_FIXTURE — путь к wav 16 кГц моно.
+    Без него SKIP, а не выдуманный результат: дорожка боевого прогона в git не
+    лежит и лежать не может.
+
+    ─── Что именно считается покрытием ───────────────────────────────────────
+    Доля речи, которая ДОШЛА ДО МОДЕЛИ И ДАЛА ТЕКСТ. Именно эта величина
+    сравнивалась между движками и именно она была 59 % на прогоне 0051.
+
+    Считать по границам СЛОВ было бы строже и неправильно: детектор размечает
+    высказывание целиком, вместе с паузами и вдохами, а слов в них нет. По
+    словам та же дорожка даёт 85,6 % — и это не хуже, это ответ на другой
+    вопрос. Оба числа записаны в docs/ASR_BAKEOFF_2026-08-20.md.
+
+    Замерено 20.08.2026 на дорожке прогона 0051 (3033 с, 1237 с речи):
+    GigaAM v3-e2e-rnnt — 97,2 %.
+    """
+    import os
+
+    import pytest
+
+    fixture = os.environ.get("ASR_COVERAGE_FIXTURE")
+    if not fixture:
+        pytest.skip("ASR_COVERAGE_FIXTURE не задан — дорожки для замера нет")
+
+    from agent_core.asr.bakeoff import COVERAGE_TARGET, coverage
+    from agent_core.asr.gigaam import transcribe_detailed
+    from agent_core.asr.transcribe import vad_segments
+
+    speech = vad_segments(fixture)
+    segments, spoken = transcribe_detailed(fixture)
+    got = coverage(spoken, speech)
+
+    assert got is not None, "детектор не нашёл речи — мерить нечего"
+    assert segments, "речь есть, а реплик нет"
+    assert got >= COVERAGE_TARGET, (
+        f"покрытие речи {got:.1%} ниже порога {COVERAGE_TARGET:.0%}"
+    )
