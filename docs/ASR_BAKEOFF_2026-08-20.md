@@ -199,11 +199,14 @@ parakeet после правки нарезки, то есть сравнени�
 ## Как повторить замер
 
 Дорожка боевого прогона в git не лежит и лежать не может. На сервере она
-подготовлена в `/root/cov/full.wav` (16 кГц моно, 3033 с).
+подготовлена в `/srv/agora-fixtures/full.wav` (16 кГц моно, 3033 с).
+Каталог именно там, а не в `/root`: контейнер ходит под uid 1001 и в `/root`
+(режим 700) не попадает — проверка падала бы `PermissionError`, читаемым как
+дефект прав в коде.
 
 ```bash
-docker run --rm -v /root/cov:/tmp/cov \
-  -e ASR_COVERAGE_FIXTURE=/tmp/cov/full.wav \
+docker run --rm -v /srv/agora-fixtures:/fixtures \
+  -e ASR_COVERAGE_FIXTURE=/fixtures/full.wav \
   agora-worker python3 -m pytest tests/test_asr_bakeoff.py -q
 ```
 
