@@ -108,7 +108,7 @@ def test_target_is_the_one_the_owner_set():
     assert COVERAGE_TARGET == 0.95
 
 
-def test_measured_coverage_of_the_real_film(tmp_path):
+def test_measured_coverage_of_the_real_film():
     """
     Поведенческий уровень: покрытие на настоящей дорожке.
 
