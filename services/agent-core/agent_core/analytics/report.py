@@ -285,7 +285,9 @@ def _load_template() -> str:
     for parent in here.parents[:6]:
         candidate = parent / "prompts" / "analytics.report.md"
         if candidate.exists():
-            return candidate.read_text("utf-8")
+            from ..prompt_text import body_of
+
+            return body_of(candidate.read_text("utf-8"))
     return ""
 
 

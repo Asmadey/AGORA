@@ -41,6 +41,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
 
+from ..prompt_text import body_of
 from ..survey import question_label, survey_questions
 from ..tracing import submit_in_context
 from .diversity import diversity_report
@@ -412,11 +413,13 @@ def run_survey(
     """
     if system_template is None:
         system_template = (
-            SYSTEM_PROMPT_PATH.read_text("utf-8") if SYSTEM_PROMPT_PATH.exists() else ""
+            body_of(SYSTEM_PROMPT_PATH.read_text("utf-8"))
+            if SYSTEM_PROMPT_PATH.exists() else ""
         )
     if user_template is None:
         user_template = (
-            USER_PROMPT_PATH.read_text("utf-8") if USER_PROMPT_PATH.exists() else ""
+            body_of(USER_PROMPT_PATH.read_text("utf-8"))
+            if USER_PROMPT_PATH.exists() else ""
         )
 
     outcome = SurveyOutcome()

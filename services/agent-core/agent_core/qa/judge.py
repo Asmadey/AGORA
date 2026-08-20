@@ -24,6 +24,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
 
+from ..prompt_text import body_of
+
 #: Таймаут одного суждения. Судья читает один ответ и возвращает короткий JSON —
 #: заметно быстрее, чем персона пишет свой ответ (там 120 с).
 REQUEST_TIMEOUT_SEC = 60
@@ -148,7 +150,7 @@ def load_templates() -> dict[str, str]:
     out: dict[str, str] = {}
     for key in ("qa.consistency", "qa.grounding", "qa.diversity"):
         path = find_prompt(key)
-        out[key] = path.read_text("utf-8") if path.exists() else ""
+        out[key] = body_of(path.read_text("utf-8")) if path.exists() else ""
     return out
 
 

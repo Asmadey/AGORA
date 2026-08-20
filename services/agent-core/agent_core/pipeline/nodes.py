@@ -138,7 +138,13 @@ def _prompt(name: str, state: PipelineState) -> tuple[str, str | None]:
 
     Поэтому падение назад к файлу возможно, но не бесшумно: причина уходит в
     `degraded` и обязана попасть в отчёт.
+
+    Служебная шапка файла снимается `body_of`: до этого строка «Переменные: …»
+    проходила подстановку наравне с телом, и ответ персоны уезжал в модель
+    дважды — см. agent_core/prompt_text.py.
     """
+    from ..prompt_text import body_of
+
     snapshot = state.get("prompts_snapshot") or {}
     pinned = snapshot.get(name)
     dsn = os.environ.get("DATABASE_URL")
@@ -158,7 +164,7 @@ def _prompt(name: str, state: PipelineState) -> tuple[str, str | None]:
             cur.execute("SELECT template FROM prompts WHERE id = %s", (pinned["id"],))
             row = cur.fetchone()
             if row:
-                return row[0], None
+                return body_of(row[0]), None
 
     here = Path(__file__).resolve()
     for parent in here.parents[:6]:
@@ -168,7 +174,7 @@ def _prompt(name: str, state: PipelineState) -> tuple[str, str | None]:
                 f"промпт {name}: снимок есть, но версия не прочитана из базы — "
                 f"взят файл prompts/{name}.md"
             )
-            return candidate.read_text("utf-8"), why
+            return body_of(candidate.read_text("utf-8")), why
     raise StageNotImplemented(f"промпт {name} не найден ни в снимке, ни в prompts/")
 
 
