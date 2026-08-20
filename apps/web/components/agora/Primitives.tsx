@@ -95,11 +95,20 @@ export function StatCard({
   value,
   hint,
   rationale,
+  provenance,
   tone = "default",
 }: {
   label: string;
   value: string;
   hint?: string;
+  /**
+   * Откуда взялось число — раскрывающийся список ответов персон.
+   *
+   * Узлом, а не данными: карточка не должна знать, как считается метрика, и
+   * тем более уметь считать её второй раз. Считает `lib/provenance.ts`,
+   * показывает `MetricProvenance`, а карточка отводит место.
+   */
+  provenance?: React.ReactNode;
   /**
    * Почему число такое — фразой из вербатимов персон.
    *
@@ -127,6 +136,7 @@ export function StatCard({
           {rationale}
         </p>
       )}
+      {provenance}
     </div>
   );
 }

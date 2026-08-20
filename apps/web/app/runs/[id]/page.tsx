@@ -24,6 +24,8 @@ import { DownloadMenu } from "@/components/agora/DownloadMenu";
 import { audienceNote } from "@/lib/audience-note";
 import { researchTitle } from "@/lib/research-title";
 import { parseAnswer, parseReport } from "@/lib/report-view";
+import { contributions, type MetricKey } from "@/lib/provenance";
+import { MetricProvenance } from "@/components/agora/MetricProvenance";
 import { CRITERIA, CRITERIA_LABELS } from "@/lib/agora-types";
 
 /**
@@ -96,6 +98,19 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
   const videoUrl = task?.videoRef ? safePresign(task.videoRef) : null;
   // Считается один раз: подпись нужна и как условие показа, и как содержимое,
   // а два вызова подряд — это две развилки, которые однажды разойдутся.
+  // Происхождение числа (конструктор связей, вариант 1).
+  //
+  // Считается по тем карточкам, что уже на странице, и сверяется с числом из
+  // шапки: при аудитории больше первой страницы они разойдутся, и раскрытие
+  // скажет об этом само. Молчаливое расхождение читалось бы как ошибка расчёта.
+  const origin = (metric: MetricKey, reported: number | null) => (
+    <MetricProvenance
+      provenance={contributions(metric, answers)}
+      reported={reported}
+      total={envelope.audienceSize}
+    />
+  );
+
   const qaNote = audienceNote({
     shown: items.length,
     surviving: envelope.audienceSize,
@@ -204,6 +219,9 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
           </div>
         </details>
 
+        {/* Происхождение числа: раскрытие под каждой метрикой ведёт к ответам
+            персон, из которых она посчитана, а оттуда — таймкодом в плеер.
+            Связь одного направления: число → ответы → материал. */}
         {/* Сводные метрики.
             «Досмотрят до конца» и «Досмотрено» — две разные величины, и стоят
             рядом намеренно. Первая считается по retention_intent: он
@@ -214,6 +232,7 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
             label="Общее впечатление"
             value={fmt(view.scores.overall_impression, 1)}
             hint="из 10"
+            provenance={origin("overall_impression", view.scores.overall_impression)}
           />
           {/* Шкала подписана намеренно. NPS лежит в −100…+100, и «−86» без
               подписи читается как ошибка расчёта, а не как «почти все критики».
@@ -225,12 +244,14 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
             value={fmt(view.nps, 0)}
             hint="промоутеры минус критики"
             rationale={view.rationales.nps}
+            provenance={origin("nps", view.nps)}
             tone={view.nps === null ? undefined : view.nps < 0 ? "bad" : view.nps > 30 ? "good" : "warn"}
           />
           <StatCard
             label="Готовы рекомендовать"
             value={fmt(view.recommendation, 1)}
             hint="среднее по шкале 1–10"
+            provenance={origin("recommendation", view.recommendation)}
             tone={
               view.recommendation === null
                 ? undefined
@@ -240,6 +261,7 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
           <StatCard
             label="Досмотрят до конца"
             value={view.retentionRate === null ? "—" : `${view.retentionRate.toFixed(0)}%`}
+            provenance={origin("retention", view.retentionRate)}
             tone={view.retentionRate === null ? undefined : view.retentionRate < 70 ? "warn" : "good"}
           />
           <StatCard
@@ -251,6 +273,7 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
                 : "средняя доля просмотренного"
             }
             rationale={view.rationales.watched_share}
+            provenance={origin("watched_share", view.watchedShare)}
             tone={view.watchedShare === null ? undefined : view.watchedShare < 60 ? "warn" : "good"}
           />
           <StatCard

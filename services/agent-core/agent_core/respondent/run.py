@@ -42,6 +42,7 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from ..survey import question_label, survey_questions
+from ..tracing import submit_in_context
 from .diversity import diversity_report
 
 #: Размер пачки (PRD §8). Проверяется тестом задачи: число здесь — контракт.
@@ -481,7 +482,11 @@ def run_survey(
     for start in range(0, len(tasks), BATCH_SIZE):
         chunk = tasks[start:start + BATCH_SIZE]
         with ThreadPoolExecutor(max_workers=BATCH_SIZE, thread_name_prefix="ask") as pool:
-            futures = [(pool.submit(ask, persona, rep), persona, rep)
+            # submit_in_context, а не pool.submit: вместе с задачей в рабочий
+            # поток переносится контекст трассы. Без него ответ персоны
+            # становится отдельной трассой без прогона и арендатора — см.
+            # agent_core/tracing.py.
+            futures = [(submit_in_context(pool, ask, persona, rep), persona, rep)
                        for persona, rep in chunk]
 
             # Результаты забираются В ПОРЯДКЕ ОТПРАВКИ, а не по мере готовности:

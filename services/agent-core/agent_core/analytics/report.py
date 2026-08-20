@@ -104,6 +104,12 @@ class QwenAnalystClient:
         return (response.choices[0].message.content or "").strip()
 
 
+#: Незаполненный плейсхолдер шаблона. Имена — те же, что понимает промпт-студия
+#: (`extractPlaceholderNames` в вебе); две реализации обязаны совпадать, иначе
+#: студия примет шаблон, на который стадия пожалуется.
+_PLACEHOLDER = re.compile(r"\{\{\s*([a-zA-Z0-9_.]+)\s*\}\}")
+
+
 def has_support(statement: str) -> bool:
     """Есть ли у утверждения опора: таймкод или цитата."""
     text = str(statement or "")
@@ -196,15 +202,27 @@ def build_report(
         _write(artifact_path, report)
         return report
 
+    user = _render(template, {
+        "aggregate": agg,
+        "retention_risk_points": report["retention_risk_points"],
+        "all_persona_answers": [_body(a) for a in kept],
+        "survey": survey or {},
+        "content_title": pack.get("title", "материал"),
+        "qa_flags": qa_flags or [],
+    })
+
+    # Шаблон просит то, чего стадия не даёт. Молчать здесь нельзя: незаполненный
+    # плейсхолдер уезжает в модель фигурными скобками, а вместо данных модель
+    # получает их описание. Прогон 0051 отправил так 64 токена вместо отчёта.
+    leftovers = sorted(set(_PLACEHOLDER.findall(user)))
+    if leftovers:
+        degraded.append(
+            "шаблон analytics.report просит переменные, которых у стадии нет: "
+            + ", ".join(leftovers)
+        )
+
     try:
-        raw = model.complete(system=ANALYST_ROLE, user=_render(template, {
-            "aggregate": agg,
-            "retention_risk_points": report["retention_risk_points"],
-            "all_persona_answers": [_body(a) for a in kept],
-            "survey": survey or {},
-            "content_title": pack.get("title", "материал"),
-            "qa_flags": qa_flags or [],
-        }))
+        raw = model.complete(system=ANALYST_ROLE, user=user)
         synthesis = _parse(raw)
     except Exception as exc:  # noqa: BLE001
         degraded.append(f"нарратив не собран: {type(exc).__name__}: {exc}")
@@ -236,6 +254,22 @@ def build_report(
             f"{len(narrative) - len(supported)} из {len(narrative)}"
         )
     report["narrative"] = supported
+
+    # Ответ разобрался, но синтеза в нём нет ни в одном поле.
+    #
+    # Это отдельный случай, а не частный вид «модель недоступна»: вызов прошёл,
+    # деньги потрачены, отчёт собран — и выглядит он как честный отчёт, которому
+    # нечего сказать. Отличить одно от другого читателю не по чему, поэтому
+    # разницу называет `degraded`.
+    if not any(
+        report[field]
+        for field in ("narrative", "themes", "disagreements", "strengths", "weaknesses")
+    ) and not report["rationales"]:
+        degraded.append(
+            "синтез пуст: модель вернула ответ без нарратива, тем и обоснований. "
+            "Проверьте шаблон analytics.report — числовая часть отчёта посчитана "
+            "полностью и от модели не зависит"
+        )
 
     _write(artifact_path, report)
     return report

@@ -395,6 +395,7 @@ def transcribe_and_diarize(state: PipelineState) -> dict[str, Any]:
     from ..asr.diarize import DiarizationUnavailable
     from ..asr.diarize import diarize as run_diarize
     from ..config import TranscriptionConfig
+    from ..tracing import submit_in_context
 
     audio = str(state["audio_ref"])
     spans = [(a, b) for a, b in state.get("speech_regions", [])]
@@ -431,8 +432,12 @@ def transcribe_and_diarize(state: PipelineState) -> dict[str, Any]:
 
     if budget.can_run_together(model):
         with ThreadPoolExecutor(max_workers=2, thread_name_prefix="asr") as pool:
-            transcription = pool.submit(do_transcribe)
-            diarization = pool.submit(do_diarize)
+            # Контекст трассы переносится в оба потока: иначе спан, открытый
+            # внутри распознавания, окажется корнем собственной трассы, а не
+            # частью прогона. Сегодня спанов внутри нет — но добавляются они
+            # одной строкой и ничего не ломают заметно.
+            transcription = submit_in_context(pool, do_transcribe)
+            diarization = submit_in_context(pool, do_diarize)
 
             # Расшифровка забирается первой: её отказ отменяет прогон, и ждать
             # ради него ещё и диаризацию незачем. Пул при выходе из with всё

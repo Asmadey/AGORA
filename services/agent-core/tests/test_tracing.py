@@ -556,3 +556,98 @@ def test_every_model_call_is_named(with_keys):
         + ". Все такие вызовы лягут в трассу под одним именем "
         "`OpenAI-generation` и станут неразличимы"
     )
+
+
+# ─── 8. Маска не должна съедать имена моделей ────────────────────────────────
+#
+# Найдено в трассах прогона 0051: у 233 разборов кадра модель записана как
+# `qwen/qwen3-[скрыто]`. Ключа там нет и не было — под шаблон
+# `две-буквы-дефис-и-дальше-длинно` попало `vl-30b-a3b-instruct`.
+#
+# Само по себе это мелочь, но цена у неё несимметричная: маска, которая режет
+# лишнее, обесценивает трассу молча — прочитать её можно, а сравнить два
+# прогона по моделям уже нельзя. Поэтому шаблоны привязаны к известным
+# префиксам ключей, а не к форме «что-то длинное через дефис».
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "qwen/qwen3-vl-30b-a3b-instruct",
+        "Qwen/Qwen3.6-35B-A3B",
+        "parakeet-tdt-0.6b-v3",
+        "nvidia/parakeet-tdt-0.6b-v3",
+        "pyannote/speaker-diarization-3.1",
+        "large-v3-turbo",
+        "де-факто выглядит как перечисление длинных слов через дефис",
+    ],
+)
+def test_mask_keeps_model_names(text):
+    assert tracing.mask(data=text) == text, "маска съела имя модели"
+
+
+def test_mask_still_removes_provider_keys():
+    """Обратная сторона сужения: настоящие ключи обязаны исчезать по-прежнему."""
+    fakes = (
+        _FAKE_API_KEY,
+        "pk-lf-" + "0123456789abcdef0123",
+        "sk-lf-" + "0123456789abcdef0123",
+    )
+    for secret in fakes:
+        assert secret not in tracing.mask(data=f"ключ {secret} дальше текст")
+
+
+# ─── 9. Ответ персоны обязан висеть в трассе прогона ─────────────────────────
+#
+# В прогоне 0051 двадцать семь вызовов `answer-survey` стали ОТДЕЛЬНЫМИ
+# трассами: без арендатора, без прогона, без родительского спана. То есть самое
+# ценное — что именно ответила персона и почему судья это забраковал —
+# оказалось не связано с прогоном ничем, кроме времени.
+#
+# Причина не в LangFuse. Контекст OpenTelemetry живёт в contextvars, а
+# `ThreadPoolExecutor.submit` исполняет функцию в чужом потоке, где этих
+# contextvars нет. Родителя не находится — и SDK заводит новый корень.
+#
+# Лечится переносом контекста: `contextvars.copy_context()` снимается в потоке,
+# который отправляет задачу, и функция исполняется внутри него.
+
+def test_submit_in_context_carries_contextvars():
+    """Поведенческий уровень: свой ContextVar, без LangFuse и без сети."""
+    import contextvars
+    from concurrent.futures import ThreadPoolExecutor
+
+    from agent_core.tracing import submit_in_context
+
+    marker: contextvars.ContextVar[str] = contextvars.ContextVar("marker", default="нет")
+    marker.set("родитель")
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        naked = pool.submit(marker.get).result()
+        carried = submit_in_context(pool, marker.get).result()
+
+    assert naked == "нет", "пул внезапно стал переносить контекст сам"
+    assert carried == "родитель", "контекст не доехал до рабочего потока"
+
+
+def test_respondent_pool_carries_the_context():
+    """
+    Шов: сам по себе перенос контекста ничего не значит, если опрос персон его
+    не зовёт. Проверка по исходнику — воспроизвести «забыли обернуть» можно
+    только живым прогоном с LangFuse.
+    """
+    import ast
+    from pathlib import Path
+
+    source = Path(tracing.__file__).resolve().parent / "respondent" / "run.py"
+    tree = ast.parse(source.read_text(encoding="utf-8"))
+
+    bare = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "submit"
+    ]
+    assert not bare, (
+        "опрос персон отправляет работу в пул напрямую: контекст трассы не "
+        "доедет, и ответы станут отдельными трассами без прогона и арендатора"
+    )
