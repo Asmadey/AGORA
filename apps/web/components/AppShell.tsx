@@ -18,6 +18,7 @@ import {
   SlidersHorizontal,
   Settings,
   LogOut,
+  BarChart3,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ThemeToggle } from "@/components/ThemeToggle";
@@ -64,6 +65,7 @@ const NAV = [
   { href: "/settings", label: "Настройки", icon: Settings },
   // Страница /api-docs существовала с задачи #26, но попасть на неё можно
   // было только по прямой ссылке: пункта меню не было.
+  { href: "/stats", label: "Статистика", icon: BarChart3 },
   { href: "/api-docs", label: "API-документация", icon: BookOpen },
 ] as const;
 

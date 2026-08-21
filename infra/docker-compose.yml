@@ -92,6 +92,12 @@ services:
     ports:
       - "${WEB_PORT:-3000}:3000"
     environment:
+      # Ключи биллинга для раздела «Статистика». Читает их сервер Next,
+      # воркеру они не нужны. Пустые — раздел честно отвечает «не
+      # настроено», а не показывает нули.
+      CLOUDRU_KEY_ID: ${CLOUDRU_KEY_ID:-}
+      CLOUDRU_KEY_SECRET: ${CLOUDRU_KEY_SECRET:-}
+      CLOUDRU_PROJECT_ID: ${CLOUDRU_PROJECT_ID:-}
       NODE_ENV: production
       APP_URL: ${APP_URL:-http://localhost:3000}
       AUTH_URL: ${AUTH_URL:-http://localhost:3000}

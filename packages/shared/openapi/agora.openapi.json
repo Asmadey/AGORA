@@ -2910,6 +2910,197 @@
           }
         }
       }
+    },
+    "/api/consumption": {
+      "get": {
+        "summary": "Потребление токенов и расходы по дням",
+        "description": "Источник — API контроля затрат cloud.ru, то есть тот же, по которому выставляется счёт. Только владелец: это деньги договора целиком. 501 означает, что ключи биллинга не заданы в окружении.",
+        "parameters": [
+          {
+            "name": "from",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Строки по дням и суммы по колонкам",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "from": {
+                      "type": "string",
+                      "format": "date"
+                    },
+                    "to": {
+                      "type": "string",
+                      "format": "date"
+                    },
+                    "rows": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "date": {
+                            "type": "string",
+                            "format": "date"
+                          },
+                          "vision": {
+                            "type": "object",
+                            "properties": {
+                              "tokens": {
+                                "type": "number",
+                                "description": "миллионы токенов"
+                              },
+                              "rub": {
+                                "type": "number",
+                                "description": "рубли с НДС"
+                              },
+                              "rubNoVat": {
+                                "type": "number",
+                                "description": "рубли без НДС"
+                              }
+                            }
+                          },
+                          "text": {
+                            "type": "object",
+                            "properties": {
+                              "tokens": {
+                                "type": "number",
+                                "description": "миллионы токенов"
+                              },
+                              "rub": {
+                                "type": "number",
+                                "description": "рубли с НДС"
+                              },
+                              "rubNoVat": {
+                                "type": "number",
+                                "description": "рубли без НДС"
+                              }
+                            }
+                          },
+                          "other": {
+                            "type": "object",
+                            "properties": {
+                              "tokens": {
+                                "type": "number",
+                                "description": "миллионы токенов"
+                              },
+                              "rub": {
+                                "type": "number",
+                                "description": "рубли с НДС"
+                              },
+                              "rubNoVat": {
+                                "type": "number",
+                                "description": "рубли без НДС"
+                              }
+                            }
+                          },
+                          "totalRub": {
+                            "type": "number"
+                          },
+                          "totalRubNoVat": {
+                            "type": "number"
+                          }
+                        }
+                      }
+                    },
+                    "totals": {
+                      "type": "object",
+                      "properties": {
+                        "vision": {
+                          "type": "object",
+                          "properties": {
+                            "tokens": {
+                              "type": "number",
+                              "description": "миллионы токенов"
+                            },
+                            "rub": {
+                              "type": "number",
+                              "description": "рубли с НДС"
+                            },
+                            "rubNoVat": {
+                              "type": "number",
+                              "description": "рубли без НДС"
+                            }
+                          }
+                        },
+                        "text": {
+                          "type": "object",
+                          "properties": {
+                            "tokens": {
+                              "type": "number",
+                              "description": "миллионы токенов"
+                            },
+                            "rub": {
+                              "type": "number",
+                              "description": "рубли с НДС"
+                            },
+                            "rubNoVat": {
+                              "type": "number",
+                              "description": "рубли без НДС"
+                            }
+                          }
+                        },
+                        "other": {
+                          "type": "object",
+                          "properties": {
+                            "tokens": {
+                              "type": "number",
+                              "description": "миллионы токенов"
+                            },
+                            "rub": {
+                              "type": "number",
+                              "description": "рубли с НДС"
+                            },
+                            "rubNoVat": {
+                              "type": "number",
+                              "description": "рубли без НДС"
+                            }
+                          }
+                        },
+                        "totalRub": {
+                          "type": "number"
+                        },
+                        "totalRubNoVat": {
+                          "type": "number"
+                        },
+                        "days": {
+                          "type": "integer"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Период задан неверно"
+          },
+          "403": {
+            "description": "Нужны права владельца"
+          },
+          "501": {
+            "description": "Ключи биллинга не заданы"
+          }
+        }
+      }
     }
   },
   "components": {
