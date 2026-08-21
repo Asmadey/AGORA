@@ -47,6 +47,13 @@ export interface LaunchParams {
   projectId: string | null;
   replicationCount: number;
   seed: number;
+  /**
+   * Дополнительный контекст об аудитории из приложенного .txt/.md (#31).
+   *
+   * Уезжает в системный промпт каждой персоны. Проверен и обрезан до потолка
+   * ещё в маршруте — сюда приходит готовый текст либо null.
+   */
+  audienceContext?: string | null;
 }
 
 export interface LaunchedTask {
@@ -347,6 +354,12 @@ export async function launchTask(
 
   const snapshot = await buildPromptsSnapshot(client);
   const settings = await buildSettingsSnapshot(client);
+  // Контекст аудитории пиннится вместе с настройками, а не читается на лету:
+  // он часть того, ЧТО спросили у персон, и меняться между постановкой задачи
+  // и её исполнением не должен — иначе половина ответов дана с ним, половина без.
+  if (params.audienceContext) {
+    settings.audienceContext = params.audienceContext;
+  }
   const key = idempotencyKey(params, snapshot);
 
   const inserted = await client.query<TaskRow>(

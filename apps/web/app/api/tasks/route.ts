@@ -1,3 +1,4 @@
+import { CONTEXT_LIMIT_CHARS, normalizeContext } from "@/lib/context-file";
 import { normalizeTitle } from "@/lib/research-title";
 import { DEFAULT_SETTINGS } from "@/lib/settings";
 import { withTenant } from "@/lib/server/db";
@@ -30,6 +31,7 @@ interface LaunchBody {
   projectId?: unknown;
   replicationCount?: unknown;
   seed?: unknown;
+  audienceContext?: unknown;
 }
 
 const REPLICATION_BOUNDS = { min: 1, max: 10 } as const;
@@ -59,6 +61,18 @@ export async function POST(request: Request) {
       errors.push("mode: ожидается short | long");
     }
 
+    // Контекст персон проверяется ЗДЕСЬ ещё раз, а не только в браузере:
+    // маршрут открыт для любого клиента, а текст уедет в промпт каждой персоны
+    // и будет оплачен на каждом вызове.
+    if (body.audienceContext !== undefined) {
+      if (typeof body.audienceContext !== "string") {
+        errors.push("audienceContext: строка либо отсутствует");
+      } else if (normalizeContext(body.audienceContext).length > CONTEXT_LIMIT_CHARS) {
+        errors.push(
+          `audienceContext: длиннее ${CONTEXT_LIMIT_CHARS} символов — см. lib/context-file.ts`,
+        );
+      }
+    }
     if (body.videoRef !== undefined && typeof body.videoRef !== "string") {
       errors.push("videoRef: строка либо отсутствует");
     }
@@ -133,6 +147,10 @@ export async function POST(request: Request) {
         videoRef: optionalId(body.videoRef),
         sourceName: typeof body.sourceName === "string" ? body.sourceName.slice(0, 300) : null,
         title,
+        audienceContext:
+          typeof body.audienceContext === "string"
+            ? normalizeContext(body.audienceContext)
+            : null,
         personaSetId: optionalId(body.personaSetId),
         surveyId: optionalId(body.surveyId),
         projectId: optionalId(body.projectId),

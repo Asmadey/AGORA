@@ -868,6 +868,11 @@ def evaluate_personas(state: PipelineState) -> dict[str, Any]:
         artifact_path=workdir(state) / "persona_answers.json",
         system_template=system_template,
         user_template=user_template,
+        # Контекст аудитории из приложенного .txt/.md (#31). Берётся из СНИМКА
+        # настроек прогона, а не из настроек на лету: он часть того, что
+        # спросили у персон, и меняться между постановкой задачи и её
+        # исполнением не должен — иначе половина ответов дана с ним, половина без.
+        extra_context=_audience_context(state),
     )
     update: dict[str, Any] = {
         "persona_answers": outcome.answers,
@@ -880,6 +885,13 @@ def evaluate_personas(state: PipelineState) -> dict[str, Any]:
     if degraded:
         update["degraded"] = degraded
     return update
+
+
+def _audience_context(state: PipelineState) -> str | None:
+    """Дополнительный контекст об аудитории из снимка настроек прогона."""
+    snapshot = state.get("settings_snapshot") or {}
+    value = snapshot.get("audienceContext")
+    return value.strip() if isinstance(value, str) and value.strip() else None
 
 
 #: Сколько причин отказа показывать. Три — не круглое число: одинаковых строк

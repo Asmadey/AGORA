@@ -1,5 +1,3 @@
-import { notFound } from "next/navigation";
-
 import { withShareToken } from "@/lib/server/db";
 import { loadReport } from "@/lib/server/reports";
 import { parseReport } from "@/lib/report-view";
@@ -28,6 +26,29 @@ import { CRITERIA, CRITERIA_LABELS } from "@/lib/agora-types";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
+
+/**
+ * Единственный ответ на «токена нет», «ссылка отозвана» и «срок вышел».
+ *
+ * Разные сообщения на эти три случая рассказали бы держателю ссылки, была ли
+ * она вообще и когда перестала работать. Ответ один и не уточняется.
+ *
+ * Своя страница, а не `notFound()`: в потоковой отрисовке статус успевает
+ * уехать до вызова, и общий 404 приходит с кодом 200 — то есть выглядит как
+ * успешный ответ с чужой страницей внутри. Явный экран честнее: он говорит про
+ * ссылку, а не про несуществующий адрес.
+ */
+function Invalid() {
+  return (
+    <div className="mx-auto max-w-md p-16 text-center">
+      <h1 className="text-lg font-semibold">Ссылка недействительна</h1>
+      <p className="mt-2 text-sm leading-relaxed text-slate">
+        Она отозвана, у неё вышел срок, либо такой ссылки не существует.
+        Попросите владельца исследования выпустить новую.
+      </p>
+    </div>
+  );
+}
 
 export default async function SharedReportPage({
   params,
@@ -64,7 +85,7 @@ export default async function SharedReportPage({
     return rows[0];
   }).catch(() => null);
 
-  if (!grant?.task_id) notFound();
+  if (!grant?.task_id) return <Invalid />;
 
   // Отчёт лежит в MongoDB (#21). RLS туда не достаёт, поэтому фильтр по
   // арендатору обязателен — и берётся он из строки ссылки, а не из адреса.
@@ -74,7 +95,7 @@ export default async function SharedReportPage({
   );
   const row = envelope ? { scope: grant.scope, report: envelope.report, title: null } : null;
 
-  if (!row) notFound();
+  if (!row) return <Invalid />;
 
   const view = parseReport(row.report);
   const fmt = (v: number | null, digits = 1) => (v === null ? "—" : v.toFixed(digits));

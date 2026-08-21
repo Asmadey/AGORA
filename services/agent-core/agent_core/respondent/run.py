@@ -183,6 +183,11 @@ def _segment_of(persona: dict[str, Any]) -> dict[str, str]:
     }
 
 
+#: Заголовок блока с приложенным контекстом. Отдельной константой: по нему
+#: контекст отличают от инструкций и в промпте, и в трассе.
+CONTEXT_HEADING = "## Дополнительный контекст об аудитории (от заказчика исследования)"
+
+
 def build_slice(
     persona: dict[str, Any],
     pack: dict[str, Any],
@@ -190,6 +195,7 @@ def build_slice(
     *,
     system_template: str,
     user_template: str,
+    extra_context: str | None = None,
 ) -> tuple[str, str]:
     """
     Собирает срез одной персоны: (system, user).
@@ -209,6 +215,20 @@ def build_slice(
         .replace("{{verbatim_examples}}", str(dna.get("narrative", "")))
         .replace("{{score_priors}}", "средние по реальной аудитории: 6–8 из 10")
     )
+
+    # ─── Дополнительный контекст об аудитории (#31) ──────────────────────────
+    #
+    # Приложенный владельцем .txt/.md уточняет лексику и специфику ниши. Он
+    # добавляется ПОСЛЕ инструкций и под своим заголовком: приклеенный вплотную,
+    # чужой текст читается моделью как продолжение указаний, и заметка про
+    # аудиторию начинает управлять форматом ответа.
+    #
+    # Пустой контекст не меняет промпт ВООБЩЕ. Иначе появление необязательной
+    # возможности молча переписало бы промпт всех прежних прогонов, и сравнить
+    # их с новыми было бы нельзя.
+    context = (extra_context or "").strip()
+    if context:
+        system = f"{system}\n\n{CONTEXT_HEADING}\n{context}"
 
     user = (
         user_template
@@ -401,6 +421,7 @@ def run_survey(
     artifact_path: Path | None = None,
     system_template: str | None = None,
     user_template: str | None = None,
+    extra_context: str | None = None,
 ) -> SurveyOutcome:
     """
     Прогоняет каждую персону через анкету replication_count раз.
@@ -439,6 +460,7 @@ def run_survey(
         probe_system, probe_user = build_slice(
             personas[0], pack, survey,
             system_template=system_template, user_template=user_template,
+            extra_context=extra_context,
         )
         _ = probe_system
         outcome.asked = _asked_questions(probe_user, survey)
@@ -456,6 +478,7 @@ def run_survey(
         system, user = build_slice(
             persona, pack, survey,
             system_template=system_template, user_template=user_template,
+            extra_context=extra_context,
         )
         return {
             "persona_id": persona.get("id"),

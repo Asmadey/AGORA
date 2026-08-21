@@ -3,6 +3,12 @@
 import { useEffect, useState } from "react";
 import { FileText, Info, Loader2 } from "lucide-react";
 import { FileChip } from "@/components/agora/FileChip";
+import {
+  CONTEXT_ACCEPT,
+  CONTEXT_LIMIT_CHARS,
+  contextFileError,
+  normalizeContext,
+} from "@/lib/context-file";
 
 import {
   AGE_GROUPS,
@@ -102,8 +108,8 @@ export interface AudienceStepProps {
     config?: Record<string, unknown>,
   ) => void;
   /** Приложенный файл контекста: имя и размер для плашки. */
-  contextFile: { name: string; size: number } | null;
-  onContextFileChange: (file: { name: string; size: number } | null) => void;
+  contextFile: { name: string; size: number; text: string } | null;
+  onContextFileChange: (file: { name: string; size: number; text: string } | null) => void;
 }
 
 function toggle<T extends string>(list: T[], value: T): T[] {
@@ -148,6 +154,8 @@ export function AudienceStep({
 }: AudienceStepProps) {
   const [isGenerating, setIsGenerating] = useState(false);
   const [genError, setGenError] = useState<string | null>(null);
+  /** Претензия к приложенному файлу. Держится здесь: она про поле, а не про визард. */
+  const [contextError, setContextError] = useState<string | null>(null);
   const [generated, setGenerated] = useState<GenerationOutcome | null>(null);
   const [grounding, setGrounding] = useState<Grounding | null>(null);
   const [sets, setSets] = useState<PersonaSetSummary[] | null>(null);
@@ -488,29 +496,64 @@ export function AudienceStep({
               Он не переопределяет распределения и калибровку баллов: заземление на
               корпус остаётся главным.
             </p>
+            <p className="mt-1 text-xs leading-relaxed text-slate">
+              Только <strong>.txt</strong> и <strong>.md</strong>, не длиннее{" "}
+              {CONTEXT_LIMIT_CHARS} символов. Текст попадает в системный промпт каждой
+              персоны и оплачивается на каждом вызове — поэтому это заметка, а не документ.
+            </p>
             {/* Как и у ролика: пока файла нет — зона выбора, после — плашка с
                 именем, весом и крестиком. Прежде здесь менялась только подпись
                 внутри той же рамки, и снять уже приложенный файл было нечем. */}
             {contextFile ? (
-              <FileChip
-                className="mt-3"
-                name={contextFile.name}
-                size={contextFile.size}
-                onRemove={() => onContextFileChange(null)}
-              />
+              <>
+                <FileChip
+                  className="mt-3"
+                  name={contextFile.name}
+                  size={contextFile.size}
+                  onRemove={() => {
+                    setContextError(null);
+                    onContextFileChange(null);
+                  }}
+                />
+                <p className="mt-1.5 text-xs text-slate">
+                  {contextFile.text.length} символов из {CONTEXT_LIMIT_CHARS} — прочитаны и
+                  уйдут в промпт персон.
+                </p>
+              </>
             ) : (
               <label className="mt-3 flex cursor-pointer items-center gap-3 rounded-lg border border-dashed border-hairline-strong px-4 py-3 transition-colors hover:border-ink/40 hover:bg-surface">
                 <FileText className="h-4 w-4 text-slate" />
-                <span className="text-sm">Приложить файл (pdf, docx, md, xlsx)</span>
+                <span className="text-sm">Приложить файл (.txt, .md)</span>
                 <input
                   type="file"
+                  accept={CONTEXT_ACCEPT}
                   className="hidden"
-                  onChange={(e) => {
+                  onChange={async (e) => {
                     const f = e.target.files?.[0];
-                    onContextFileChange(f ? { name: f.name, size: f.size } : null);
+                    // Значение поля сбрасывается сразу: иначе повторный выбор
+                    // того же файла после ошибки не вызывает onChange вовсе.
+                    e.target.value = "";
+                    setContextError(null);
+                    if (!f) return;
+                    const text = await f.text();
+                    const problem = contextFileError(f.name, text);
+                    if (problem) {
+                      setContextError(problem);
+                      return;
+                    }
+                    onContextFileChange({
+                      name: f.name,
+                      size: f.size,
+                      text: normalizeContext(text),
+                    });
                   }}
                 />
               </label>
+            )}
+            {contextError && (
+              <p className="mt-2 rounded-md border border-danger/40 bg-danger/5 p-2.5 text-xs text-danger">
+                {contextError}
+              </p>
             )}
           </div>
 

@@ -14,6 +14,7 @@ import { AudienceStep } from "@/components/agora/AudienceStep";
 import { ProjectPicker, type ProjectOption } from "@/components/agora/ProjectPicker";
 import { DEFAULT_CRITERIA, type AudienceCriteria } from "@/lib/audience";
 import type { SurveyQuestion } from "@/lib/agora-types";
+import type { RerunPrefill } from "@/lib/rerun";
 
 /**
  * Визард запуска исследования (задачи #7–#11).
@@ -52,6 +53,7 @@ export default function NewStudyPage() {
   // не выкапывать из адреса.
   const [launchedId, setLaunchedId] = useState<string | null>(null);
   const router = useRouter();
+
 
   // Seed фиксируется ОДИН раз на сессию визарда, а не на каждый клик. Это и есть
   // рабочая идемпотентность (#11): двойное нажатие «Запустить» уходит с тем же
@@ -107,6 +109,10 @@ export default function NewStudyPage() {
           projectId,
           personaSetId,
           replicationCount: replication,
+          // Текст файла, а не имя: персонам нужен контекст, а не название.
+          // Прежде наверх уезжали только имя и размер, и содержимое не
+          // покидало браузер вовсе.
+          audienceContext: contextFile?.text ?? undefined,
           seed,
         }),
       });
@@ -152,7 +158,7 @@ export default function NewStudyPage() {
    * `persona_sets.generation_config`.
    */
   const [personaSetConfig, setPersonaSetConfig] = useState<Record<string, unknown> | null>(null);
-  const [contextFile, setContextFile] = useState<{ name: string; size: number } | null>(null);
+  const [contextFile, setContextFile] = useState<{ name: string; size: number; text: string } | null>(null);
   const [videoRef, setVideoRef] = useState<string | null>(null);
   const [videoName, setVideoName] = useState<string | null>(null);
   // Размер держим отдельно от File: сам объект File живёт только до
@@ -249,6 +255,48 @@ export default function NewStudyPage() {
    * Считается на каждом рендере, поэтому список исчезает по мере заполнения:
    * пользователь видит, что действие засчитано, не нажимая «Запустить» ещё раз.
    */
+  /**
+   * Перезапуск исследования (#30): `/studies/new?rerun=<id>`.
+   *
+   * Прежде параметр не разбирался нигде — визард открывался пустым, и нажавший
+   * «Перезапустить» заново грузил тот же файл и заново набирал аудиторию. То
+   * есть получал не повтор, а новое исследование, которое не с чем сравнить.
+   *
+   * Адрес читается из `window.location`, а не через `useSearchParams`: последний
+   * в Next 15 требует обёртки в Suspense на всей странице, и ради одного
+   * необязательного параметра это лишняя перестройка визарда.
+   */
+  const [rerunNote, setRerunNote] = useState<string | null>(null);
+  useEffect(() => {
+    const rerunOf = new URLSearchParams(window.location.search).get("rerun");
+    if (!rerunOf) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`/api/tasks/${rerunOf}/rerun`);
+        const data = (await res.json()) as { prefill?: RerunPrefill; error?: string };
+        if (cancelled) return;
+        if (!res.ok || !data.prefill) {
+          setRerunNote(data.error ?? "исходный прогон не найден — визард открыт пустым");
+          return;
+        }
+        const p = data.prefill;
+        setMode(p.mode);
+        setVideoRef(p.videoRef);
+        setVideoName(p.sourceName);
+        setPersonaSetId(p.personaSetId);
+        setReplication(p.replicationCount);
+        setTitle(p.title);
+        setRerunNote(p.warning);
+      } catch {
+        if (!cancelled) setRerunNote("не удалось прочитать исходный прогон");
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const missing: { step: number; what: string; how: string }[] = [];
   if (!videoRef) {
     missing.push({
@@ -286,7 +334,22 @@ export default function NewStudyPage() {
 
   return (
     <div className="mx-auto max-w-3xl p-8">
-      <h1 className="text-2xl font-semibold tracking-tight">Новое исследование</h1>
+      <h1 className="text-2xl font-semibold tracking-tight">
+        {videoRef && rerunNote === null && title.endsWith("— повтор")
+          ? "Повтор исследования"
+          : "Новое исследование"}
+      </h1>
+
+      {/*
+        Что именно перенеслось из исходного прогона — и чего не хватило.
+        Без этой строки повтор неотличим от нового исследования: поля просто
+        оказываются заполненными, и понять, откуда они, нельзя.
+      */}
+      {rerunNote !== null && (
+        <p className="mt-3 rounded-md border border-warning/30 bg-warning-soft/60 p-3 text-xs leading-relaxed text-warning">
+          {rerunNote}
+        </p>
+      )}
 
       {/* Шаги */}
       <ol className="mt-6 flex items-center gap-2">
