@@ -223,7 +223,7 @@ export function ConsumptionTable() {
             <tbody>
               {rows.map((r) => (
                 <tr key={r.date} className="border-t border-hairline">
-                  <td className="px-4 py-2.5 font-mono text-xs tabular-nums">{formatDateRu(r.date)}</td>
+                  <td className="px-4 py-2.5 tabular-nums">{formatDateRu(r.date)}</td>
                   {showVision && (
                     <>
                       <td className="px-4 py-2.5 text-right tabular-nums">{TOKENS.format(r.vision.tokens)}</td>
