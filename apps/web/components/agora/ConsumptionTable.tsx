@@ -43,6 +43,14 @@ export function ConsumptionTable() {
   const initial = presetRange("month");
   const [from, setFrom] = useState(initial.from);
   const [to, setTo] = useState(initial.to);
+  /**
+   * Что выбрано в списке справа: готовый период или «Период» с датами.
+   *
+   * Датапикеры показываются ТОЛЬКО в режиме «Период». В готовых режимах они
+   * показывали бы даты, которых человек не выбирал, и правка любой из них молча
+   * противоречила бы подписи в списке.
+   */
+  const [range, setRange] = useState<Preset | "custom">("month");
   const [filter, setFilter] = useState<ModelFilter>("all");
   const [rows, setRows] = useState<DayRow[] | null>(null);
   const [totals, setTotals] = useState<Totals | null>(null);
@@ -126,36 +134,48 @@ export function ConsumptionTable() {
         </div>
 
         <div className="flex flex-wrap items-end gap-2">
+          {/* Датапикеры СЛЕВА от списка и только в режиме «Период». */}
+          {range === "custom" && (
+            <>
+              <label className="text-xs text-slate">
+                с
+                <input
+                  type="date"
+                  value={from}
+                  max={to}
+                  onChange={(e) => setFrom(e.target.value)}
+                  className="ml-1.5 rounded-md border border-hairline bg-card px-2 py-1.5 text-sm text-foreground"
+                />
+              </label>
+              <label className="text-xs text-slate">
+                по
+                <input
+                  type="date"
+                  value={to}
+                  min={from}
+                  onChange={(e) => setTo(e.target.value)}
+                  className="ml-1.5 rounded-md border border-hairline bg-card px-2 py-1.5 text-sm text-foreground"
+                />
+              </label>
+            </>
+          )}
+
           <select
-            onChange={(e) => e.target.value && applyPreset(e.target.value as Preset)}
-            defaultValue=""
+            value={range}
+            onChange={(e) => {
+              const value = e.target.value as Preset | "custom";
+              setRange(value);
+              // При переходе в «Период» границы остаются теми, что показаны:
+              // человек уточняет видимый период, а не начинает с пустого места.
+              if (value !== "custom") applyPreset(value);
+            }}
             className="rounded-md border border-hairline bg-card px-3 py-1.5 text-sm"
-            aria-label="Готовый период"
+            aria-label="Период"
           >
-            <option value="">Период…</option>
             <option value="7d">Последние 7 дней</option>
             <option value="month">Текущий месяц</option>
+            <option value="custom">Период</option>
           </select>
-          <label className="text-xs text-slate">
-            с
-            <input
-              type="date"
-              value={from}
-              max={to}
-              onChange={(e) => setFrom(e.target.value)}
-              className="ml-1.5 rounded-md border border-hairline bg-card px-2 py-1.5 text-sm text-foreground"
-            />
-          </label>
-          <label className="text-xs text-slate">
-            по
-            <input
-              type="date"
-              value={to}
-              min={from}
-              onChange={(e) => setTo(e.target.value)}
-              className="ml-1.5 rounded-md border border-hairline bg-card px-2 py-1.5 text-sm text-foreground"
-            />
-          </label>
         </div>
       </div>
 

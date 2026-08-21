@@ -2,6 +2,7 @@ import { withTenant } from "@/lib/server/db";
 import { requireSession, toResponse } from "@/lib/server/guard";
 import { collection } from "@/lib/server/mongo";
 import { deleteObject } from "@/lib/server/s3";
+import { objectKeysOf } from "@/lib/run-cleanup";
 
 /**
  * Удаление и отмена исследования.
@@ -31,11 +32,20 @@ import { deleteObject } from "@/lib/server/s3";
  *
  * ─── Что уходит вместе с задачей ───────────────────────────────────────────
  * Каскадом в Postgres: `reports`, `report_shares`, `chat_threads`. Отдельно —
- * документы Mongo (`reports`, `report_personas`) и ролик в S3. Транзакции между
- * тремя хранилищами нет и быть не может, поэтому порядок выбран так, чтобы
- * любой обрыв оставлял мусор, а не ложь: сначала внешние хранилища, строка в
- * Postgres — последней. Обрыв посередине оставит осиротевший файл, но не
- * исследование, ссылающееся на удалённые данные.
+ * документы Mongo (`reports`, `report_personas`, `content_packs`) и объекты в
+ * S3: исходный ролик, перекодированная копия для плеера, заставка и кадры всех
+ * сцен.
+ *
+ * Три последних вида здесь появились 21.08.2026. До этого удалялся только
+ * исходный ролик, и на боевой базе накопилось 36 осиротевших пакетов материала
+ * из 41 — вместе с сотнями кадров на каждый. Заметить это было неоткуда:
+ * исследование пропадает из списка, экран чист, а место занято, и счёт за
+ * хранилище приходит раз в месяц, не объясняя, чем.
+ *
+ * Транзакции между тремя хранилищами нет и быть не может, поэтому порядок
+ * выбран так, чтобы любой обрыв оставлял мусор, а не ложь: сначала внешние
+ * хранилища, строка в Postgres — последней. Обрыв посередине оставит
+ * осиротевший файл, но не исследование, ссылающееся на удалённые данные.
  */
 
 export const dynamic = "force-dynamic";
@@ -54,6 +64,8 @@ const STALE_QUEUED_MINUTES = 5;
 interface TaskRow {
   status: string;
   video_ref: string | null;
+  playback_ref: string | null;
+  poster_ref: string | null;
   stale: boolean;
 }
 
@@ -70,6 +82,8 @@ export async function DELETE(
       const { rows } = await client.query<TaskRow>(
         `SELECT status,
                 video_ref,
+                playback_ref,
+                poster_ref,
                 created_at < now() - make_interval(mins => $2) AS stale
            FROM tasks
           WHERE id = $1`,
@@ -77,7 +91,7 @@ export async function DELETE(
       );
       if (rows.length === 0) return { kind: "missing" as const };
 
-      const { status, video_ref, stale } = rows[0];
+      const { status, video_ref, playback_ref, poster_ref, stale } = rows[0];
       const active = status === "QUEUED" || status === "RUNNING";
 
       // Активный прогон, который воркер действительно ведёт: просим отменить.
@@ -92,7 +106,13 @@ export async function DELETE(
       }
 
       await client.query(`DELETE FROM tasks WHERE id = $1`, [id]);
-      return { kind: "deleted" as const, videoRef: video_ref, wasActive: active };
+      return {
+        kind: "deleted" as const,
+        videoRef: video_ref,
+        playbackRef: playback_ref,
+        posterRef: poster_ref,
+        wasActive: active,
+      };
     });
 
     if (outcome.kind === "missing") {
@@ -121,21 +141,43 @@ export async function DELETE(
     // Причины собираются и возвращаются — молчаливый мусор хуже названного.
     const leftovers: string[] = [];
 
+    // tenant_id в фильтре обязателен: в Mongo нет RLS, и это единственное, что
+    // не даёт удалить чужой отчёт по угаданному task_id.
+    const filter = { tenant_id: tenantId, task_id: id };
+
+    // Пакет материала читается ДО удаления: в нём лежат ключи кадров сцен, и
+    // другого их списка нет. Удалить пакет первым значило бы потерять адреса
+    // сотен файлов, которые после этого не удалить уже ничем.
+    let pack: { scenes?: unknown } | null = null;
     try {
-      // tenant_id в фильтре обязателен: в Mongo нет RLS, и это единственное,
-      // что не даёт удалить чужой отчёт по угаданному task_id.
-      const filter = { tenant_id: tenantId, task_id: id };
+      const doc = await (await collection("content_packs")).findOne(filter);
+      pack = (doc?.pack as { scenes?: unknown } | undefined) ?? null;
+    } catch (e) {
+      leftovers.push(`пакет материала не прочитан, кадры сцен останутся: ${(e as Error).message}`);
+    }
+
+    try {
       await (await collection("reports")).deleteMany(filter);
       await (await collection("report_personas")).deleteMany(filter);
+      await (await collection("content_packs")).deleteMany(filter);
     } catch (e) {
       leftovers.push(`документы отчёта в Mongo: ${(e as Error).message}`);
     }
 
-    if (outcome.videoRef) {
+    // Объекты хранилища: ролик, копия для плеера, заставка и кадры всех сцен.
+    // По одному, а не пакетным DELETE: у совместимых реализаций S3 пакетная
+    // ручка ведёт себя по-разному, а отказ на одном ключе не должен уносить
+    // остальные.
+    for (const key of objectKeysOf({
+      videoRef: outcome.videoRef,
+      playbackRef: outcome.playbackRef,
+      posterRef: outcome.posterRef,
+      pack,
+    })) {
       try {
-        await deleteObject(outcome.videoRef);
+        await deleteObject(key);
       } catch (e) {
-        leftovers.push(`ролик в хранилище: ${(e as Error).message}`);
+        leftovers.push(`${key}: ${(e as Error).message}`);
       }
     }
 
