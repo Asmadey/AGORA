@@ -166,7 +166,7 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
               <RotateCcw className="h-4 w-4" />
               Перезапустить
             </Link>
-            <ShareDialog />
+            <ShareDialog runId={id} />
             {/* Удаление стоит последним и красное: оно уносит отчёт, за который
                 заплачено моделью, и отменить его нечем. Подтверждение — внутри
                 кнопки, диалог здесь тяжелее задачи. */}

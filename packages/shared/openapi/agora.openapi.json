@@ -1,3215 +1,3329 @@
 {
- "openapi": "3.1.0",
- "info": {
-  "title": "AGORA API",
-  "version": "0.1.0",
-  "summary": "Синтетические фокус-группы: аудитория, опрос, прогон, отчёт.",
-  "description": "HTTP-контур веб-приложения AGORA (`apps/web/app/api`).\n\n**Это не спецификация провайдера моделей.** `api-1.json` в корне репозитория описывает внешний Cloud AI TimeWeb (`/api/v1/cloud-ai/agents/{id}/call`), к которому ходит воркер. К API самого продукта он отношения не имеет.\n\n### Аутентификация\nСессионная кука Auth.js v5 (JWT). Правило по умолчанию — «закрыто»: middleware пропускает без сессии только `/login`, `/api/auth/*`, `/api/health` и `/api-docs/*` (эта документация). Новый маршрут оказывается защищённым сам собой; обратный порядок — перечислять то, что надо защитить, — означал бы, что забытый маршрут открыт, а забывают именно в эту сторону.\n\n### Мультиарендность\nИзоляция обеспечивается не фильтром в коде, а политиками RLS в Postgres: обработчик открывает транзакцию через `withTenant`, переключается на роль `agora_app` и выставляет `app.tenant_id`. Поэтому «чужой объект» и «нет такого объекта» отвечают одинаково — 404. Разные ответы сами по себе сообщали бы о существовании чужого.\n\n### Наследие прототипа\nШесть маршрутов прототипа удалены: `/api/research/run`, `/api/upload`, `/api/upload-url`, `/api/news-analysis`, `/api/news-context`. Остались три (`/api/chat`, `/api/simulate`, `/api/report`) — они держат работающую демонстрацию на странице проекта и уйдут вместе с задачами #20 и #21.\n\n### Что здесь не описано\nВоркер (`services/agent-core`) своего публичного HTTP-контура не имеет: веб общается с ним через очередь Valkey, а не по HTTP.",
-  "contact": {
-   "name": "AGORA",
-   "url": "https://github.com/Asmadey/AGORA"
-  }
- },
- "servers": [
-  {
-   "url": "https://agora.185-154-194-125.sslip.io",
-   "description": "Развёртывание"
-  },
-  {
-   "url": "http://localhost:3000",
-   "description": "Локальный запуск"
-  }
- ],
- "tags": [
-  {
-   "name": "Аудитория",
-   "description": "Критерии, заземление, наборы персон"
-  },
-  {
-   "name": "Персоны",
-   "description": "Реестр персон и наборов"
-  },
-  {
-   "name": "Опрос",
-   "description": "Анкеты"
-  },
-  {
-   "name": "Загрузка",
-   "description": "Видео в S3 напрямую из браузера"
-  },
-  {
-   "name": "Прогон",
-   "description": "Запуск исследования и прогресс"
-  },
-  {
-   "name": "Промпт-студия",
-   "description": "Версии и активация промптов"
-  },
-  {
-   "name": "Портреты",
-   "description": "Портреты аудиторий"
-  },
-  {
-   "name": "Настройки",
-   "description": "Настройки арендатора"
-  },
-  {
-   "name": "Визард",
-   "description": "Черновики семишагового визарда"
-  },
-  {
-   "name": "Аутентификация",
-   "description": "Auth.js v5"
-  },
-  {
-   "name": "Служебное",
-   "description": "Healthcheck"
-  },
-  {
-   "name": "Наследие прототипа",
-   "description": "Маршруты, оставшиеся от прототипа"
-  }
- ],
- "security": [
-  {
-   "sessionCookie": []
-  }
- ],
- "paths": {
-  "/api-docs/openapi": {
-   "get": {
-    "summary": "Спецификация OpenAPI 3.1",
-    "description": "Сам этот документ в машинном виде. Отдаётся отдельным маршрутом, потому что нужен не одному Swagger UI: по этому адресу его забирают генераторы клиентов, линтеры контрактов и каталоги API — им нужен документ, а не страница.\n\nЧеловеческий вид — страница `/api-docs`. Она берёт документ по этому же URL, а не своей копией: иначе расхождение между тем, что видит человек, и тем, что получает генератор клиента, стало бы невидимым.\n\nАдрес лежит вне `/api` намеренно. Публичные пути сопоставляются по префиксу, поэтому открыть документацию внутри `/api` можно было бы только вместе со всем деревом маршрутов арендатора.",
-    "tags": [
-     "Служебное"
-    ],
-    "operationId": "openapiSpec",
-    "responses": {
-     "200": {
-      "description": "Документ OpenAPI 3.1",
-      "content": {
-       "application/json": {
-        "schema": {
-         "type": "object"
-        }
-       }
-      }
-     }
-    },
-    "security": []
-   }
-  },
-  "/api/audience": {
-   "post": {
-    "summary": "Собрать аудиторию",
-    "description": "Две ветки, различаются по наличию personaSetId. С ним — берётся готовый набор, генерации не происходит. Без него — критерии уходят в генератор воркера, который заземляет персон на корпус живых респондентов, и создаётся новый набор.\n\nОтказ по незаземлённому критерию — это 400 с текстом генератора, а не пустая аудитория: молча выдать персон по критерию, которого в корпусе нет, значило бы отдать выдуманную аудиторию под видом заземлённой.",
-    "tags": [
-     "Аудитория"
-    ],
-    "operationId": "buildAudience",
-    "responses": {
-     "200": {
-      "description": "Аудитория собрана",
-      "content": {
-       "application/json": {
-        "schema": {
-         "$ref": "#/components/schemas/AudienceResult"
-        }
-       }
-      }
-     },
-     "400": {
-      "description": "Некорректные параметры",
-      "content": {
-       "application/json": {
-        "schema": {
-         "$ref": "#/components/schemas/Error"
-        }
-       }
-      }
-     },
-     "401": {
-      "description": "Нет действующей сессии",
-      "content": {
-       "application/json": {
-        "schema": {
-         "$ref": "#/components/schemas/Error"
-        }
-       }
-      }
-     },
-     "404": {
-      "description": "Не найдено (в том числе чужое: RLS не отличает)",
-      "content": {
-       "application/json": {
-        "schema": {
-         "$ref": "#/components/schemas/Error"
-        }
-       }
-      }
-     }
-    },
-    "requestBody": {
-     "required": true,
-     "content": {
-      "application/json": {
-       "schema": {
-        "oneOf": [
-         {
-          "$ref": "#/components/schemas/AudienceCriteria"
-         },
-         {
-          "$ref": "#/components/schemas/AudienceExistingSet"
-         }
-        ]
-       },
-       "example": {
-        "size": 20,
-        "ageGroups": [
-         "25-34",
-         "35-44"
-        ],
-        "geos": [
-         "Москва"
-        ],
-        "genders": [
-         "Мужской",
-         "Женский"
-        ],
-        "seed": 42,
-        "useLlm": true
-       }
-      }
-     }
+  "openapi": "3.1.0",
+  "info": {
+    "title": "AGORA API",
+    "version": "0.1.0",
+    "summary": "Синтетические фокус-группы: аудитория, опрос, прогон, отчёт.",
+    "description": "HTTP-контур веб-приложения AGORA (`apps/web/app/api`).\n\n**Это не спецификация провайдера моделей.** `api-1.json` в корне репозитория описывает внешний Cloud AI TimeWeb (`/api/v1/cloud-ai/agents/{id}/call`), к которому ходит воркер. К API самого продукта он отношения не имеет.\n\n### Аутентификация\nСессионная кука Auth.js v5 (JWT). Правило по умолчанию — «закрыто»: middleware пропускает без сессии только `/login`, `/api/auth/*`, `/api/health` и `/api-docs/*` (эта документация). Новый маршрут оказывается защищённым сам собой; обратный порядок — перечислять то, что надо защитить, — означал бы, что забытый маршрут открыт, а забывают именно в эту сторону.\n\n### Мультиарендность\nИзоляция обеспечивается не фильтром в коде, а политиками RLS в Postgres: обработчик открывает транзакцию через `withTenant`, переключается на роль `agora_app` и выставляет `app.tenant_id`. Поэтому «чужой объект» и «нет такого объекта» отвечают одинаково — 404. Разные ответы сами по себе сообщали бы о существовании чужого.\n\n### Наследие прототипа\nШесть маршрутов прототипа удалены: `/api/research/run`, `/api/upload`, `/api/upload-url`, `/api/news-analysis`, `/api/news-context`. Остались три (`/api/chat`, `/api/simulate`, `/api/report`) — они держат работающую демонстрацию на странице проекта и уйдут вместе с задачами #20 и #21.\n\n### Что здесь не описано\nВоркер (`services/agent-core`) своего публичного HTTP-контура не имеет: веб общается с ним через очередь Valkey, а не по HTTP.",
+    "contact": {
+      "name": "AGORA",
+      "url": "https://github.com/Asmadey/AGORA"
     }
-   },
-   "get": {
-    "summary": "Заземление аудитории",
-    "description": "Распределения корпуса, на которые опирается генератор: по ним видно, какие значения критериев вообще существуют в данных.",
-    "tags": [
-     "Аудитория"
-    ],
-    "operationId": "audienceGrounding",
-    "responses": {
-     "200": {
-      "description": "Распределения корпуса"
-     },
-     "401": {
-      "description": "Нет действующей сессии",
-      "content": {
-       "application/json": {
-        "schema": {
-         "$ref": "#/components/schemas/Error"
-        }
-       }
-      }
-     }
-    }
-   },
-   "delete": {
-    "summary": "Удаление наборов аудитории",
-    "description": "Набор, на котором стоит хоть одно исследование, НЕ удаляется: внешний ключ tasks.persona_set_id объявлен ON DELETE SET NULL, и удаление тихо обнулило бы у прогона ссылку на аудиторию. Такие наборы возвращаются в blocked.",
-    "tags": [
-     "Аудитория"
-    ],
-    "operationId": "deletePersonaSets",
-    "requestBody": {
-     "required": true,
-     "content": {
-      "application/json": {
-       "schema": {
-        "type": "object",
-        "required": [
-         "ids"
-        ],
-        "properties": {
-         "ids": {
-          "type": "array",
-          "items": {
-           "type": "string",
-           "format": "uuid"
-          },
-          "description": "Идентификаторы. Чужие не находятся: RLS не покажет строку другого арендатора."
-         }
-        }
-       }
-      }
-     }
+  },
+  "servers": [
+    {
+      "url": "https://agora.185-154-194-125.sslip.io",
+      "description": "Развёртывание"
     },
-    "responses": {
-     "200": {
-      "description": "Удалённые и отклонённые наборы",
-      "content": {
-       "application/json": {
-        "schema": {
-         "type": "object",
-         "properties": {
-          "deleted": {
-           "type": "integer"
+    {
+      "url": "http://localhost:3000",
+      "description": "Локальный запуск"
+    }
+  ],
+  "tags": [
+    {
+      "name": "Аудитория",
+      "description": "Критерии, заземление, наборы персон"
+    },
+    {
+      "name": "Персоны",
+      "description": "Реестр персон и наборов"
+    },
+    {
+      "name": "Опрос",
+      "description": "Анкеты"
+    },
+    {
+      "name": "Загрузка",
+      "description": "Видео в S3 напрямую из браузера"
+    },
+    {
+      "name": "Прогон",
+      "description": "Запуск исследования и прогресс"
+    },
+    {
+      "name": "Промпт-студия",
+      "description": "Версии и активация промптов"
+    },
+    {
+      "name": "Портреты",
+      "description": "Портреты аудиторий"
+    },
+    {
+      "name": "Настройки",
+      "description": "Настройки арендатора"
+    },
+    {
+      "name": "Визард",
+      "description": "Черновики семишагового визарда"
+    },
+    {
+      "name": "Аутентификация",
+      "description": "Auth.js v5"
+    },
+    {
+      "name": "Служебное",
+      "description": "Healthcheck"
+    },
+    {
+      "name": "Наследие прототипа",
+      "description": "Маршруты, оставшиеся от прототипа"
+    }
+  ],
+  "security": [
+    {
+      "sessionCookie": []
+    }
+  ],
+  "paths": {
+    "/api-docs/openapi": {
+      "get": {
+        "summary": "Спецификация OpenAPI 3.1",
+        "description": "Сам этот документ в машинном виде. Отдаётся отдельным маршрутом, потому что нужен не одному Swagger UI: по этому адресу его забирают генераторы клиентов, линтеры контрактов и каталоги API — им нужен документ, а не страница.\n\nЧеловеческий вид — страница `/api-docs`. Она берёт документ по этому же URL, а не своей копией: иначе расхождение между тем, что видит человек, и тем, что получает генератор клиента, стало бы невидимым.\n\nАдрес лежит вне `/api` намеренно. Публичные пути сопоставляются по префиксу, поэтому открыть документацию внутри `/api` можно было бы только вместе со всем деревом маршрутов арендатора.",
+        "tags": [
+          "Служебное"
+        ],
+        "operationId": "openapiSpec",
+        "responses": {
+          "200": {
+            "description": "Документ OpenAPI 3.1",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        },
+        "security": []
+      }
+    },
+    "/api/audience": {
+      "post": {
+        "summary": "Собрать аудиторию",
+        "description": "Две ветки, различаются по наличию personaSetId. С ним — берётся готовый набор, генерации не происходит. Без него — критерии уходят в генератор воркера, который заземляет персон на корпус живых респондентов, и создаётся новый набор.\n\nОтказ по незаземлённому критерию — это 400 с текстом генератора, а не пустая аудитория: молча выдать персон по критерию, которого в корпусе нет, значило бы отдать выдуманную аудиторию под видом заземлённой.",
+        "tags": [
+          "Аудитория"
+        ],
+        "operationId": "buildAudience",
+        "responses": {
+          "200": {
+            "description": "Аудитория собрана",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AudienceResult"
+                }
+              }
+            }
           },
-          "requested": {
-           "type": "integer"
+          "400": {
+            "description": "Некорректные параметры",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
           },
-          "blocked": {
-           "type": "array",
-           "items": {
-            "type": "object",
-            "properties": {
-             "id": {
+          "401": {
+            "description": "Нет действующей сессии",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Не найдено (в том числе чужое: RLS не отличает)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/AudienceCriteria"
+                  },
+                  {
+                    "$ref": "#/components/schemas/AudienceExistingSet"
+                  }
+                ]
+              },
+              "example": {
+                "size": 20,
+                "ageGroups": [
+                  "25-34",
+                  "35-44"
+                ],
+                "geos": [
+                  "Москва"
+                ],
+                "genders": [
+                  "Мужской",
+                  "Женский"
+                ],
+                "seed": 42,
+                "useLlm": true
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "summary": "Заземление аудитории",
+        "description": "Распределения корпуса, на которые опирается генератор: по ним видно, какие значения критериев вообще существуют в данных.",
+        "tags": [
+          "Аудитория"
+        ],
+        "operationId": "audienceGrounding",
+        "responses": {
+          "200": {
+            "description": "Распределения корпуса"
+          },
+          "401": {
+            "description": "Нет действующей сессии",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "summary": "Удаление наборов аудитории",
+        "description": "Набор, на котором стоит хоть одно исследование, НЕ удаляется: внешний ключ tasks.persona_set_id объявлен ON DELETE SET NULL, и удаление тихо обнулило бы у прогона ссылку на аудиторию. Такие наборы возвращаются в blocked.",
+        "tags": [
+          "Аудитория"
+        ],
+        "operationId": "deletePersonaSets",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "ids"
+                ],
+                "properties": {
+                  "ids": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "description": "Идентификаторы. Чужие не находятся: RLS не покажет строку другого арендатора."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Удалённые и отклонённые наборы",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "deleted": {
+                      "type": "integer"
+                    },
+                    "requested": {
+                      "type": "integer"
+                    },
+                    "blocked": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "format": "uuid"
+                          },
+                          "name": {
+                            "type": "string"
+                          },
+                          "runs": {
+                            "type": "integer",
+                            "description": "Сколько исследований ссылается"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "ids отсутствует, пуст или содержит не-идентификаторы"
+          }
+        }
+      }
+    },
+    "/api/auth/{nextauth}": {
+      "get": {
+        "summary": "Auth.js: вход, выход, сессия",
+        "description": "Маршруты Auth.js v5 (Credentials). Обрабатываются самой библиотекой, отдельного обработчика в проекте нет. Единственный публичный путь наравне с /api/health.",
+        "tags": [
+          "Аутентификация"
+        ],
+        "operationId": "authjs",
+        "responses": {
+          "200": {
+            "description": "Ответ Auth.js"
+          }
+        },
+        "parameters": [
+          {
+            "name": "nextauth",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "session | signin | signout | csrf | callback/credentials"
+          }
+        ],
+        "security": []
+      },
+      "post": {
+        "summary": "Auth.js: приём формы входа",
+        "description": "См. GET.",
+        "tags": [
+          "Аутентификация"
+        ],
+        "operationId": "authjsPost",
+        "responses": {
+          "200": {
+            "description": "Ответ Auth.js"
+          },
+          "302": {
+            "description": "Редирект после входа"
+          }
+        },
+        "parameters": [
+          {
+            "name": "nextauth",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "security": []
+      }
+    },
+    "/api/corpus": {
+      "get": {
+        "summary": "Датасеты корпуса и записи выбранного",
+        "description": "Без `datasetId` — датасеты команды с числом записей. С `datasetId` — ещё и страница записей.\n\nОдин маршрут на два ответа: раздел открывается списком датасетов и сразу показывает записи первого. Два маршрута дали бы два состояния загрузки на одном экране и возможность показать таблицу от датасета, который уже не выбран.\n\nЧужой датасет отвечает 404 наравне с несуществующим: RLS их не различает, и ответ не должен различать тоже.",
+        "tags": [
+          "Корпус"
+        ],
+        "operationId": "corpusList",
+        "responses": {
+          "200": {
+            "description": "Датасеты и (если запрошены) записи"
+          },
+          "401": {
+            "description": "Нет сессии"
+          },
+          "404": {
+            "description": "Датасет не найден"
+          }
+        }
+      }
+    },
+    "/api/corpus/records": {
+      "put": {
+        "summary": "Создать или перезаписать запись корпуса",
+        "description": "Идемпотентно по (датасет, respondentId): повторная отправка той же записи не создаёт вторую. Респондент с тем же идентификатором — тот же респондент, и удвоить его вес в долях значило бы исказить заземление так, что заметно это стало бы только по расхождению метрики.\n\nПравка не трогает прежние исследования: каждая аудитория снимает слепок корпуса в момент создания, и генератор сэмплирует по слепку.",
+        "tags": [
+          "Корпус"
+        ],
+        "operationId": "corpusUpsertRecord",
+        "responses": {
+          "200": {
+            "description": "Запись сохранена"
+          },
+          "400": {
+            "description": "Нет datasetId, respondentId или data не объект"
+          },
+          "401": {
+            "description": "Нет сессии"
+          },
+          "404": {
+            "description": "Датасет не найден"
+          }
+        }
+      },
+      "delete": {
+        "summary": "Удалить запись корпуса",
+        "tags": [
+          "Корпус"
+        ],
+        "operationId": "corpusDeleteRecord",
+        "responses": {
+          "200": {
+            "description": "Запись удалена"
+          },
+          "400": {
+            "description": "Не указан id"
+          },
+          "401": {
+            "description": "Нет сессии"
+          },
+          "404": {
+            "description": "Запись не найдена либо принадлежит другой команде"
+          }
+        }
+      }
+    },
+    "/api/health": {
+      "get": {
+        "summary": "Проверка живости",
+        "description": "Намеренно не ходит в базу: healthcheck обязан отвечать на вопрос «процесс поднялся», а не «здорова ли вся система». Иначе временная недоступность Postgres перезапускала бы веб, которому перезапуск не помогает.",
+        "tags": [
+          "Служебное"
+        ],
+        "operationId": "health",
+        "responses": {
+          "200": {
+            "description": "Процесс отвечает",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "const": "ok"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "security": []
+      }
+    },
+    "/api/persona-sets": {
+      "get": {
+        "summary": "Наборы персон",
+        "description": "",
+        "tags": [
+          "Персоны"
+        ],
+        "operationId": "listPersonaSets",
+        "responses": {
+          "200": {
+            "description": "Список наборов"
+          },
+          "401": {
+            "description": "Нет действующей сессии",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "summary": "Создать набор",
+        "description": "seed обязателен и неотрицателен: без него набор невоспроизводим, а перезапуск исследования на той же аудитории (#30) невозможен.",
+        "tags": [
+          "Персоны"
+        ],
+        "operationId": "createPersonaSet",
+        "responses": {
+          "201": {
+            "description": "Набор создан"
+          },
+          "400": {
+            "description": "Некорректные параметры",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Нет действующей сессии",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "name",
+                  "size"
+                ],
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "size": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "seed": {
+                    "type": "integer",
+                    "minimum": 0
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/persona-sets/{id}": {
+      "get": {
+        "summary": "Набор с персонами",
+        "description": "",
+        "tags": [
+          "Персоны"
+        ],
+        "operationId": "getPersonaSet",
+        "responses": {
+          "200": {
+            "description": "Набор"
+          },
+          "401": {
+            "description": "Нет действующей сессии",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Не найдено (в том числе чужое: RLS не отличает)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
               "type": "string",
               "format": "uuid"
-             },
-             "name": {
-              "type": "string"
-             },
-             "runs": {
-              "type": "integer",
-              "description": "Сколько исследований ссылается"
-             }
             }
-           }
           }
-         }
-        }
-       }
+        ]
       }
-     },
-     "400": {
-      "description": "ids отсутствует, пуст или содержит не-идентификаторы"
-     }
-    }
-   }
-  },
-  "/api/auth/{nextauth}": {
-   "get": {
-    "summary": "Auth.js: вход, выход, сессия",
-    "description": "Маршруты Auth.js v5 (Credentials). Обрабатываются самой библиотекой, отдельного обработчика в проекте нет. Единственный публичный путь наравне с /api/health.",
-    "tags": [
-     "Аутентификация"
-    ],
-    "operationId": "authjs",
-    "responses": {
-     "200": {
-      "description": "Ответ Auth.js"
-     }
     },
-    "parameters": [
-     {
-      "name": "nextauth",
-      "in": "path",
-      "required": true,
-      "schema": {
-       "type": "string"
+    "/api/personas": {
+      "get": {
+        "summary": "Персоны арендатора",
+        "description": "Список ограничен RLS: чужие персоны не отдаются и не считаются.",
+        "tags": [
+          "Персоны"
+        ],
+        "operationId": "listPersonas",
+        "responses": {
+          "200": {
+            "description": "Список",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "personas": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Persona"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Нет действующей сессии",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
       },
-      "description": "session | signin | signout | csrf | callback/credentials"
-     }
-    ],
-    "security": []
-   },
-   "post": {
-    "summary": "Auth.js: приём формы входа",
-    "description": "См. GET.",
-    "tags": [
-     "Аутентификация"
-    ],
-    "operationId": "authjsPost",
-    "responses": {
-     "200": {
-      "description": "Ответ Auth.js"
-     },
-     "302": {
-      "description": "Редирект после входа"
-     }
-    },
-    "parameters": [
-     {
-      "name": "nextauth",
-      "in": "path",
-      "required": true,
-      "schema": {
-       "type": "string"
-      }
-     }
-    ],
-    "security": []
-   }
-  },
-  "/api/corpus": {
-   "get": {
-    "summary": "Датасеты корпуса и записи выбранного",
-    "description": "Без `datasetId` — датасеты команды с числом записей. С `datasetId` — ещё и страница записей.\n\nОдин маршрут на два ответа: раздел открывается списком датасетов и сразу показывает записи первого. Два маршрута дали бы два состояния загрузки на одном экране и возможность показать таблицу от датасета, который уже не выбран.\n\nЧужой датасет отвечает 404 наравне с несуществующим: RLS их не различает, и ответ не должен различать тоже.",
-    "tags": [
-     "Корпус"
-    ],
-    "operationId": "corpusList",
-    "responses": {
-     "200": {
-      "description": "Датасеты и (если запрошены) записи"
-     },
-     "401": {
-      "description": "Нет сессии"
-     },
-     "404": {
-      "description": "Датасет не найден"
-     }
-    }
-   }
-  },
-  "/api/corpus/records": {
-   "put": {
-    "summary": "Создать или перезаписать запись корпуса",
-    "description": "Идемпотентно по (датасет, respondentId): повторная отправка той же записи не создаёт вторую. Респондент с тем же идентификатором — тот же респондент, и удвоить его вес в долях значило бы исказить заземление так, что заметно это стало бы только по расхождению метрики.\n\nПравка не трогает прежние исследования: каждая аудитория снимает слепок корпуса в момент создания, и генератор сэмплирует по слепку.",
-    "tags": [
-     "Корпус"
-    ],
-    "operationId": "corpusUpsertRecord",
-    "responses": {
-     "200": {
-      "description": "Запись сохранена"
-     },
-     "400": {
-      "description": "Нет datasetId, respondentId или data не объект"
-     },
-     "401": {
-      "description": "Нет сессии"
-     },
-     "404": {
-      "description": "Датасет не найден"
-     }
-    }
-   },
-   "delete": {
-    "summary": "Удалить запись корпуса",
-    "tags": [
-     "Корпус"
-    ],
-    "operationId": "corpusDeleteRecord",
-    "responses": {
-     "200": {
-      "description": "Запись удалена"
-     },
-     "400": {
-      "description": "Не указан id"
-     },
-     "401": {
-      "description": "Нет сессии"
-     },
-     "404": {
-      "description": "Запись не найдена либо принадлежит другой команде"
-     }
-    }
-   }
-  },
-  "/api/health": {
-   "get": {
-    "summary": "Проверка живости",
-    "description": "Намеренно не ходит в базу: healthcheck обязан отвечать на вопрос «процесс поднялся», а не «здорова ли вся система». Иначе временная недоступность Postgres перезапускала бы веб, которому перезапуск не помогает.",
-    "tags": [
-     "Служебное"
-    ],
-    "operationId": "health",
-    "responses": {
-     "200": {
-      "description": "Процесс отвечает",
-      "content": {
-       "application/json": {
-        "schema": {
-         "type": "object",
-         "properties": {
-          "status": {
-           "type": "string",
-           "const": "ok"
+      "delete": {
+        "summary": "Удаление персон",
+        "description": "Персона удаляется из реестра, но не из отчёта: карточки ответов живут в Mongo и ссылаются на идентификатор, а не на строку.",
+        "tags": [
+          "Персоны"
+        ],
+        "operationId": "deletePersonas",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "ids"
+                ],
+                "properties": {
+                  "ids": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "description": "Идентификаторы. Чужие не находятся: RLS не покажет строку другого арендатора."
+                  }
+                }
+              }
+            }
           }
-         }
-        }
-       }
-      }
-     }
-    },
-    "security": []
-   }
-  },
-  "/api/persona-sets": {
-   "get": {
-    "summary": "Наборы персон",
-    "description": "",
-    "tags": [
-     "Персоны"
-    ],
-    "operationId": "listPersonaSets",
-    "responses": {
-     "200": {
-      "description": "Список наборов"
-     },
-     "401": {
-      "description": "Нет действующей сессии",
-      "content": {
-       "application/json": {
-        "schema": {
-         "$ref": "#/components/schemas/Error"
-        }
-       }
-      }
-     }
-    }
-   },
-   "post": {
-    "summary": "Создать набор",
-    "description": "seed обязателен и неотрицателен: без него набор невоспроизводим, а перезапуск исследования на той же аудитории (#30) невозможен.",
-    "tags": [
-     "Персоны"
-    ],
-    "operationId": "createPersonaSet",
-    "responses": {
-     "201": {
-      "description": "Набор создан"
-     },
-     "400": {
-      "description": "Некорректные параметры",
-      "content": {
-       "application/json": {
-        "schema": {
-         "$ref": "#/components/schemas/Error"
-        }
-       }
-      }
-     },
-     "401": {
-      "description": "Нет действующей сессии",
-      "content": {
-       "application/json": {
-        "schema": {
-         "$ref": "#/components/schemas/Error"
-        }
-       }
-      }
-     }
-    },
-    "requestBody": {
-     "required": true,
-     "content": {
-      "application/json": {
-       "schema": {
-        "type": "object",
-        "required": [
-         "name",
-         "size"
-        ],
-        "properties": {
-         "name": {
-          "type": "string",
-          "minLength": 1
-         },
-         "size": {
-          "type": "integer",
-          "minimum": 1
-         },
-         "seed": {
-          "type": "integer",
-          "minimum": 0
-         }
-        }
-       }
-      }
-     }
-    }
-   }
-  },
-  "/api/persona-sets/{id}": {
-   "get": {
-    "summary": "Набор с персонами",
-    "description": "",
-    "tags": [
-     "Персоны"
-    ],
-    "operationId": "getPersonaSet",
-    "responses": {
-     "200": {
-      "description": "Набор"
-     },
-     "401": {
-      "description": "Нет действующей сессии",
-      "content": {
-       "application/json": {
-        "schema": {
-         "$ref": "#/components/schemas/Error"
-        }
-       }
-      }
-     },
-     "404": {
-      "description": "Не найдено (в том числе чужое: RLS не отличает)",
-      "content": {
-       "application/json": {
-        "schema": {
-         "$ref": "#/components/schemas/Error"
-        }
-       }
-      }
-     }
-    },
-    "parameters": [
-     {
-      "name": "id",
-      "in": "path",
-      "required": true,
-      "schema": {
-       "type": "string",
-       "format": "uuid"
-      }
-     }
-    ]
-   }
-  },
-  "/api/personas": {
-   "get": {
-    "summary": "Персоны арендатора",
-    "description": "Список ограничен RLS: чужие персоны не отдаются и не считаются.",
-    "tags": [
-     "Персоны"
-    ],
-    "operationId": "listPersonas",
-    "responses": {
-     "200": {
-      "description": "Список",
-      "content": {
-       "application/json": {
-        "schema": {
-         "type": "object",
-         "properties": {
-          "personas": {
-           "type": "array",
-           "items": {
-            "$ref": "#/components/schemas/Persona"
-           }
+        },
+        "responses": {
+          "200": {
+            "description": "Сколько удалено и сколько запрошено",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "deleted": {
+                      "type": "integer"
+                    },
+                    "requested": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "ids отсутствует, пуст или содержит не-идентификаторы"
           }
-         }
         }
-       }
       }
-     },
-     "401": {
-      "description": "Нет действующей сессии",
-      "content": {
-       "application/json": {
-        "schema": {
-         "$ref": "#/components/schemas/Error"
-        }
-       }
-      }
-     }
-    }
-   },
-   "delete": {
-    "summary": "Удаление персон",
-    "description": "Персона удаляется из реестра, но не из отчёта: карточки ответов живут в Mongo и ссылаются на идентификатор, а не на строку.",
-    "tags": [
-     "Персоны"
-    ],
-    "operationId": "deletePersonas",
-    "requestBody": {
-     "required": true,
-     "content": {
-      "application/json": {
-       "schema": {
-        "type": "object",
-        "required": [
-         "ids"
-        ],
-        "properties": {
-         "ids": {
-          "type": "array",
-          "items": {
-           "type": "string",
-           "format": "uuid"
-          },
-          "description": "Идентификаторы. Чужие не находятся: RLS не покажет строку другого арендатора."
-         }
-        }
-       }
-      }
-     }
     },
-    "responses": {
-     "200": {
-      "description": "Сколько удалено и сколько запрошено",
-      "content": {
-       "application/json": {
-        "schema": {
-         "type": "object",
-         "properties": {
-          "deleted": {
-           "type": "integer"
-          },
-          "requested": {
-           "type": "integer"
+    "/api/personas/generate": {
+      "post": {
+        "summary": "Генерация персон (прокси к воркеру)",
+        "description": "Прокси к FastAPI воркера. НЕ наследие прототипа, хотя выглядит похоже: маршрут входит в контракт задачи #5 и проверяется её CDD-тестом.\n\nТенант-контекст в обработчике не ставится — маршрут закрыт только middleware, то есть проверкой «есть ли токен», без ограничения арендатором. Это стоит исправить отдельно; продуктовый путь генерации аудитории — `POST /api/audience`, он тенант-контекст ставит.",
+        "tags": [
+          "Персоны"
+        ],
+        "operationId": "generatePersonasProxy",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
           }
-         }
-        }
-       }
-      }
-     },
-     "400": {
-      "description": "ids отсутствует, пуст или содержит не-идентификаторы"
-     }
-    }
-   }
-  },
-  "/api/personas/generate": {
-   "post": {
-    "summary": "Генерация персон (прокси к воркеру)",
-    "description": "Прокси к FastAPI воркера. НЕ наследие прототипа, хотя выглядит похоже: маршрут входит в контракт задачи #5 и проверяется её CDD-тестом.\n\nТенант-контекст в обработчике не ставится — маршрут закрыт только middleware, то есть проверкой «есть ли токен», без ограничения арендатором. Это стоит исправить отдельно; продуктовый путь генерации аудитории — `POST /api/audience`, он тенант-контекст ставит.",
-    "tags": [
-     "Персоны"
-    ],
-    "operationId": "generatePersonasProxy",
-    "requestBody": {
-     "required": true,
-     "content": {
-      "application/json": {
-       "schema": {
-        "type": "object"
-       }
-      }
-     }
-    },
-    "responses": {
-     "200": {
-      "description": "Персоны сгенерированы"
-     },
-     "401": {
-      "description": "Нет действующей сессии",
-      "content": {
-       "application/json": {
-        "schema": {
-         "$ref": "#/components/schemas/Error"
-        }
-       }
-      }
-     },
-     "502": {
-      "description": "Воркер недоступен",
-      "content": {
-       "application/json": {
-        "schema": {
-         "$ref": "#/components/schemas/Error"
-        }
-       }
-      }
-     }
-    }
-   }
-  },
-  "/api/personas/{id}": {
-   "get": {
-    "summary": "Карточка персоны",
-    "description": "Полный профиль: все 8 категорий DNA, narrative и seed. Приёмка #6 — ни одно непустое поле canonical JSON Schema не теряется при отдаче.",
-    "tags": [
-     "Персоны"
-    ],
-    "operationId": "getPersona",
-    "responses": {
-     "200": {
-      "description": "Персона",
-      "content": {
-       "application/json": {
-        "schema": {
-         "type": "object",
-         "properties": {
-          "persona": {
-           "$ref": "#/components/schemas/Persona"
+        },
+        "responses": {
+          "200": {
+            "description": "Персоны сгенерированы"
+          },
+          "401": {
+            "description": "Нет действующей сессии",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Воркер недоступен",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
           }
-         }
         }
-       }
       }
-     },
-     "401": {
-      "description": "Нет действующей сессии",
-      "content": {
-       "application/json": {
-        "schema": {
-         "$ref": "#/components/schemas/Error"
-        }
-       }
-      }
-     },
-     "404": {
-      "description": "Не найдено (в том числе чужое: RLS не отличает)",
-      "content": {
-       "application/json": {
-        "schema": {
-         "$ref": "#/components/schemas/Error"
-        }
-       }
-      }
-     }
     },
-    "parameters": [
-     {
-      "name": "id",
-      "in": "path",
-      "required": true,
-      "schema": {
-       "type": "string",
-       "format": "uuid"
-      }
-     }
-    ]
-   }
-  },
-  "/api/portraits": {
-   "get": {
-    "summary": "Портреты аудиторий",
-    "description": "",
-    "tags": [
-     "Портреты"
-    ],
-    "operationId": "listPortraits",
-    "responses": {
-     "200": {
-      "description": "Список"
-     },
-     "401": {
-      "description": "Нет действующей сессии",
-      "content": {
-       "application/json": {
-        "schema": {
-         "$ref": "#/components/schemas/Error"
-        }
-       }
-      }
-     }
-    }
-   },
-   "post": {
-    "summary": "Создать портрет",
-    "description": "",
-    "tags": [
-     "Портреты"
-    ],
-    "operationId": "createPortrait",
-    "responses": {
-     "200": {
-      "description": "Создан"
-     },
-     "400": {
-      "description": "Некорректные параметры",
-      "content": {
-       "application/json": {
-        "schema": {
-         "$ref": "#/components/schemas/Error"
-        }
-       }
-      }
-     },
-     "401": {
-      "description": "Нет действующей сессии",
-      "content": {
-       "application/json": {
-        "schema": {
-         "$ref": "#/components/schemas/Error"
-        }
-       }
-      }
-     }
-    },
-    "requestBody": {
-     "required": true,
-     "content": {
-      "application/json": {
-       "schema": {
-        "type": "object",
-        "required": [
-         "name",
-         "body_md"
+    "/api/personas/{id}": {
+      "get": {
+        "summary": "Карточка персоны",
+        "description": "Полный профиль: все 8 категорий DNA, narrative и seed. Приёмка #6 — ни одно непустое поле canonical JSON Schema не теряется при отдаче.",
+        "tags": [
+          "Персоны"
         ],
-        "properties": {
-         "name": {
-          "type": "string"
-         },
-         "body_md": {
-          "type": "string"
-         }
-        }
-       }
-      }
-     }
-    }
-   }
-  },
-  "/api/portraits/distill": {
-   "post": {
-    "summary": "Авто-дистилляция портрета",
-    "description": "Собирает портрет из корпуса живых респондентов подпроцессом воркера. Логика принадлежит воркеру: дублировать методологию на TypeScript значило бы завести вторую реализацию заземления, которая разойдётся с первой незаметно.",
-    "tags": [
-     "Портреты"
-    ],
-    "operationId": "distillPortrait",
-    "responses": {
-     "200": {
-      "description": "Портрет собран"
-     },
-     "400": {
-      "description": "Некорректные параметры",
-      "content": {
-       "application/json": {
-        "schema": {
-         "$ref": "#/components/schemas/Error"
-        }
-       }
-      }
-     },
-     "401": {
-      "description": "Нет действующей сессии",
-      "content": {
-       "application/json": {
-        "schema": {
-         "$ref": "#/components/schemas/Error"
-        }
-       }
-      }
-     }
-    },
-    "requestBody": {
-     "required": true,
-     "content": {
-      "application/json": {
-       "schema": {
-        "type": "object",
-        "properties": {
-         "criteria": {
-          "type": "object"
-         },
-         "name": {
-          "type": "string"
-         }
-        }
-       }
-      }
-     }
-    }
-   }
-  },
-  "/api/portraits/{id}": {
-   "get": {
-    "summary": "Портрет и его версии",
-    "description": "",
-    "tags": [
-     "Портреты"
-    ],
-    "operationId": "getPortrait",
-    "responses": {
-     "200": {
-      "description": "Портрет"
-     },
-     "401": {
-      "description": "Нет действующей сессии",
-      "content": {
-       "application/json": {
-        "schema": {
-         "$ref": "#/components/schemas/Error"
-        }
-       }
-      }
-     },
-     "404": {
-      "description": "Не найдено (в том числе чужое: RLS не отличает)",
-      "content": {
-       "application/json": {
-        "schema": {
-         "$ref": "#/components/schemas/Error"
-        }
-       }
-      }
-     }
-    },
-    "parameters": [
-     {
-      "name": "id",
-      "in": "path",
-      "required": true,
-      "schema": {
-       "type": "string",
-       "format": "uuid"
-      }
-     }
-    ]
-   },
-   "put": {
-    "summary": "Новая версия портрета",
-    "description": "Как у промптов: версии копятся, правка на месте не делается.",
-    "tags": [
-     "Портреты"
-    ],
-    "operationId": "putPortrait",
-    "responses": {
-     "200": {
-      "description": "Версия создана"
-     },
-     "400": {
-      "description": "Некорректные параметры",
-      "content": {
-       "application/json": {
-        "schema": {
-         "$ref": "#/components/schemas/Error"
-        }
-       }
-      }
-     },
-     "401": {
-      "description": "Нет действующей сессии",
-      "content": {
-       "application/json": {
-        "schema": {
-         "$ref": "#/components/schemas/Error"
-        }
-       }
-      }
-     },
-     "404": {
-      "description": "Не найдено (в том числе чужое: RLS не отличает)",
-      "content": {
-       "application/json": {
-        "schema": {
-         "$ref": "#/components/schemas/Error"
-        }
-       }
-      }
-     }
-    },
-    "parameters": [
-     {
-      "name": "id",
-      "in": "path",
-      "required": true,
-      "schema": {
-       "type": "string",
-       "format": "uuid"
-      }
-     }
-    ],
-    "requestBody": {
-     "required": true,
-     "content": {
-      "application/json": {
-       "schema": {
-        "type": "object",
-        "required": [
-         "body_md"
-        ],
-        "properties": {
-         "body_md": {
-          "type": "string",
-          "minLength": 1
-         }
-        }
-       }
-      }
-     }
-    }
-   },
-   "delete": {
-    "summary": "Удалить портрет аудитории",
-    "description": "Версии уходят каскадом. Персоны, сгенерированные с этим портретом, не трогаются: их DNA самодостаточна, и терять аудиторию прогонов из-за уборки в портретах дороже, чем хранить лишний текст.",
-    "tags": [
-     "Портреты"
-    ],
-    "operationId": "deletePortrait",
-    "parameters": [
-     {
-      "name": "id",
-      "in": "path",
-      "required": true,
-      "schema": {
-       "type": "string",
-       "format": "uuid"
-      }
-     }
-    ],
-    "responses": {
-     "200": {
-      "description": "Портрет удалён"
-     },
-     "401": {
-      "description": "Нет действующей сессии",
-      "content": {
-       "application/json": {
-        "schema": {
-         "$ref": "#/components/schemas/Error"
-        }
-       }
-      }
-     },
-     "404": {
-      "description": "Портрет не существует или принадлежит другой команде",
-      "content": {
-       "application/json": {
-        "schema": {
-         "$ref": "#/components/schemas/Error"
-        }
-       }
-      }
-     }
-    }
-   }
-  },
-  "/api/projects": {
-   "get": {
-    "summary": "Проекты команды",
-    "description": "Проекты арендатора вместе с их прогонами. Отбор по арендатору делает RLS, а не параметр запроса.",
-    "tags": [
-     "Проекты"
-    ],
-    "operationId": "listProjects",
-    "responses": {
-     "200": {
-      "description": "Список проектов"
-     },
-     "401": {
-      "description": "Нет действующей сессии",
-      "content": {
-       "application/json": {
-        "schema": {
-         "$ref": "#/components/schemas/Error"
-        }
-       }
-      }
-     }
-    }
-   },
-   "post": {
-    "summary": "Создать проект",
-    "description": "Проект — это имя и его прогоны. Ролик, аудиторию и анкету выбирает визард запуска: они относятся к прогону, а не к проекту.",
-    "tags": [
-     "Проекты"
-    ],
-    "operationId": "createProject",
-    "responses": {
-     "201": {
-      "description": "Проект создан"
-     },
-     "400": {
-      "description": "Некорректное тело запроса",
-      "content": {
-       "application/json": {
-        "schema": {
-         "$ref": "#/components/schemas/Error"
-        }
-       }
-      }
-     },
-     "401": {
-      "description": "Нет действующей сессии",
-      "content": {
-       "application/json": {
-        "schema": {
-         "$ref": "#/components/schemas/Error"
-        }
-       }
-      }
-     }
-    },
-    "requestBody": {
-     "required": true,
-     "content": {
-      "application/json": {
-       "schema": {
-        "type": "object",
-        "required": [
-         "name"
-        ],
-        "properties": {
-         "name": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 200
-         }
-        }
-       }
-      }
-     }
-    }
-   }
-  },
-  "/api/projects/{id}": {
-   "get": {
-    "summary": "Проект",
-    "description": "404, а не 403, на чужой проект: под RLS он не находится, и подтверждать его существование ответом нельзя.",
-    "tags": [
-     "Проекты"
-    ],
-    "operationId": "getProject",
-    "parameters": [
-     {
-      "name": "id",
-      "in": "path",
-      "required": true,
-      "schema": {
-       "type": "string",
-       "format": "uuid"
-      }
-     }
-    ],
-    "responses": {
-     "200": {
-      "description": "Проект с его прогонами"
-     },
-     "401": {
-      "description": "Нет действующей сессии",
-      "content": {
-       "application/json": {
-        "schema": {
-         "$ref": "#/components/schemas/Error"
-        }
-       }
-      }
-     },
-     "404": {
-      "description": "Проект не существует или принадлежит другой команде",
-      "content": {
-       "application/json": {
-        "schema": {
-         "$ref": "#/components/schemas/Error"
-        }
-       }
-      }
-     }
-    }
-   },
-   "patch": {
-    "summary": "Переименовать проект",
-    "description": "",
-    "tags": [
-     "Проекты"
-    ],
-    "operationId": "renameProject",
-    "parameters": [
-     {
-      "name": "id",
-      "in": "path",
-      "required": true,
-      "schema": {
-       "type": "string",
-       "format": "uuid"
-      }
-     }
-    ],
-    "responses": {
-     "200": {
-      "description": "Переименован"
-     },
-     "400": {
-      "description": "Некорректное тело запроса",
-      "content": {
-       "application/json": {
-        "schema": {
-         "$ref": "#/components/schemas/Error"
-        }
-       }
-      }
-     },
-     "401": {
-      "description": "Нет действующей сессии",
-      "content": {
-       "application/json": {
-        "schema": {
-         "$ref": "#/components/schemas/Error"
-        }
-       }
-      }
-     },
-     "404": {
-      "description": "Проект не существует или принадлежит другой команде",
-      "content": {
-       "application/json": {
-        "schema": {
-         "$ref": "#/components/schemas/Error"
-        }
-       }
-      }
-     }
-    },
-    "requestBody": {
-     "required": true,
-     "content": {
-      "application/json": {
-       "schema": {
-        "type": "object",
-        "required": [
-         "name"
-        ],
-        "properties": {
-         "name": {
-          "type": "string",
-          "minLength": 1,
-          "maxLength": 200
-         }
-        }
-       }
-      }
-     }
-    }
-   },
-   "delete": {
-    "summary": "Удалить проект",
-    "description": "Прогоны проекта уходят каскадом: прогон без проекта — строка, на которую нельзя сослаться ни с одного экрана.",
-    "tags": [
-     "Проекты"
-    ],
-    "operationId": "deleteProject",
-    "parameters": [
-     {
-      "name": "id",
-      "in": "path",
-      "required": true,
-      "schema": {
-       "type": "string",
-       "format": "uuid"
-      }
-     }
-    ],
-    "responses": {
-     "200": {
-      "description": "Удалён"
-     },
-     "401": {
-      "description": "Нет действующей сессии",
-      "content": {
-       "application/json": {
-        "schema": {
-         "$ref": "#/components/schemas/Error"
-        }
-       }
-      }
-     },
-     "404": {
-      "description": "Проект не существует или принадлежит другой команде",
-      "content": {
-       "application/json": {
-        "schema": {
-         "$ref": "#/components/schemas/Error"
-        }
-       }
-      }
-     }
-    }
-   }
-  },
-  "/api/prompts": {
-   "get": {
-    "summary": "Реестр промптов по стадиям",
-    "description": "",
-    "tags": [
-     "Промпт-студия"
-    ],
-    "operationId": "listPrompts",
-    "responses": {
-     "200": {
-      "description": "Промпты, сгруппированные по стадии"
-     },
-     "401": {
-      "description": "Нет действующей сессии",
-      "content": {
-       "application/json": {
-        "schema": {
-         "$ref": "#/components/schemas/Error"
-        }
-       }
-      }
-     }
-    }
-   },
-   "put": {
-    "summary": "Новая версия промпта",
-    "description": "Версии не перезаписываются: правка создаёт следующую. Прогон пиннит активные версии снимком (Decision Log #10), и правка на месте меняла бы результат задним числом.",
-    "tags": [
-     "Промпт-студия"
-    ],
-    "operationId": "putPrompt",
-    "responses": {
-     "200": {
-      "description": "Версия создана"
-     },
-     "400": {
-      "description": "Некорректные параметры",
-      "content": {
-       "application/json": {
-        "schema": {
-         "$ref": "#/components/schemas/Error"
-        }
-       }
-      }
-     },
-     "401": {
-      "description": "Нет действующей сессии",
-      "content": {
-       "application/json": {
-        "schema": {
-         "$ref": "#/components/schemas/Error"
-        }
-       }
-      }
-     },
-     "500": {
-      "description": "Не удалось создать версию",
-      "content": {
-       "application/json": {
-        "schema": {
-         "$ref": "#/components/schemas/Error"
-        }
-       }
-      }
-     }
-    },
-    "requestBody": {
-     "required": true,
-     "content": {
-      "application/json": {
-       "schema": {
-        "type": "object",
-        "required": [
-         "key",
-         "template"
-        ],
-        "properties": {
-         "key": {
-          "type": "string"
-         },
-         "template": {
-          "type": "string"
-         }
-        }
-       }
-      }
-     }
-    }
-   }
-  },
-  "/api/prompts/{key}": {
-   "get": {
-    "summary": "Версии промпта",
-    "description": "",
-    "tags": [
-     "Промпт-студия"
-    ],
-    "operationId": "getPrompt",
-    "responses": {
-     "200": {
-      "description": "Версии"
-     },
-     "401": {
-      "description": "Нет действующей сессии",
-      "content": {
-       "application/json": {
-        "schema": {
-         "$ref": "#/components/schemas/Error"
-        }
-       }
-      }
-     },
-     "404": {
-      "description": "Не найдено (в том числе чужое: RLS не отличает)",
-      "content": {
-       "application/json": {
-        "schema": {
-         "$ref": "#/components/schemas/Error"
-        }
-       }
-      }
-     }
-    },
-    "parameters": [
-     {
-      "name": "key",
-      "in": "path",
-      "required": true,
-      "schema": {
-       "type": "string"
-      }
-     }
-    ]
-   },
-   "delete": {
-    "summary": "Вернуть промпт к seed-версии",
-    "description": "Не удаление: восстанавливает версию из миграции. Удалять промпт нельзя — на него ссылаются снимки уже прошедших прогонов.",
-    "tags": [
-     "Промпт-студия"
-    ],
-    "operationId": "restorePrompt",
-    "responses": {
-     "200": {
-      "description": "Восстановлен"
-     },
-     "401": {
-      "description": "Нет действующей сессии",
-      "content": {
-       "application/json": {
-        "schema": {
-         "$ref": "#/components/schemas/Error"
-        }
-       }
-      }
-     },
-     "404": {
-      "description": "Не найдено (в том числе чужое: RLS не отличает)",
-      "content": {
-       "application/json": {
-        "schema": {
-         "$ref": "#/components/schemas/Error"
-        }
-       }
-      }
-     }
-    },
-    "parameters": [
-     {
-      "name": "key",
-      "in": "path",
-      "required": true,
-      "schema": {
-       "type": "string"
-      }
-     }
-    ]
-   }
-  },
-  "/api/prompts/{key}/activate": {
-   "post": {
-    "summary": "Активировать версию",
-    "description": "",
-    "tags": [
-     "Промпт-студия"
-    ],
-    "operationId": "activatePrompt",
-    "responses": {
-     "200": {
-      "description": "Активирована"
-     },
-     "400": {
-      "description": "Некорректные параметры",
-      "content": {
-       "application/json": {
-        "schema": {
-         "$ref": "#/components/schemas/Error"
-        }
-       }
-      }
-     },
-     "401": {
-      "description": "Нет действующей сессии",
-      "content": {
-       "application/json": {
-        "schema": {
-         "$ref": "#/components/schemas/Error"
-        }
-       }
-      }
-     },
-     "404": {
-      "description": "Не найдено (в том числе чужое: RLS не отличает)",
-      "content": {
-       "application/json": {
-        "schema": {
-         "$ref": "#/components/schemas/Error"
-        }
-       }
-      }
-     }
-    },
-    "parameters": [
-     {
-      "name": "key",
-      "in": "path",
-      "required": true,
-      "schema": {
-       "type": "string"
-      }
-     }
-    ],
-    "requestBody": {
-     "required": true,
-     "content": {
-      "application/json": {
-       "schema": {
-        "type": "object",
-        "required": [
-         "versionId"
-        ],
-        "properties": {
-         "versionId": {
-          "type": "string",
-          "format": "uuid"
-         }
-        }
-       }
-      }
-     }
-    }
-   }
-  },
-  "/api/prompts/{key}/preview": {
-   "post": {
-    "summary": "Предпросмотр подстановки",
-    "description": "Подставляет переменные в шаблон без вызова модели: проверяется разметка, а не ответ.",
-    "tags": [
-     "Промпт-студия"
-    ],
-    "operationId": "previewPrompt",
-    "responses": {
-     "200": {
-      "description": "Результат подстановки"
-     },
-     "400": {
-      "description": "Некорректные параметры",
-      "content": {
-       "application/json": {
-        "schema": {
-         "$ref": "#/components/schemas/Error"
-        }
-       }
-      }
-     },
-     "401": {
-      "description": "Нет действующей сессии",
-      "content": {
-       "application/json": {
-        "schema": {
-         "$ref": "#/components/schemas/Error"
-        }
-       }
-      }
-     }
-    },
-    "parameters": [
-     {
-      "name": "key",
-      "in": "path",
-      "required": true,
-      "schema": {
-       "type": "string"
-      }
-     }
-    ],
-    "requestBody": {
-     "required": true,
-     "content": {
-      "application/json": {
-       "schema": {
-        "type": "object",
-        "properties": {
-         "template": {
-          "type": "string"
-         },
-         "variables": {
-          "type": "object"
-         }
-        }
-       }
-      }
-     }
-    }
-   }
-  },
-  "/api/settings": {
-   "get": {
-    "summary": "Настройки арендатора",
-    "description": "",
-    "tags": [
-     "Настройки"
-    ],
-    "operationId": "getSettings",
-    "responses": {
-     "200": {
-      "description": "Настройки",
-      "content": {
-       "application/json": {
-        "schema": {
-         "$ref": "#/components/schemas/Settings"
-        }
-       }
-      }
-     },
-     "401": {
-      "description": "Нет действующей сессии",
-      "content": {
-       "application/json": {
-        "schema": {
-         "$ref": "#/components/schemas/Error"
-        }
-       }
-      }
-     }
-    }
-   },
-   "put": {
-    "summary": "Сохранить настройки",
-    "description": "Валидируются целиком: частичное сохранение оставило бы арендатора с половиной настроек новой версии и половиной старой.",
-    "tags": [
-     "Настройки"
-    ],
-    "operationId": "putSettings",
-    "responses": {
-     "200": {
-      "description": "Сохранены",
-      "content": {
-       "application/json": {
-        "schema": {
-         "$ref": "#/components/schemas/Settings"
-        }
-       }
-      }
-     },
-     "400": {
-      "description": "Некорректные параметры",
-      "content": {
-       "application/json": {
-        "schema": {
-         "$ref": "#/components/schemas/Error"
-        }
-       }
-      }
-     },
-     "401": {
-      "description": "Нет действующей сессии",
-      "content": {
-       "application/json": {
-        "schema": {
-         "$ref": "#/components/schemas/Error"
-        }
-       }
-      }
-     }
-    },
-    "requestBody": {
-     "required": true,
-     "content": {
-      "application/json": {
-       "schema": {
-        "$ref": "#/components/schemas/Settings"
-       }
-      }
-     }
-    }
-   }
-  },
-  "/api/surveys": {
-   "get": {
-    "summary": "Анкеты арендатора",
-    "description": "",
-    "tags": [
-     "Опрос"
-    ],
-    "operationId": "listSurveys",
-    "responses": {
-     "200": {
-      "description": "Список анкет"
-     },
-     "401": {
-      "description": "Нет действующей сессии",
-      "content": {
-       "application/json": {
-        "schema": {
-         "$ref": "#/components/schemas/Error"
-        }
-       }
-      }
-     }
-    }
-   },
-   "put": {
-    "summary": "Сохранить анкету",
-    "description": "Валидируется по canonical JSON Schema survey.schema.json. Ошибки возвращаются списком, а не первой попавшейся: править анкету по одной ошибке за запрос — это столько же запросов, сколько ошибок.",
-    "tags": [
-     "Опрос"
-    ],
-    "operationId": "putSurvey",
-    "responses": {
-     "200": {
-      "description": "Сохранена",
-      "content": {
-       "application/json": {
-        "schema": {
-         "type": "object",
-         "properties": {
-          "id": {
-           "type": "string",
-           "format": "uuid"
+        "operationId": "getPersona",
+        "responses": {
+          "200": {
+            "description": "Персона",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "persona": {
+                      "$ref": "#/components/schemas/Persona"
+                    }
+                  }
+                }
+              }
+            }
           },
-          "ok": {
-           "type": "boolean"
+          "401": {
+            "description": "Нет действующей сессии",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Не найдено (в том числе чужое: RLS не отличает)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
           }
-         }
-        }
-       }
-      }
-     },
-     "400": {
-      "description": "Некорректные параметры",
-      "content": {
-       "application/json": {
-        "schema": {
-         "$ref": "#/components/schemas/Error"
-        }
-       }
-      }
-     },
-     "401": {
-      "description": "Нет действующей сессии",
-      "content": {
-       "application/json": {
-        "schema": {
-         "$ref": "#/components/schemas/Error"
-        }
-       }
-      }
-     }
-    },
-    "requestBody": {
-     "required": true,
-     "content": {
-      "application/json": {
-       "schema": {
-        "$ref": "#/components/schemas/Survey"
-       }
-      }
-     }
-    }
-   }
-  },
-  "/api/tasks": {
-   "get": {
-    "summary": "Прогоны арендатора",
-    "description": "",
-    "tags": [
-     "Прогон"
-    ],
-    "operationId": "listTasks",
-    "responses": {
-     "200": {
-      "description": "Список прогонов"
-     },
-     "401": {
-      "description": "Нет действующей сессии",
-      "content": {
-       "application/json": {
-        "schema": {
-         "$ref": "#/components/schemas/Error"
-        }
-       }
-      }
-     }
-    }
-   },
-   "post": {
-    "summary": "Запустить исследование",
-    "description": "Идемпотентно по параметрам вместе с seed: запуск платный, а двойной клик, ретрай прокси и обновление страницы неотличимы от намеренного повтора. Повторный вызов отвечает 200 и created=false — 201 означал бы «создано», а создано не было.\n\nСозданный прогон ставится в очередь воркера. Если очередь недоступна, ответ несёт queueError: прогон, не доехавший до воркера, обязан быть виден на запуске, а не через десять минут пустого экрана прогресса.",
-    "tags": [
-     "Прогон"
-    ],
-    "operationId": "launchTask",
-    "responses": {
-     "201": {
-      "description": "Прогон создан",
-      "content": {
-       "application/json": {
-        "schema": {
-         "$ref": "#/components/schemas/LaunchedTask"
-        }
-       }
-      }
-     },
-     "200": {
-      "description": "Прогон уже существовал (created=false)",
-      "content": {
-       "application/json": {
-        "schema": {
-         "$ref": "#/components/schemas/LaunchedTask"
-        }
-       }
-      }
-     },
-     "400": {
-      "description": "Некорректные параметры",
-      "content": {
-       "application/json": {
-        "schema": {
-         "$ref": "#/components/schemas/Error"
-        }
-       }
-      }
-     },
-     "401": {
-      "description": "Нет действующей сессии",
-      "content": {
-       "application/json": {
-        "schema": {
-         "$ref": "#/components/schemas/Error"
-        }
-       }
-      }
-     }
-    },
-    "requestBody": {
-     "required": true,
-     "content": {
-      "application/json": {
-       "schema": {
-        "$ref": "#/components/schemas/LaunchRequest"
-       }
-      }
-     }
-    }
-   }
-  },
-  "/api/tasks/{id}": {
-   "delete": {
-    "summary": "Удалить прогон",
-    "description": "Завершённый прогон удаляется сразу. Активный (QUEUED/RUNNING) получает флаг отмены и отвечает 202: воркер остановится между узлами, мгновенной отмены нет. QUEUED старше пяти минут считается зависшим — его никто не взял, удаляется сразу. ?force=1 удаляет, не дожидаясь воркера. Вместе с задачей уходят каскадом отчёт и ветки чата в Postgres, документы отчёта в Mongo и ролик в S3.",
-    "tags": [
-     "Прогоны"
-    ],
-    "operationId": "deleteTask",
-    "parameters": [
-     {
-      "name": "id",
-      "in": "path",
-      "required": true,
-      "schema": {
-       "type": "string",
-       "format": "uuid"
-      }
-     },
-     {
-      "name": "force",
-      "in": "query",
-      "required": false,
-      "schema": {
-       "type": "string",
-       "enum": [
-        "1"
-       ]
-      },
-      "description": "Удалить активный прогон, не дожидаясь остановки воркера"
-     }
-    ],
-    "responses": {
-     "200": {
-      "description": "Удалено. Поле leftovers перечисляет, что не удалось убрать во внешних хранилищах"
-     },
-     "202": {
-      "description": "Отмена запрошена: воркер остановится между этапами"
-     },
-     "401": {
-      "description": "Нет действующей сессии",
-      "content": {
-       "application/json": {
-        "schema": {
-         "$ref": "#/components/schemas/Error"
-        }
-       }
-      }
-     },
-     "404": {
-      "description": "Исследование не существует или принадлежит другой команде",
-      "content": {
-       "application/json": {
-        "schema": {
-         "$ref": "#/components/schemas/Error"
-        }
-       }
-      }
-     }
-    }
-   }
-  },
-  "/api/tasks/{id}/progress": {
-   "get": {
-    "summary": "Поток прогресса (SSE)",
-    "description": "text/event-stream. Первым событием уходит снимок текущего состояния из Valkey, затем — смены узлов по подписке на канал.\n\nПорядок обязателен. Pub/Sub ничего не помнит: подписчик, пришедший к середине прогона, не получил бы ни одного уже отправленного сообщения, и вернувшийся пользователь видел бы пустой экран минуты — неотличимо от зависшего прогона.\n\nКаждые 20 секунд идёт комментарий `: ping` — иначе прокси закрывает молчащее соединение по таймауту на длинной транскрипции.",
-    "tags": [
-     "Прогон"
-    ],
-    "operationId": "taskProgress",
-    "responses": {
-     "200": {
-      "description": "Поток событий",
-      "content": {
-       "text/event-stream": {
-        "schema": {
-         "$ref": "#/components/schemas/ProgressEvent"
-        }
-       }
-      }
-     },
-     "401": {
-      "description": "Нет действующей сессии",
-      "content": {
-       "application/json": {
-        "schema": {
-         "$ref": "#/components/schemas/Error"
-        }
-       }
-      }
-     },
-     "404": {
-      "description": "Не найдено (в том числе чужое: RLS не отличает)",
-      "content": {
-       "application/json": {
-        "schema": {
-         "$ref": "#/components/schemas/Error"
-        }
-       }
-      }
-     }
-    },
-    "parameters": [
-     {
-      "name": "id",
-      "in": "path",
-      "required": true,
-      "schema": {
-       "type": "string",
-       "format": "uuid"
-      }
-     }
-    ]
-   }
-  },
-  "/api/tasks/{id}/report": {
-   "get": {
-    "summary": "Отчёт прогона",
-    "description": "Агрегат, групповой синтез, точки риска прекращения просмотра и дисклеймер.\n\nКарточки персон сюда НЕ входят: на 500 персонах с перекрытием 3 они весят 2.1 МБ против 178 КБ самого отчёта. Их отдаёт /api/tasks/{id}/report/personas страницами.\n\nНа чужой прогон возвращается 404, а не 403: фильтр по арендатору стоит в самом запросе, и отличать «нет такого» от «не ваш» означало бы подтверждать наличие чужих данных.",
-    "tags": [
-     "Прогон"
-    ],
-    "operationId": "taskReport",
-    "responses": {
-     "200": {
-      "description": "Отчёт",
-      "content": {
-       "application/json": {
-        "schema": {
-         "type": "object",
-         "properties": {
-          "taskId": {
-           "type": "string"
-          },
-          "audienceSize": {
-           "type": "integer"
-          },
-          "updatedAt": {
-           "type": "string",
-           "format": "date-time",
-           "nullable": true
-          },
-          "aggregate": {
-           "type": "object",
-           "additionalProperties": true
-          },
-          "retention_risk_points": {
-           "type": "array",
-           "items": {
-            "type": "object",
-            "properties": {
-             "timestamp_sec": {
-              "type": "number"
-             },
-             "personas": {
-              "type": "integer"
-             },
-             "scene": {
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
               "type": "string",
-              "nullable": true
-             }
+              "format": "uuid"
             }
-           }
+          }
+        ]
+      }
+    },
+    "/api/portraits": {
+      "get": {
+        "summary": "Портреты аудиторий",
+        "description": "",
+        "tags": [
+          "Портреты"
+        ],
+        "operationId": "listPortraits",
+        "responses": {
+          "200": {
+            "description": "Список"
+          },
+          "401": {
+            "description": "Нет действующей сессии",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "summary": "Создать портрет",
+        "description": "",
+        "tags": [
+          "Портреты"
+        ],
+        "operationId": "createPortrait",
+        "responses": {
+          "200": {
+            "description": "Создан"
+          },
+          "400": {
+            "description": "Некорректные параметры",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Нет действующей сессии",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "name",
+                  "body_md"
+                ],
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "body_md": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/portraits/distill": {
+      "post": {
+        "summary": "Авто-дистилляция портрета",
+        "description": "Собирает портрет из корпуса живых респондентов подпроцессом воркера. Логика принадлежит воркеру: дублировать методологию на TypeScript значило бы завести вторую реализацию заземления, которая разойдётся с первой незаметно.",
+        "tags": [
+          "Портреты"
+        ],
+        "operationId": "distillPortrait",
+        "responses": {
+          "200": {
+            "description": "Портрет собран"
+          },
+          "400": {
+            "description": "Некорректные параметры",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Нет действующей сессии",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "criteria": {
+                    "type": "object"
+                  },
+                  "name": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/portraits/{id}": {
+      "get": {
+        "summary": "Портрет и его версии",
+        "description": "",
+        "tags": [
+          "Портреты"
+        ],
+        "operationId": "getPortrait",
+        "responses": {
+          "200": {
+            "description": "Портрет"
+          },
+          "401": {
+            "description": "Нет действующей сессии",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Не найдено (в том числе чужое: RLS не отличает)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ]
+      },
+      "put": {
+        "summary": "Новая версия портрета",
+        "description": "Как у промптов: версии копятся, правка на месте не делается.",
+        "tags": [
+          "Портреты"
+        ],
+        "operationId": "putPortrait",
+        "responses": {
+          "200": {
+            "description": "Версия создана"
+          },
+          "400": {
+            "description": "Некорректные параметры",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Нет действующей сессии",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Не найдено (в том числе чужое: RLS не отличает)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "body_md"
+                ],
+                "properties": {
+                  "body_md": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "summary": "Удалить портрет аудитории",
+        "description": "Версии уходят каскадом. Персоны, сгенерированные с этим портретом, не трогаются: их DNA самодостаточна, и терять аудиторию прогонов из-за уборки в портретах дороже, чем хранить лишний текст.",
+        "tags": [
+          "Портреты"
+        ],
+        "operationId": "deletePortrait",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Портрет удалён"
+          },
+          "401": {
+            "description": "Нет действующей сессии",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Портрет не существует или принадлежит другой команде",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects": {
+      "get": {
+        "summary": "Проекты команды",
+        "description": "Проекты арендатора вместе с их прогонами. Отбор по арендатору делает RLS, а не параметр запроса.",
+        "tags": [
+          "Проекты"
+        ],
+        "operationId": "listProjects",
+        "responses": {
+          "200": {
+            "description": "Список проектов"
+          },
+          "401": {
+            "description": "Нет действующей сессии",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "summary": "Создать проект",
+        "description": "Проект — это имя и его прогоны. Ролик, аудиторию и анкету выбирает визард запуска: они относятся к прогону, а не к проекту.",
+        "tags": [
+          "Проекты"
+        ],
+        "operationId": "createProject",
+        "responses": {
+          "201": {
+            "description": "Проект создан"
+          },
+          "400": {
+            "description": "Некорректное тело запроса",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Нет действующей сессии",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "name"
+                ],
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/projects/{id}": {
+      "get": {
+        "summary": "Проект",
+        "description": "404, а не 403, на чужой проект: под RLS он не находится, и подтверждать его существование ответом нельзя.",
+        "tags": [
+          "Проекты"
+        ],
+        "operationId": "getProject",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Проект с его прогонами"
+          },
+          "401": {
+            "description": "Нет действующей сессии",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Проект не существует или принадлежит другой команде",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "patch": {
+        "summary": "Переименовать проект",
+        "description": "",
+        "tags": [
+          "Проекты"
+        ],
+        "operationId": "renameProject",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Переименован"
+          },
+          "400": {
+            "description": "Некорректное тело запроса",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Нет действующей сессии",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Проект не существует или принадлежит другой команде",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "name"
+                ],
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "summary": "Удалить проект",
+        "description": "Прогоны проекта уходят каскадом: прогон без проекта — строка, на которую нельзя сослаться ни с одного экрана.",
+        "tags": [
+          "Проекты"
+        ],
+        "operationId": "deleteProject",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Удалён"
+          },
+          "401": {
+            "description": "Нет действующей сессии",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Проект не существует или принадлежит другой команде",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/prompts": {
+      "get": {
+        "summary": "Реестр промптов по стадиям",
+        "description": "",
+        "tags": [
+          "Промпт-студия"
+        ],
+        "operationId": "listPrompts",
+        "responses": {
+          "200": {
+            "description": "Промпты, сгруппированные по стадии"
+          },
+          "401": {
+            "description": "Нет действующей сессии",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "summary": "Новая версия промпта",
+        "description": "Версии не перезаписываются: правка создаёт следующую. Прогон пиннит активные версии снимком (Decision Log #10), и правка на месте меняла бы результат задним числом.",
+        "tags": [
+          "Промпт-студия"
+        ],
+        "operationId": "putPrompt",
+        "responses": {
+          "200": {
+            "description": "Версия создана"
+          },
+          "400": {
+            "description": "Некорректные параметры",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Нет действующей сессии",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Не удалось создать версию",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "key",
+                  "template"
+                ],
+                "properties": {
+                  "key": {
+                    "type": "string"
+                  },
+                  "template": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/prompts/{key}": {
+      "get": {
+        "summary": "Версии промпта",
+        "description": "",
+        "tags": [
+          "Промпт-студия"
+        ],
+        "operationId": "getPrompt",
+        "responses": {
+          "200": {
+            "description": "Версии"
+          },
+          "401": {
+            "description": "Нет действующей сессии",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Не найдено (в том числе чужое: RLS не отличает)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      },
+      "delete": {
+        "summary": "Вернуть промпт к seed-версии",
+        "description": "Не удаление: восстанавливает версию из миграции. Удалять промпт нельзя — на него ссылаются снимки уже прошедших прогонов.",
+        "tags": [
+          "Промпт-студия"
+        ],
+        "operationId": "restorePrompt",
+        "responses": {
+          "200": {
+            "description": "Восстановлен"
+          },
+          "401": {
+            "description": "Нет действующей сессии",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Не найдено (в том числе чужое: RLS не отличает)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/prompts/{key}/activate": {
+      "post": {
+        "summary": "Активировать версию",
+        "description": "",
+        "tags": [
+          "Промпт-студия"
+        ],
+        "operationId": "activatePrompt",
+        "responses": {
+          "200": {
+            "description": "Активирована"
+          },
+          "400": {
+            "description": "Некорректные параметры",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Нет действующей сессии",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Не найдено (в том числе чужое: RLS не отличает)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "versionId"
+                ],
+                "properties": {
+                  "versionId": {
+                    "type": "string",
+                    "format": "uuid"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/prompts/{key}/preview": {
+      "post": {
+        "summary": "Предпросмотр подстановки",
+        "description": "Подставляет переменные в шаблон без вызова модели: проверяется разметка, а не ответ.",
+        "tags": [
+          "Промпт-студия"
+        ],
+        "operationId": "previewPrompt",
+        "responses": {
+          "200": {
+            "description": "Результат подстановки"
+          },
+          "400": {
+            "description": "Некорректные параметры",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Нет действующей сессии",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "template": {
+                    "type": "string"
+                  },
+                  "variables": {
+                    "type": "object"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/settings": {
+      "get": {
+        "summary": "Настройки арендатора",
+        "description": "",
+        "tags": [
+          "Настройки"
+        ],
+        "operationId": "getSettings",
+        "responses": {
+          "200": {
+            "description": "Настройки",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Settings"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Нет действующей сессии",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "summary": "Сохранить настройки",
+        "description": "Валидируются целиком: частичное сохранение оставило бы арендатора с половиной настроек новой версии и половиной старой.",
+        "tags": [
+          "Настройки"
+        ],
+        "operationId": "putSettings",
+        "responses": {
+          "200": {
+            "description": "Сохранены",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Settings"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Некорректные параметры",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Нет действующей сессии",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Settings"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/surveys": {
+      "get": {
+        "summary": "Анкеты арендатора",
+        "description": "",
+        "tags": [
+          "Опрос"
+        ],
+        "operationId": "listSurveys",
+        "responses": {
+          "200": {
+            "description": "Список анкет"
+          },
+          "401": {
+            "description": "Нет действующей сессии",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "summary": "Сохранить анкету",
+        "description": "Валидируется по canonical JSON Schema survey.schema.json. Ошибки возвращаются списком, а не первой попавшейся: править анкету по одной ошибке за запрос — это столько же запросов, сколько ошибок.",
+        "tags": [
+          "Опрос"
+        ],
+        "operationId": "putSurvey",
+        "responses": {
+          "200": {
+            "description": "Сохранена",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "ok": {
+                      "type": "boolean"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Некорректные параметры",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Нет действующей сессии",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Survey"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/tasks": {
+      "get": {
+        "summary": "Прогоны арендатора",
+        "description": "",
+        "tags": [
+          "Прогон"
+        ],
+        "operationId": "listTasks",
+        "responses": {
+          "200": {
+            "description": "Список прогонов"
+          },
+          "401": {
+            "description": "Нет действующей сессии",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "summary": "Запустить исследование",
+        "description": "Идемпотентно по параметрам вместе с seed: запуск платный, а двойной клик, ретрай прокси и обновление страницы неотличимы от намеренного повтора. Повторный вызов отвечает 200 и created=false — 201 означал бы «создано», а создано не было.\n\nСозданный прогон ставится в очередь воркера. Если очередь недоступна, ответ несёт queueError: прогон, не доехавший до воркера, обязан быть виден на запуске, а не через десять минут пустого экрана прогресса.",
+        "tags": [
+          "Прогон"
+        ],
+        "operationId": "launchTask",
+        "responses": {
+          "201": {
+            "description": "Прогон создан",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LaunchedTask"
+                }
+              }
+            }
+          },
+          "200": {
+            "description": "Прогон уже существовал (created=false)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LaunchedTask"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Некорректные параметры",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Нет действующей сессии",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LaunchRequest"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/tasks/{id}": {
+      "delete": {
+        "summary": "Удалить прогон",
+        "description": "Завершённый прогон удаляется сразу. Активный (QUEUED/RUNNING) получает флаг отмены и отвечает 202: воркер остановится между узлами, мгновенной отмены нет. QUEUED старше пяти минут считается зависшим — его никто не взял, удаляется сразу. ?force=1 удаляет, не дожидаясь воркера. Вместе с задачей уходят каскадом отчёт и ветки чата в Postgres, документы отчёта в Mongo и ролик в S3.",
+        "tags": [
+          "Прогоны"
+        ],
+        "operationId": "deleteTask",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "force",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "1"
+              ]
+            },
+            "description": "Удалить активный прогон, не дожидаясь остановки воркера"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Удалено. Поле leftovers перечисляет, что не удалось убрать во внешних хранилищах"
+          },
+          "202": {
+            "description": "Отмена запрошена: воркер остановится между этапами"
+          },
+          "401": {
+            "description": "Нет действующей сессии",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Исследование не существует или принадлежит другой команде",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/tasks/{id}/progress": {
+      "get": {
+        "summary": "Поток прогресса (SSE)",
+        "description": "text/event-stream. Первым событием уходит снимок текущего состояния из Valkey, затем — смены узлов по подписке на канал.\n\nПорядок обязателен. Pub/Sub ничего не помнит: подписчик, пришедший к середине прогона, не получил бы ни одного уже отправленного сообщения, и вернувшийся пользователь видел бы пустой экран минуты — неотличимо от зависшего прогона.\n\nКаждые 20 секунд идёт комментарий `: ping` — иначе прокси закрывает молчащее соединение по таймауту на длинной транскрипции.",
+        "tags": [
+          "Прогон"
+        ],
+        "operationId": "taskProgress",
+        "responses": {
+          "200": {
+            "description": "Поток событий",
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProgressEvent"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Нет действующей сессии",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Не найдено (в том числе чужое: RLS не отличает)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ]
+      }
+    },
+    "/api/tasks/{id}/report": {
+      "get": {
+        "summary": "Отчёт прогона",
+        "description": "Агрегат, групповой синтез, точки риска прекращения просмотра и дисклеймер.\n\nКарточки персон сюда НЕ входят: на 500 персонах с перекрытием 3 они весят 2.1 МБ против 178 КБ самого отчёта. Их отдаёт /api/tasks/{id}/report/personas страницами.\n\nНа чужой прогон возвращается 404, а не 403: фильтр по арендатору стоит в самом запросе, и отличать «нет такого» от «не ваш» означало бы подтверждать наличие чужих данных.",
+        "tags": [
+          "Прогон"
+        ],
+        "operationId": "taskReport",
+        "responses": {
+          "200": {
+            "description": "Отчёт",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "taskId": {
+                      "type": "string"
+                    },
+                    "audienceSize": {
+                      "type": "integer"
+                    },
+                    "updatedAt": {
+                      "type": "string",
+                      "format": "date-time",
+                      "nullable": true
+                    },
+                    "aggregate": {
+                      "type": "object",
+                      "additionalProperties": true
+                    },
+                    "retention_risk_points": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "timestamp_sec": {
+                            "type": "number"
+                          },
+                          "personas": {
+                            "type": "integer"
+                          },
+                          "scene": {
+                            "type": "string",
+                            "nullable": true
+                          }
+                        }
+                      }
+                    },
+                    "narrative": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "themes": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "additionalProperties": true
+                      }
+                    },
+                    "disagreements": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "strengths": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "weaknesses": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "disclaimer": {
+                      "type": "string"
+                    },
+                    "degraded": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Нет действующей сессии",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Отчёта нет: прогон не завершён, не существует или чужой",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ]
+      }
+    },
+    "/api/tasks/{id}/report/personas": {
+      "get": {
+        "summary": "Карточки персон отчёта",
+        "description": "Страница карточек для аккордеона. `total` возвращается всегда, а не только на первой странице: приёмка требует len(per_persona) == audience_size, и проверять это по длине одной страницы нельзя.\n\n`limit` больше 200 не отвергается, а урезается: отвергнуть значило бы сломать вызывающего, который просто просил всё.",
+        "tags": [
+          "Прогон"
+        ],
+        "operationId": "taskReportPersonas",
+        "responses": {
+          "200": {
+            "description": "Страница карточек",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "personaId": {
+                            "type": "string"
+                          },
+                          "personaName": {
+                            "type": "string",
+                            "nullable": true
+                          },
+                          "replication": {
+                            "type": "integer"
+                          },
+                          "answer": {
+                            "type": "object",
+                            "additionalProperties": true
+                          },
+                          "qaFlags": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "additionalProperties": true
+                            }
+                          }
+                        }
+                      }
+                    },
+                    "total": {
+                      "type": "integer"
+                    },
+                    "limit": {
+                      "type": "integer"
+                    },
+                    "skip": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Нет действующей сессии",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200,
+              "default": 50
+            }
+          },
+          {
+            "name": "skip",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0
+            }
+          }
+        ]
+      }
+    },
+    "/api/tasks/{id}/timeline": {
+      "get": {
+        "summary": "Разбор материала и ссылка на ролик",
+        "description": "Таймлайн прогона: сцены с описанием от VLM, репликами транскрипта и кадром, плюс подписанная ссылка на исходный ролик.\n\nРолик и таймлайн отдаются вместе намеренно: порознь они бесполезны — плеер без таймлайна это просто видео, таймлайн без плеера некуда перематывать.\n\nСсылки подписаны и живут час, поэтому маршрут динамический: отрисованные на сервере, они кешировались бы вместе со страницей и протухали молча.\n\n`timeline: null` — законное состояние, а не отказ: так выглядят прогоны, начатые до того, как пакет материала стал сохраняться, и прогоны, у которых Mongo была недоступна в момент записи (причина тогда в `degraded` отчёта).",
+        "tags": [
+          "Прогон"
+        ],
+        "operationId": "taskTimeline",
+        "responses": {
+          "200": {
+            "description": "Таймлайн и ссылка на ролик",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "video": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "Подписанная ссылка на ролик. null — S3 не настроен либо ролика нет."
+                    },
+                    "timeline": {
+                      "type": "object",
+                      "nullable": true,
+                      "properties": {
+                        "durationSec": {
+                          "type": "number"
+                        },
+                        "stitched": {
+                          "type": "boolean"
+                        },
+                        "cells": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "start": {
+                                "type": "number"
+                              },
+                              "end": {
+                                "type": "number"
+                              },
+                              "scene": {
+                                "type": "string",
+                                "nullable": true
+                              },
+                              "mood": {
+                                "type": "string",
+                                "nullable": true
+                              },
+                              "isCut": {
+                                "type": "boolean",
+                                "description": "Граница от монтажной склейки, а не от нарезки длинной сцены на блоки."
+                              },
+                              "screenshot": {
+                                "type": "string",
+                                "nullable": true
+                              },
+                              "lines": {
+                                "type": "array",
+                                "items": {
+                                  "type": "object",
+                                  "properties": {
+                                    "start": {
+                                      "type": "number"
+                                    },
+                                    "end": {
+                                      "type": "number"
+                                    },
+                                    "text": {
+                                      "type": "string"
+                                    },
+                                    "speaker": {
+                                      "type": "string",
+                                      "nullable": true
+                                    }
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        },
+                        "stats": {
+                          "type": "object",
+                          "properties": {
+                            "scenesTotal": {
+                              "type": "integer"
+                            },
+                            "speakers": {
+                              "type": "integer"
+                            },
+                            "words": {
+                              "type": "integer"
+                            },
+                            "linesTotal": {
+                              "type": "integer"
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Нет сессии"
+          },
+          "404": {
+            "description": "Прогон не найден либо принадлежит другой команде"
+          }
+        }
+      }
+    },
+    "/api/upload/complete": {
+      "post": {
+        "summary": "Подтвердить загрузку",
+        "description": "Проверяет, что ключ принадлежит арендатору, и что размер в S3 не превышает 700 МБ. Проверять размер здесь, а не на клиенте, обязательно: клиентская проверка обходится прямым вызовом подписанной ссылки.",
+        "tags": [
+          "Загрузка"
+        ],
+        "operationId": "completeUpload",
+        "responses": {
+          "200": {
+            "description": "Загрузка принята"
+          },
+          "400": {
+            "description": "Некорректные параметры",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Нет действующей сессии",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Ключ не принадлежит арендатору",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "key"
+                ],
+                "properties": {
+                  "key": {
+                    "type": "string"
+                  },
+                  "mode": {
+                    "type": "string",
+                    "enum": [
+                      "short",
+                      "long"
+                    ]
+                  },
+                  "title": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/upload/presign": {
+      "post": {
+        "summary": "Подписанная ссылка на загрузку",
+        "description": "Файл идёт в S3 напрямую из браузера. Через сервер Next его гонять нельзя: 700 МБ видео заняли бы обработчик на всё время загрузки.",
+        "tags": [
+          "Загрузка"
+        ],
+        "operationId": "presignUpload",
+        "responses": {
+          "200": {
+            "description": "Ссылка и ключ"
+          },
+          "400": {
+            "description": "Некорректные параметры",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Нет действующей сессии",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "fileName",
+                  "contentType"
+                ],
+                "properties": {
+                  "fileName": {
+                    "type": "string"
+                  },
+                  "contentType": {
+                    "type": "string"
+                  },
+                  "sizeBytes": {
+                    "type": "integer"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/users": {
+      "get": {
+        "summary": "Участники команды",
+        "description": "Виден любому участнику: состав команды не секрет для тех, кто в ней состоит.",
+        "tags": [
+          "Команда"
+        ],
+        "operationId": "usersList",
+        "responses": {
+          "200": {
+            "description": "Список участников"
+          },
+          "401": {
+            "description": "Нет сессии"
+          }
+        }
+      },
+      "post": {
+        "summary": "Завести пользователя и добавить в команду",
+        "description": "Только владелец: участник, который может добавить себе второго владельца, обходит разделение ролей целиком.\n\nПароль вводит владелец и он уходит прямо в хеш (argon2id, параметры OWASP). В ответ, в логи и в переписку он не попадает — §6-бис CLAUDE.md.\n\n`created: false` означает, что пользователь с таким адресом уже существовал и получил членство, но пароль ему НЕ менялся: `users` глобальна, и смена пароля при добавлении в команду была бы способом отобрать чужой доступ.",
+        "tags": [
+          "Команда"
+        ],
+        "operationId": "usersCreate",
+        "responses": {
+          "201": {
+            "description": "Пользователь заведён"
+          },
+          "200": {
+            "description": "Пользователь существовал, добавлен в команду"
+          },
+          "400": {
+            "description": "Некорректная почта либо пароль короче 8 символов"
+          },
+          "401": {
+            "description": "Нет сессии"
+          },
+          "403": {
+            "description": "Нужны права владельца"
+          }
+        }
+      }
+    },
+    "/api/users/{id}": {
+      "delete": {
+        "summary": "Убрать участника из команды",
+        "description": "Снимается членство, а не пользователь: `users` глобальна, и удаление записи выкинуло бы человека из всех команд сразу.\n\nПоследний владелец не удаляется — команда без владельца это состояние, из которого нет выхода изнутри продукта.",
+        "tags": [
+          "Команда"
+        ],
+        "operationId": "usersDelete",
+        "responses": {
+          "200": {
+            "description": "Членство снято"
+          },
+          "401": {
+            "description": "Нет сессии"
+          },
+          "403": {
+            "description": "Нужны права владельца"
+          },
+          "404": {
+            "description": "Участник не найден"
+          },
+          "409": {
+            "description": "Последний владелец команды"
+          }
+        }
+      }
+    },
+    "/api/wizard/drafts/{projectId}": {
+      "get": {
+        "summary": "Черновик визарда",
+        "description": "",
+        "tags": [
+          "Визард"
+        ],
+        "operationId": "getDraft",
+        "responses": {
+          "200": {
+            "description": "Черновик"
+          },
+          "401": {
+            "description": "Нет действующей сессии",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      },
+      "put": {
+        "summary": "Сохранить черновик",
+        "description": "Черновик хранится на сервере, а не в браузере: визард из семи шагов переживает смену устройства и очистку хранилища вкладки.",
+        "tags": [
+          "Визард"
+        ],
+        "operationId": "putDraft",
+        "responses": {
+          "200": {
+            "description": "Сохранён"
+          },
+          "400": {
+            "description": "Некорректные параметры",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Нет действующей сессии",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "projectId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/models": {
+      "get": {
+        "summary": "Модели провайдера",
+        "description": "Живой список от провайдера вместо зашитого перечня: зашитый устаревает молча. Ключ наружу не выходит ни в каком виде — маршрут ходит к провайдеру сам и отдаёт только имена и маску ключа.",
+        "tags": [
+          "Настройки"
+        ],
+        "operationId": "listProviderModels",
+        "responses": {
+          "200": {
+            "description": "Список моделей и то, что действует сейчас",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "current": {
+                      "type": "object",
+                      "properties": {
+                        "endpoint": {
+                          "type": "string"
+                        },
+                        "keyMask": {
+                          "type": "string",
+                          "description": "Маска вида sk-1a…9f. Ключ не восстановим."
+                        },
+                        "text": {
+                          "type": "string"
+                        },
+                        "vision": {
+                          "type": "string"
+                        }
+                      }
+                    },
+                    "models": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "vision": {
+                            "type": "boolean"
+                          }
+                        }
+                      }
+                    },
+                    "guessed": {
+                      "type": "boolean",
+                      "description": "Модальность опознана по имени, а не по паспорту модели"
+                    },
+                    "error": {
+                      "type": "string",
+                      "nullable": true
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/tasks/{id}/transcript": {
+      "get": {
+        "summary": "Расшифровка прогона текстом",
+        "description": "Ровно те реплики, которые видела персона, и с теми же таймкодами, по которым её проверял судья: текст собирается из пакета материала, а не из отдельной копии. Отдельная копия разошлась бы с пакетом при первой правке сборки, и расхождение было бы невидимым — оба текста выглядят правильными.",
+        "tags": [
+          "Отчёт"
+        ],
+        "operationId": "downloadTranscript",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Файл расшифровки",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Прогон не найден либо пакет материала не сохранён"
+          }
+        }
+      }
+    },
+    "/api/tasks/{id}/share": {
+      "post": {
+        "summary": "Выпустить публичную ссылку на отчёт прогона",
+        "description": "Возвращает адрес ОДИН раз: в базе хранится только SHA-256 токена, и восстановить его нельзя. Ссылка открывает отчёт без входа в систему; ограничивают её срок, отзыв и политика RLS для роли agora_share.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "ttl": {
+                    "type": "string",
+                    "enum": [
+                      "24h",
+                      "7d",
+                      "30d",
+                      "never"
+                    ],
+                    "default": "7d"
+                  },
+                  "scope": {
+                    "type": "string",
+                    "enum": [
+                      "full",
+                      "aggregate"
+                    ],
+                    "default": "full"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Ссылка выпущена",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "url": {
+                      "type": "string",
+                      "format": "uri"
+                    },
+                    "expiresAt": {
+                      "type": "string",
+                      "format": "date-time",
+                      "nullable": true
+                    },
+                    "scope": {
+                      "type": "string",
+                      "enum": [
+                        "full",
+                        "aggregate"
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Неизвестный срок жизни"
+          },
+          "401": {
+            "description": "Требуется вход"
+          }
+        }
+      },
+      "delete": {
+        "summary": "Отозвать все действующие ссылки на отчёт прогона",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Сколько ссылок отозвано",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "revoked": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "sessionCookie": {
+        "type": "apiKey",
+        "in": "cookie",
+        "name": "authjs.session-token",
+        "description": "Кука Auth.js. В проде имя с префиксом __Secure-."
+      }
+    },
+    "schemas": {
+      "Error": {
+        "type": "object",
+        "required": [
+          "error"
+        ],
+        "properties": {
+          "error": {
+            "type": "string"
+          },
+          "details": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Все ошибки разом, а не первая: править по одной за запрос — столько же запросов, сколько ошибок"
+          }
+        }
+      },
+      "AudienceCriteria": {
+        "type": "object",
+        "required": [
+          "size",
+          "ageGroups",
+          "geos",
+          "genders"
+        ],
+        "description": "Ветка генерации. Образование не обязательно: поля нет в корпусе, и блокировать им запуск значило бы требовать заполнить незаземлённое.",
+        "properties": {
+          "size": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "ageGroups": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "minItems": 1
+          },
+          "geos": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "minItems": 1
+          },
+          "genders": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "minItems": 1
+          },
+          "education": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "seed": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "useLlm": {
+            "type": "boolean",
+            "default": true,
+            "description": "false — портреты собираются шаблоном без вызова модели"
+          }
+        }
+      },
+      "AudienceExistingSet": {
+        "type": "object",
+        "required": [
+          "personaSetId"
+        ],
+        "properties": {
+          "personaSetId": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
+        "description": "Ветка готового набора: критерии не нужны, генерации не будет."
+      },
+      "AudienceResult": {
+        "type": "object",
+        "properties": {
+          "personaSetId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "size": {
+            "type": "integer"
+          },
+          "enriched": {
+            "type": "boolean",
+            "description": "Портреты писала модель"
+          },
+          "degradedReason": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Причина отката к шаблонным портретам. Заземление при этом не страдает: персоны остаются построенными на корпусе"
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "Persona": {
+        "type": "object",
+        "description": "Persona DNA — 8 категорий, narrative и seed. Canonical JSON Schema: packages/shared/schemas/persona-dna.schema.json",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "name": {
+            "type": "string"
+          },
+          "dna": {
+            "type": "object"
           },
           "narrative": {
-           "type": "array",
-           "items": {
-            "type": "string"
-           }
+            "type": "string",
+            "minLength": 100
           },
-          "themes": {
-           "type": "array",
-           "items": {
-            "type": "object",
-            "additionalProperties": true
-           }
-          },
-          "disagreements": {
-           "type": "array",
-           "items": {
-            "type": "string"
-           }
-          },
-          "strengths": {
-           "type": "array",
-           "items": {
-            "type": "string"
-           }
-          },
-          "weaknesses": {
-           "type": "array",
-           "items": {
-            "type": "string"
-           }
-          },
-          "disclaimer": {
-           "type": "string"
-          },
-          "degraded": {
-           "type": "array",
-           "items": {
-            "type": "string"
-           }
+          "seed": {
+            "type": "integer"
           }
-         },
-         "additionalProperties": true
         }
-       }
-      }
-     },
-     "401": {
-      "description": "Нет действующей сессии",
-      "content": {
-       "application/json": {
-        "schema": {
-         "$ref": "#/components/schemas/Error"
-        }
-       }
-      }
-     },
-     "404": {
-      "description": "Отчёта нет: прогон не завершён, не существует или чужой",
-      "content": {
-       "application/json": {
-        "schema": {
-         "$ref": "#/components/schemas/Error"
-        }
-       }
-      }
-     }
-    },
-    "parameters": [
-     {
-      "name": "id",
-      "in": "path",
-      "required": true,
-      "schema": {
-       "type": "string",
-       "format": "uuid"
-      }
-     }
-    ]
-   }
-  },
-  "/api/tasks/{id}/report/personas": {
-   "get": {
-    "summary": "Карточки персон отчёта",
-    "description": "Страница карточек для аккордеона. `total` возвращается всегда, а не только на первой странице: приёмка требует len(per_persona) == audience_size, и проверять это по длине одной страницы нельзя.\n\n`limit` больше 200 не отвергается, а урезается: отвергнуть значило бы сломать вызывающего, который просто просил всё.",
-    "tags": [
-     "Прогон"
-    ],
-    "operationId": "taskReportPersonas",
-    "responses": {
-     "200": {
-      "description": "Страница карточек",
-      "content": {
-       "application/json": {
-        "schema": {
-         "type": "object",
-         "properties": {
-          "items": {
-           "type": "array",
-           "items": {
-            "type": "object",
-            "properties": {
-             "personaId": {
-              "type": "string"
-             },
-             "personaName": {
-              "type": "string",
-              "nullable": true
-             },
-             "replication": {
-              "type": "integer"
-             },
-             "answer": {
-              "type": "object",
-              "additionalProperties": true
-             },
-             "qaFlags": {
-              "type": "array",
-              "items": {
-               "type": "object",
-               "additionalProperties": true
-              }
-             }
+      },
+      "Survey": {
+        "type": "object",
+        "description": "Canonical JSON Schema: survey.schema.json",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "questions": {
+            "type": "array",
+            "items": {
+              "type": "object"
             }
-           }
-          },
-          "total": {
-           "type": "integer"
-          },
-          "limit": {
-           "type": "integer"
-          },
-          "skip": {
-           "type": "integer"
           }
-         }
         }
-       }
-      }
-     },
-     "401": {
-      "description": "Нет действующей сессии",
-      "content": {
-       "application/json": {
-        "schema": {
-         "$ref": "#/components/schemas/Error"
-        }
-       }
-      }
-     }
-    },
-    "parameters": [
-     {
-      "name": "id",
-      "in": "path",
-      "required": true,
-      "schema": {
-       "type": "string",
-       "format": "uuid"
-      }
-     },
-     {
-      "name": "limit",
-      "in": "query",
-      "required": false,
-      "schema": {
-       "type": "integer",
-       "minimum": 1,
-       "maximum": 200,
-       "default": 50
-      }
-     },
-     {
-      "name": "skip",
-      "in": "query",
-      "required": false,
-      "schema": {
-       "type": "integer",
-       "minimum": 0,
-       "default": 0
-      }
-     }
-    ]
-   }
-  },
-  "/api/tasks/{id}/timeline": {
-   "get": {
-    "summary": "Разбор материала и ссылка на ролик",
-    "description": "Таймлайн прогона: сцены с описанием от VLM, репликами транскрипта и кадром, плюс подписанная ссылка на исходный ролик.\n\nРолик и таймлайн отдаются вместе намеренно: порознь они бесполезны — плеер без таймлайна это просто видео, таймлайн без плеера некуда перематывать.\n\nСсылки подписаны и живут час, поэтому маршрут динамический: отрисованные на сервере, они кешировались бы вместе со страницей и протухали молча.\n\n`timeline: null` — законное состояние, а не отказ: так выглядят прогоны, начатые до того, как пакет материала стал сохраняться, и прогоны, у которых Mongo была недоступна в момент записи (причина тогда в `degraded` отчёта).",
-    "tags": [
-     "Прогон"
-    ],
-    "operationId": "taskTimeline",
-    "responses": {
-     "200": {
-      "description": "Таймлайн и ссылка на ролик",
-      "content": {
-       "application/json": {
-        "schema": {
-         "type": "object",
-         "properties": {
-          "video": {
-           "type": "string",
-           "nullable": true,
-           "description": "Подписанная ссылка на ролик. null — S3 не настроен либо ролика нет."
-          },
-          "timeline": {
-           "type": "object",
-           "nullable": true,
-           "properties": {
-            "durationSec": {
-             "type": "number"
-            },
-            "stitched": {
-             "type": "boolean"
-            },
-            "cells": {
-             "type": "array",
-             "items": {
-              "type": "object",
-              "properties": {
-               "start": {
-                "type": "number"
-               },
-               "end": {
-                "type": "number"
-               },
-               "scene": {
-                "type": "string",
-                "nullable": true
-               },
-               "mood": {
-                "type": "string",
-                "nullable": true
-               },
-               "isCut": {
-                "type": "boolean",
-                "description": "Граница от монтажной склейки, а не от нарезки длинной сцены на блоки."
-               },
-               "screenshot": {
-                "type": "string",
-                "nullable": true
-               },
-               "lines": {
-                "type": "array",
-                "items": {
-                 "type": "object",
-                 "properties": {
-                  "start": {
-                   "type": "number"
-                  },
-                  "end": {
-                   "type": "number"
-                  },
-                  "text": {
-                   "type": "string"
-                  },
-                  "speaker": {
-                   "type": "string",
-                   "nullable": true
-                  }
-                 }
-                }
-               }
-              }
-             }
-            },
-            "stats": {
-             "type": "object",
-             "properties": {
-              "scenesTotal": {
-               "type": "integer"
-              },
-              "speakers": {
-               "type": "integer"
-              },
-              "words": {
-               "type": "integer"
-              },
-              "linesTotal": {
-               "type": "integer"
-              }
-             }
-            }
-           }
-          }
-         }
-        }
-       }
-      }
-     },
-     "401": {
-      "description": "Нет сессии"
-     },
-     "404": {
-      "description": "Прогон не найден либо принадлежит другой команде"
-     }
-    }
-   }
-  },
-  "/api/upload/complete": {
-   "post": {
-    "summary": "Подтвердить загрузку",
-    "description": "Проверяет, что ключ принадлежит арендатору, и что размер в S3 не превышает 700 МБ. Проверять размер здесь, а не на клиенте, обязательно: клиентская проверка обходится прямым вызовом подписанной ссылки.",
-    "tags": [
-     "Загрузка"
-    ],
-    "operationId": "completeUpload",
-    "responses": {
-     "200": {
-      "description": "Загрузка принята"
-     },
-     "400": {
-      "description": "Некорректные параметры",
-      "content": {
-       "application/json": {
-        "schema": {
-         "$ref": "#/components/schemas/Error"
-        }
-       }
-      }
-     },
-     "401": {
-      "description": "Нет действующей сессии",
-      "content": {
-       "application/json": {
-        "schema": {
-         "$ref": "#/components/schemas/Error"
-        }
-       }
-      }
-     },
-     "403": {
-      "description": "Ключ не принадлежит арендатору",
-      "content": {
-       "application/json": {
-        "schema": {
-         "$ref": "#/components/schemas/Error"
-        }
-       }
-      }
-     }
-    },
-    "requestBody": {
-     "required": true,
-     "content": {
-      "application/json": {
-       "schema": {
+      },
+      "LaunchRequest": {
         "type": "object",
         "required": [
-         "key"
+          "seed"
         ],
         "properties": {
-         "key": {
-          "type": "string"
-         },
-         "mode": {
-          "type": "string",
-          "enum": [
-           "short",
-           "long"
-          ]
-         },
-         "title": {
-          "type": "string"
-         }
+          "mode": {
+            "type": "string",
+            "enum": [
+              "short",
+              "long"
+            ],
+            "default": "short"
+          },
+          "videoRef": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "personaSetId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "surveyId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "projectId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid"
+          },
+          "replicationCount": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 10,
+            "description": "«Перекрытие». По умолчанию — из настроек арендатора"
+          },
+          "seed": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Обязателен: без него идемпотентность бессмысленна — каждый запуск давал бы новый ключ. Подставить случайный молча нельзя: это выглядело бы как рабочая защита, которая никогда не срабатывает"
+          },
+          "sourceName": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Имя файла, как его назвал пользователь. Для показа, не для доступа"
+          },
+          "title": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 200,
+            "description": "Название исследования. Отдельно от sourceName: имя файла — факт о загрузке, название — то, зачем работа делалась"
+          }
         }
-       }
-      }
-     }
-    }
-   }
-  },
-  "/api/upload/presign": {
-   "post": {
-    "summary": "Подписанная ссылка на загрузку",
-    "description": "Файл идёт в S3 напрямую из браузера. Через сервер Next его гонять нельзя: 700 МБ видео заняли бы обработчик на всё время загрузки.",
-    "tags": [
-     "Загрузка"
-    ],
-    "operationId": "presignUpload",
-    "responses": {
-     "200": {
-      "description": "Ссылка и ключ"
-     },
-     "400": {
-      "description": "Некорректные параметры",
-      "content": {
-       "application/json": {
-        "schema": {
-         "$ref": "#/components/schemas/Error"
-        }
-       }
-      }
-     },
-     "401": {
-      "description": "Нет действующей сессии",
-      "content": {
-       "application/json": {
-        "schema": {
-         "$ref": "#/components/schemas/Error"
-        }
-       }
-      }
-     }
-    },
-    "requestBody": {
-     "required": true,
-     "content": {
-      "application/json": {
-       "schema": {
+      },
+      "LaunchedTask": {
         "type": "object",
-        "required": [
-         "fileName",
-         "contentType"
-        ],
         "properties": {
-         "fileName": {
-          "type": "string"
-         },
-         "contentType": {
-          "type": "string"
-         },
-         "sizeBytes": {
-          "type": "integer"
-         }
-        }
-       }
-      }
-     }
-    }
-   }
-  },
-  "/api/users": {
-   "get": {
-    "summary": "Участники команды",
-    "description": "Виден любому участнику: состав команды не секрет для тех, кто в ней состоит.",
-    "tags": [
-     "Команда"
-    ],
-    "operationId": "usersList",
-    "responses": {
-     "200": {
-      "description": "Список участников"
-     },
-     "401": {
-      "description": "Нет сессии"
-     }
-    }
-   },
-   "post": {
-    "summary": "Завести пользователя и добавить в команду",
-    "description": "Только владелец: участник, который может добавить себе второго владельца, обходит разделение ролей целиком.\n\nПароль вводит владелец и он уходит прямо в хеш (argon2id, параметры OWASP). В ответ, в логи и в переписку он не попадает — §6-бис CLAUDE.md.\n\n`created: false` означает, что пользователь с таким адресом уже существовал и получил членство, но пароль ему НЕ менялся: `users` глобальна, и смена пароля при добавлении в команду была бы способом отобрать чужой доступ.",
-    "tags": [
-     "Команда"
-    ],
-    "operationId": "usersCreate",
-    "responses": {
-     "201": {
-      "description": "Пользователь заведён"
-     },
-     "200": {
-      "description": "Пользователь существовал, добавлен в команду"
-     },
-     "400": {
-      "description": "Некорректная почта либо пароль короче 8 символов"
-     },
-     "401": {
-      "description": "Нет сессии"
-     },
-     "403": {
-      "description": "Нужны права владельца"
-     }
-    }
-   }
-  },
-  "/api/users/{id}": {
-   "delete": {
-    "summary": "Убрать участника из команды",
-    "description": "Снимается членство, а не пользователь: `users` глобальна, и удаление записи выкинуло бы человека из всех команд сразу.\n\nПоследний владелец не удаляется — команда без владельца это состояние, из которого нет выхода изнутри продукта.",
-    "tags": [
-     "Команда"
-    ],
-    "operationId": "usersDelete",
-    "responses": {
-     "200": {
-      "description": "Членство снято"
-     },
-     "401": {
-      "description": "Нет сессии"
-     },
-     "403": {
-      "description": "Нужны права владельца"
-     },
-     "404": {
-      "description": "Участник не найден"
-     },
-     "409": {
-      "description": "Последний владелец команды"
-     }
-    }
-   }
-  },
-  "/api/wizard/drafts/{projectId}": {
-   "get": {
-    "summary": "Черновик визарда",
-    "description": "",
-    "tags": [
-     "Визард"
-    ],
-    "operationId": "getDraft",
-    "responses": {
-     "200": {
-      "description": "Черновик"
-     },
-     "401": {
-      "description": "Нет действующей сессии",
-      "content": {
-       "application/json": {
-        "schema": {
-         "$ref": "#/components/schemas/Error"
-        }
-       }
-      }
-     }
-    },
-    "parameters": [
-     {
-      "name": "projectId",
-      "in": "path",
-      "required": true,
-      "schema": {
-       "type": "string"
-      }
-     }
-    ]
-   },
-   "put": {
-    "summary": "Сохранить черновик",
-    "description": "Черновик хранится на сервере, а не в браузере: визард из семи шагов переживает смену устройства и очистку хранилища вкладки.",
-    "tags": [
-     "Визард"
-    ],
-    "operationId": "putDraft",
-    "responses": {
-     "200": {
-      "description": "Сохранён"
-     },
-     "400": {
-      "description": "Некорректные параметры",
-      "content": {
-       "application/json": {
-        "schema": {
-         "$ref": "#/components/schemas/Error"
-        }
-       }
-      }
-     },
-     "401": {
-      "description": "Нет действующей сессии",
-      "content": {
-       "application/json": {
-        "schema": {
-         "$ref": "#/components/schemas/Error"
-        }
-       }
-      }
-     }
-    },
-    "parameters": [
-     {
-      "name": "projectId",
-      "in": "path",
-      "required": true,
-      "schema": {
-       "type": "string"
-      }
-     }
-    ],
-    "requestBody": {
-     "required": true,
-     "content": {
-      "application/json": {
-       "schema": {
-        "type": "object"
-       }
-      }
-     }
-    }
-   }
-  },
-  "/api/models": {
-   "get": {
-    "summary": "Модели провайдера",
-    "description": "Живой список от провайдера вместо зашитого перечня: зашитый устаревает молча. Ключ наружу не выходит ни в каком виде — маршрут ходит к провайдеру сам и отдаёт только имена и маску ключа.",
-    "tags": [
-     "Настройки"
-    ],
-    "operationId": "listProviderModels",
-    "responses": {
-     "200": {
-      "description": "Список моделей и то, что действует сейчас",
-      "content": {
-       "application/json": {
-        "schema": {
-         "type": "object",
-         "properties": {
-          "current": {
-           "type": "object",
-           "properties": {
-            "endpoint": {
-             "type": "string"
-            },
-            "keyMask": {
-             "type": "string",
-             "description": "Маска вида sk-1a…9f. Ключ не восстановим."
-            },
-            "text": {
-             "type": "string"
-            },
-            "vision": {
-             "type": "string"
-            }
-           }
+          "id": {
+            "type": "string",
+            "format": "uuid"
           },
-          "models": {
-           "type": "array",
-           "items": {
+          "mode": {
+            "type": "string",
+            "enum": [
+              "short",
+              "long"
+            ]
+          },
+          "videoRef": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "replicationCount": {
+            "type": "integer"
+          },
+          "promptsSnapshot": {
             "type": "object",
-            "properties": {
-             "id": {
-              "type": "string"
-             },
-             "vision": {
-              "type": "boolean"
-             }
-            }
-           }
+            "description": "Пиннинг версий промптов на прогон (Decision Log #10)"
           },
-          "guessed": {
-           "type": "boolean",
-           "description": "Модальность опознана по имени, а не по паспорту модели"
+          "status": {
+            "type": "string",
+            "enum": [
+              "QUEUED",
+              "RUNNING",
+              "REPORT_READY",
+              "FAILED",
+              "CANCELLED"
+            ]
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "created": {
+            "type": "boolean",
+            "description": "false — прогон уже существовал"
+          },
+          "queued": {
+            "type": "boolean",
+            "description": "Задача поставлена в очередь воркера"
+          },
+          "queueError": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Прогон создан, но воркер о нём не знает"
+          },
+          "seqNo": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "description": "Человеческий номер в пределах команды: № 0050. null — прогон старше нумерации"
+          },
+          "sourceName": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "title": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "posterRef": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Ключ S3 кадра-заставки. null — кадров нет"
+          }
+        }
+      },
+      "ProgressEvent": {
+        "type": "object",
+        "description": "Тело события SSE (`event: progress`). Узлы конвейера перечислены в packages/shared/pipeline/nodes.json — общем файле воркера и интерфейса.",
+        "properties": {
+          "task_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "node": {
+            "type": "string",
+            "examples": [
+              "transcribe",
+              "analyze_chunks"
+            ]
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "QUEUED",
+              "RUNNING",
+              "DONE",
+              "REPORT_READY",
+              "FAILED"
+            ]
+          },
+          "at": {
+            "type": "number",
+            "description": "Unix-время, секунды"
+          },
+          "detail": {
+            "type": "string"
           },
           "error": {
-           "type": "string",
-           "nullable": true
+            "type": "string",
+            "description": "Обязателен при FAILED"
+          },
+          "degraded": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Этапы, отработавшие не полностью"
           }
-         }
         }
-       }
-      }
-     }
-    }
-   }
-  },
-  "/api/tasks/{id}/transcript": {
-   "get": {
-    "summary": "Расшифровка прогона текстом",
-    "description": "Ровно те реплики, которые видела персона, и с теми же таймкодами, по которым её проверял судья: текст собирается из пакета материала, а не из отдельной копии. Отдельная копия разошлась бы с пакетом при первой правке сборки, и расхождение было бы невидимым — оба текста выглядят правильными.",
-    "tags": [
-     "Отчёт"
-    ],
-    "operationId": "downloadTranscript",
-    "parameters": [
-     {
-      "name": "id",
-      "in": "path",
-      "required": true,
-      "schema": {
-       "type": "string",
-       "format": "uuid"
-      }
-     }
-    ],
-    "responses": {
-     "200": {
-      "description": "Файл расшифровки",
-      "content": {
-       "text/plain": {
-        "schema": {
-         "type": "string"
+      },
+      "Settings": {
+        "type": "object",
+        "description": "Настройки арендатора. Форма поля в поле совпадает с apps/web/lib/settings.ts и с тем, что читает воркер: расхождение здесь даёт настройку, которая выставляется и не применяется.",
+        "properties": {
+          "costCap": {
+            "type": "string",
+            "enum": [
+              "auto",
+              "hard"
+            ],
+            "description": "«auto» — без жёсткого потолка вызовов модели"
+          },
+          "costCapValue": {
+            "type": "integer",
+            "minimum": 100,
+            "maximum": 5000,
+            "description": "Потолок вызовов. Осмыслен только при costCap = hard"
+          },
+          "whisperModel": {
+            "type": "string",
+            "enum": [
+              "gigaam-v3-e2e-rnnt",
+              "large-v3"
+            ],
+            "description": "Ровно те модели, что лежат в образе воркера. Выбор модели вне списка увёл бы прогон качать веса после заливки ролика"
+          },
+          "defaultReplication": {
+            "type": "integer",
+            "enum": [
+              1,
+              3,
+              5
+            ]
+          },
+          "temperatures": {
+            "type": "object",
+            "description": "Температура по стадиям конвейера: стадии требуют противоположного",
+            "additionalProperties": false,
+            "properties": {
+              "personaCreation": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 2
+              },
+              "personaValidation": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 2
+              },
+              "responseSimulation": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 2
+              },
+              "aggregation": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 2
+              },
+              "answerJudge": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 2
+              },
+              "segmentPortraits": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 2
+              }
+            }
+          },
+          "models": {
+            "type": "object",
+            "description": "Три роли, а не одна: текст, зрение, судья. Пустая строка — как в окружении сервера",
+            "additionalProperties": false,
+            "properties": {
+              "text": {
+                "type": "string"
+              },
+              "vision": {
+                "type": "string"
+              },
+              "judge": {
+                "type": "string",
+                "description": "\"\" — судить той же моделью, что отвечает"
+              }
+            }
+          },
+          "reasoning": {
+            "$ref": "#/components/schemas/Reasoning"
+          },
+          "judgeReasoning": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Reasoning"
+              }
+            ],
+            "description": "Рассуждение судьи — отдельно: у проверки другая цена ошибки"
+          },
+          "requestionCap": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 100,
+            "description": "Сколько забракованных ответов разрешено переспросить за прогон. 0 — не переспрашивать"
+          },
+          "endpoint": {
+            "type": "string",
+            "description": "Адрес провайдера. Пустая строка — брать из окружения сервера"
+          },
+          "apiKeyMask": {
+            "type": "string",
+            "readOnly": true,
+            "description": "Маска действующего ключа. Сам ключ наружу не отдаётся никогда: ответ уезжает в браузер, в историю и в любой прокси по дороге"
+          }
         }
-       }
+      },
+      "Reasoning": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "thinking": {
+            "type": "boolean",
+            "description": "Уезжает ключом enable_thinking: ключ thinking шлюз игнорирует"
+          },
+          "effort": {
+            "type": "string",
+            "enum": [
+              "low",
+              "medium",
+              "high",
+              "max"
+            ]
+          }
+        }
       }
-     },
-     "404": {
-      "description": "Прогон не найден либо пакет материала не сохранён"
-     }
     }
-   }
   }
- },
- "components": {
-  "securitySchemes": {
-   "sessionCookie": {
-    "type": "apiKey",
-    "in": "cookie",
-    "name": "authjs.session-token",
-    "description": "Кука Auth.js. В проде имя с префиксом __Secure-."
-   }
-  },
-  "schemas": {
-   "Error": {
-    "type": "object",
-    "required": [
-     "error"
-    ],
-    "properties": {
-     "error": {
-      "type": "string"
-     },
-     "details": {
-      "type": "array",
-      "items": {
-       "type": "string"
-      },
-      "description": "Все ошибки разом, а не первая: править по одной за запрос — столько же запросов, сколько ошибок"
-     }
-    }
-   },
-   "AudienceCriteria": {
-    "type": "object",
-    "required": [
-     "size",
-     "ageGroups",
-     "geos",
-     "genders"
-    ],
-    "description": "Ветка генерации. Образование не обязательно: поля нет в корпусе, и блокировать им запуск значило бы требовать заполнить незаземлённое.",
-    "properties": {
-     "size": {
-      "type": "integer",
-      "minimum": 1
-     },
-     "ageGroups": {
-      "type": "array",
-      "items": {
-       "type": "string"
-      },
-      "minItems": 1
-     },
-     "geos": {
-      "type": "array",
-      "items": {
-       "type": "string"
-      },
-      "minItems": 1
-     },
-     "genders": {
-      "type": "array",
-      "items": {
-       "type": "string"
-      },
-      "minItems": 1
-     },
-     "education": {
-      "type": "array",
-      "items": {
-       "type": "string"
-      }
-     },
-     "seed": {
-      "type": "integer",
-      "minimum": 0
-     },
-     "useLlm": {
-      "type": "boolean",
-      "default": true,
-      "description": "false — портреты собираются шаблоном без вызова модели"
-     }
-    }
-   },
-   "AudienceExistingSet": {
-    "type": "object",
-    "required": [
-     "personaSetId"
-    ],
-    "properties": {
-     "personaSetId": {
-      "type": "string",
-      "format": "uuid"
-     }
-    },
-    "description": "Ветка готового набора: критерии не нужны, генерации не будет."
-   },
-   "AudienceResult": {
-    "type": "object",
-    "properties": {
-     "personaSetId": {
-      "type": "string",
-      "format": "uuid"
-     },
-     "size": {
-      "type": "integer"
-     },
-     "enriched": {
-      "type": "boolean",
-      "description": "Портреты писала модель"
-     },
-     "degradedReason": {
-      "type": [
-       "string",
-       "null"
-      ],
-      "description": "Причина отката к шаблонным портретам. Заземление при этом не страдает: персоны остаются построенными на корпусе"
-     },
-     "warnings": {
-      "type": "array",
-      "items": {
-       "type": "string"
-      }
-     }
-    }
-   },
-   "Persona": {
-    "type": "object",
-    "description": "Persona DNA — 8 категорий, narrative и seed. Canonical JSON Schema: packages/shared/schemas/persona-dna.schema.json",
-    "properties": {
-     "id": {
-      "type": "string",
-      "format": "uuid"
-     },
-     "name": {
-      "type": "string"
-     },
-     "dna": {
-      "type": "object"
-     },
-     "narrative": {
-      "type": "string",
-      "minLength": 100
-     },
-     "seed": {
-      "type": "integer"
-     }
-    }
-   },
-   "Survey": {
-    "type": "object",
-    "description": "Canonical JSON Schema: survey.schema.json",
-    "properties": {
-     "id": {
-      "type": "string",
-      "format": "uuid"
-     },
-     "questions": {
-      "type": "array",
-      "items": {
-       "type": "object"
-      }
-     }
-    }
-   },
-   "LaunchRequest": {
-    "type": "object",
-    "required": [
-     "seed"
-    ],
-    "properties": {
-     "mode": {
-      "type": "string",
-      "enum": [
-       "short",
-       "long"
-      ],
-      "default": "short"
-     },
-     "videoRef": {
-      "type": [
-       "string",
-       "null"
-      ]
-     },
-     "personaSetId": {
-      "type": [
-       "string",
-       "null"
-      ],
-      "format": "uuid"
-     },
-     "surveyId": {
-      "type": [
-       "string",
-       "null"
-      ],
-      "format": "uuid"
-     },
-     "projectId": {
-      "type": [
-       "string",
-       "null"
-      ],
-      "format": "uuid"
-     },
-     "replicationCount": {
-      "type": "integer",
-      "minimum": 1,
-      "maximum": 10,
-      "description": "«Перекрытие». По умолчанию — из настроек арендатора"
-     },
-     "seed": {
-      "type": "integer",
-      "minimum": 0,
-      "description": "Обязателен: без него идемпотентность бессмысленна — каждый запуск давал бы новый ключ. Подставить случайный молча нельзя: это выглядело бы как рабочая защита, которая никогда не срабатывает"
-     },
-     "sourceName": {
-      "type": [
-       "string",
-       "null"
-      ],
-      "description": "Имя файла, как его назвал пользователь. Для показа, не для доступа"
-     },
-     "title": {
-      "type": [
-       "string",
-       "null"
-      ],
-      "maxLength": 200,
-      "description": "Название исследования. Отдельно от sourceName: имя файла — факт о загрузке, название — то, зачем работа делалась"
-     }
-    }
-   },
-   "LaunchedTask": {
-    "type": "object",
-    "properties": {
-     "id": {
-      "type": "string",
-      "format": "uuid"
-     },
-     "mode": {
-      "type": "string",
-      "enum": [
-       "short",
-       "long"
-      ]
-     },
-     "videoRef": {
-      "type": [
-       "string",
-       "null"
-      ]
-     },
-     "replicationCount": {
-      "type": "integer"
-     },
-     "promptsSnapshot": {
-      "type": "object",
-      "description": "Пиннинг версий промптов на прогон (Decision Log #10)"
-     },
-     "status": {
-      "type": "string",
-      "enum": [
-       "QUEUED",
-       "RUNNING",
-       "REPORT_READY",
-       "FAILED",
-       "CANCELLED"
-      ]
-     },
-     "createdAt": {
-      "type": "string",
-      "format": "date-time"
-     },
-     "created": {
-      "type": "boolean",
-      "description": "false — прогон уже существовал"
-     },
-     "queued": {
-      "type": "boolean",
-      "description": "Задача поставлена в очередь воркера"
-     },
-     "queueError": {
-      "type": [
-       "string",
-       "null"
-      ],
-      "description": "Прогон создан, но воркер о нём не знает"
-     },
-     "seqNo": {
-      "type": [
-       "integer",
-       "null"
-      ],
-      "description": "Человеческий номер в пределах команды: № 0050. null — прогон старше нумерации"
-     },
-     "sourceName": {
-      "type": [
-       "string",
-       "null"
-      ]
-     },
-     "title": {
-      "type": [
-       "string",
-       "null"
-      ]
-     },
-     "posterRef": {
-      "type": [
-       "string",
-       "null"
-      ],
-      "description": "Ключ S3 кадра-заставки. null — кадров нет"
-     }
-    }
-   },
-   "ProgressEvent": {
-    "type": "object",
-    "description": "Тело события SSE (`event: progress`). Узлы конвейера перечислены в packages/shared/pipeline/nodes.json — общем файле воркера и интерфейса.",
-    "properties": {
-     "task_id": {
-      "type": "string",
-      "format": "uuid"
-     },
-     "node": {
-      "type": "string",
-      "examples": [
-       "transcribe",
-       "analyze_chunks"
-      ]
-     },
-     "status": {
-      "type": "string",
-      "enum": [
-       "QUEUED",
-       "RUNNING",
-       "DONE",
-       "REPORT_READY",
-       "FAILED"
-      ]
-     },
-     "at": {
-      "type": "number",
-      "description": "Unix-время, секунды"
-     },
-     "detail": {
-      "type": "string"
-     },
-     "error": {
-      "type": "string",
-      "description": "Обязателен при FAILED"
-     },
-     "degraded": {
-      "type": "array",
-      "items": {
-       "type": "string"
-      },
-      "description": "Этапы, отработавшие не полностью"
-     }
-    }
-   },
-   "Settings": {
-    "type": "object",
-    "description": "Настройки арендатора. Форма поля в поле совпадает с apps/web/lib/settings.ts и с тем, что читает воркер: расхождение здесь даёт настройку, которая выставляется и не применяется.",
-    "properties": {
-     "costCap": {
-      "type": "string",
-      "enum": [
-       "auto",
-       "hard"
-      ],
-      "description": "«auto» — без жёсткого потолка вызовов модели"
-     },
-     "costCapValue": {
-      "type": "integer",
-      "minimum": 100,
-      "maximum": 5000,
-      "description": "Потолок вызовов. Осмыслен только при costCap = hard"
-     },
-     "whisperModel": {
-      "type": "string",
-      "enum": [
-       "gigaam-v3-e2e-rnnt",
-       "large-v3"
-      ],
-      "description": "Ровно те модели, что лежат в образе воркера. Выбор модели вне списка увёл бы прогон качать веса после заливки ролика"
-     },
-     "defaultReplication": {
-      "type": "integer",
-      "enum": [
-       1,
-       3,
-       5
-      ]
-     },
-     "temperatures": {
-      "type": "object",
-      "description": "Температура по стадиям конвейера: стадии требуют противоположного",
-      "additionalProperties": false,
-      "properties": {
-       "personaCreation": {
-        "type": "number",
-        "minimum": 0,
-        "maximum": 2
-       },
-       "personaValidation": {
-        "type": "number",
-        "minimum": 0,
-        "maximum": 2
-       },
-       "responseSimulation": {
-        "type": "number",
-        "minimum": 0,
-        "maximum": 2
-       },
-       "aggregation": {
-        "type": "number",
-        "minimum": 0,
-        "maximum": 2
-       },
-       "answerJudge": {
-        "type": "number",
-        "minimum": 0,
-        "maximum": 2
-       },
-       "segmentPortraits": {
-        "type": "number",
-        "minimum": 0,
-        "maximum": 2
-       }
-      }
-     },
-     "models": {
-      "type": "object",
-      "description": "Три роли, а не одна: текст, зрение, судья. Пустая строка — как в окружении сервера",
-      "additionalProperties": false,
-      "properties": {
-       "text": {
-        "type": "string"
-       },
-       "vision": {
-        "type": "string"
-       },
-       "judge": {
-        "type": "string",
-        "description": "\"\" — судить той же моделью, что отвечает"
-       }
-      }
-     },
-     "reasoning": {
-      "$ref": "#/components/schemas/Reasoning"
-     },
-     "judgeReasoning": {
-      "allOf": [
-       {
-        "$ref": "#/components/schemas/Reasoning"
-       }
-      ],
-      "description": "Рассуждение судьи — отдельно: у проверки другая цена ошибки"
-     },
-     "requestionCap": {
-      "type": "integer",
-      "minimum": 0,
-      "maximum": 100,
-      "description": "Сколько забракованных ответов разрешено переспросить за прогон. 0 — не переспрашивать"
-     },
-     "endpoint": {
-      "type": "string",
-      "description": "Адрес провайдера. Пустая строка — брать из окружения сервера"
-     },
-     "apiKeyMask": {
-      "type": "string",
-      "readOnly": true,
-      "description": "Маска действующего ключа. Сам ключ наружу не отдаётся никогда: ответ уезжает в браузер, в историю и в любой прокси по дороге"
-     }
-    }
-   },
-   "Reasoning": {
-    "type": "object",
-    "additionalProperties": false,
-    "properties": {
-     "thinking": {
-      "type": "boolean",
-      "description": "Уезжает ключом enable_thinking: ключ thinking шлюз игнорирует"
-     },
-     "effort": {
-      "type": "string",
-      "enum": [
-       "low",
-       "medium",
-       "high",
-       "max"
-      ]
-     }
-    }
-   }
-  }
- }
 }
