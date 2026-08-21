@@ -1,5 +1,3 @@
-import { createHash, randomBytes } from "node:crypto";
-
 /**
  * Публичная ссылка на отчёт (#29): выпуск токена и построение адреса.
  *
@@ -12,23 +10,13 @@ import { createHash, randomBytes } from "node:crypto";
  * открывается, срок выбирается, ссылка копируется в буфер. Обнаружить можно
  * было, только отправив её кому-нибудь.
  *
- * ─── Почему токен выпускает сервер ────────────────────────────────────────
- * `Math.random` не криптографический: последовательность предсказуема по
- * нескольким выданным значениям. Для ссылки, открывающей отчёт БЕЗ входа в
- * систему, это то же самое, что открытый доступ.
- *
- * ─── Почему в базу идёт хеш ───────────────────────────────────────────────
- * Так заведена схема: `report_shares.token_hash`, а политика читает
- * `app.current_share_token_hash()` — SHA-256 от `app.share_token` в hex.
- * Утечка дампа базы не даёт доступа к отчётам.
+ * Выпуск токена и его отпечаток живут в lib/server/share-token.ts: они тянут
+ * `node:crypto`, а этот модуль импортирует клиентский диалог.
  *
  * ─── Почему адрес строится от источника запроса ───────────────────────────
  * У продукта нет постоянного домена: он живёт на sslip.io по адресу сервера.
  * Любая константа здесь разойдётся с реальностью — ровно это и произошло.
  */
-
-/** Сколько байт энтропии в токене. 32 — как у ключа сессии. */
-const TOKEN_BYTES = 32;
 
 export type Ttl = "24h" | "7d" | "30d" | "never";
 
@@ -44,15 +32,6 @@ const TTL_HOURS: Record<Exclude<Ttl, "never">, number> = {
   "7d": 24 * 7,
   "30d": 24 * 30,
 };
-
-export function newToken(): string {
-  return randomBytes(TOKEN_BYTES).toString("base64url");
-}
-
-/** SHA-256 в hex — ровно то, что считает `app.current_share_token_hash()`. */
-export function hashToken(token: string): string {
-  return createHash("sha256").update(token).digest("hex");
-}
 
 export function shareUrl(origin: string, token: string): string {
   return `${origin.replace(/\/+$/, "")}/s/${token}`;

@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { hashToken, newToken, shareUrl, ttlToExpiry, TTL_OPTIONS } from "./share.ts";
+import { shareUrl, ttlToExpiry, TTL_OPTIONS } from "./share.ts";
+import { hashToken, newToken } from "./server/share-token.ts";
 
 /**
  * Публичная ссылка на отчёт (#29).

@@ -1,6 +1,7 @@
 import { withTenant } from "@/lib/server/db";
 import { requireSession, toResponse } from "@/lib/server/guard";
-import { hashToken, newToken, shareUrl, ttlToExpiry, type Ttl } from "@/lib/share";
+import { shareUrl, ttlToExpiry, type Ttl } from "@/lib/share";
+import { hashToken, newToken } from "@/lib/server/share-token";
 
 /**
  * Публичная ссылка на отчёт (#29).
