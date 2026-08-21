@@ -24,6 +24,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
 
+from ..prompt_text import body_of
+
 #: Таймаут одного суждения. Судья читает один ответ и возвращает короткий JSON —
 #: заметно быстрее, чем персона пишет свой ответ (там 120 с).
 REQUEST_TIMEOUT_SEC = 60
@@ -43,35 +45,73 @@ _FENCE = re.compile(r"^```[a-zA-Z]*\n|\n```$")
 class JudgeClient(Protocol):
     """Тот же шов, что у RespondentClient (#18): system и user раздельно."""
 
-    def complete(self, *, system: str, user: str) -> str: ...
+    def complete(self, *, system: str, user: str, schema_key: str | None = None) -> str: ...
 
 
 class QwenJudgeClient:
     """Боевой судья: OpenAI-совместимый endpoint TimeWeb (Decision Log #1)."""
 
     def __init__(self, config: Any | None = None, base_url: str | None = None,
-                 temperature: float = 0.0):
-        from ..config import ModelConfig
+                 temperature: float | None = None):
+        from ..config import ModelConfig, TemperatureConfig
 
         self.config = config or ModelConfig.from_env()
         self.base_url = base_url or self.config.base_url
-        # Ноль, в отличие от 0.9 у респондента (#18). Там высокая температура —
-        # условие метрики: персоны обязаны отличаться друг от друга. Здесь
-        # наоборот: два прогона QA по одному ответу должны давать один вердикт,
-        # иначе «ответ забракован» перестаёт быть свойством ответа.
-        self.temperature = temperature
+        # Стадия answerJudge, умолчание 0. Ноль, в отличие от респондента: там
+        # разброс — условие метрики, персоны обязаны отличаться друг от друга.
+        # Здесь наоборот, два прогона QA по одному ответу должны давать один
+        # вердикт, иначе «ответ забракован» перестаёт быть свойством ответа.
+        self.temperature = (
+            TemperatureConfig.defaults().answerJudge
+            if temperature is None
+            else temperature
+        )
 
-    def complete(self, *, system: str, user: str) -> str:
-        from openai import OpenAI
+    def complete(self, *, system: str, user: str, schema_key: str | None = None) -> str:
+        from ..schemas.responses import (
+            JUDGE_SCHEMAS,
+            MAX_TOKENS,
+            content_of,
+            response_format,
+        )
+        from ..tracing import llm_client
 
-        client = OpenAI(
+        # Клиент выдаётся agent_core.tracing: там он оборачивается для
+        # LangFuse, если трассировка включена, и остаётся обычным, если нет.
+        client = llm_client(
             api_key=self.config.api_key,
             base_url=self.base_url,
             default_headers=self.config.default_headers,
             timeout=REQUEST_TIMEOUT_SEC,
         )
+
+        # Схема у каждой проверки своя: у трёх промптов общего ровно два поля —
+        # verdict и confidence, — а профильные разные. Одна схема на всех
+        # заставила бы модель заполнять поля чужой проверки.
+        #
+        # Незнакомый ключ — не отказ: вердикт без схемы всё ещё вердикт, а
+        # уронить проверку из-за опечатки в имени значило бы потерять уже
+        # оплаченные ответы персон.
+        extra: dict[str, Any] = {}
+        schema = JUDGE_SCHEMAS.get(schema_key or "")
+        if schema is not None:
+            name = (schema_key or "").split(".")[-1].capitalize() + "Verdict"
+            extra["response_format"] = response_format(name, schema)
+            # Потолок ставится ВМЕСТЕ со схемой, а не рядом с ней — см.
+            # MAX_TOKENS: схема без потолка уводит модель в генерацию до предела
+            # контекста, и связка «одно без другого» это ровно та ошибка,
+            # которую легко повторить в следующем клиенте.
+            extra["max_tokens"] = MAX_TOKENS["judge"]
+
         response = client.chat.completions.create(
-            model=self.config.text_model,
+            # Имя наблюдения в трассе. Без него интеграция назовёт
+            # генерацию `OpenAI-generation` — одинаково для ответа
+            # персоны, вердикта судьи и разбора кадра.
+            name="judge-answer",
+            # Модель судьи, если выбрана; иначе та же, что отвечала. Одна модель
+            # в обеих ролях склонна признавать собственную работу верной, и доля
+            # отбраковок тогда говорит о согласии модели с собой.
+            model=self.config.judge_model_or_text,
             messages=[
                 {"role": "system", "content": system},
                 {"role": "user", "content": user},
@@ -79,8 +119,9 @@ class QwenJudgeClient:
             temperature=self.temperature,
             # Размышление выключено: см. ModelConfig.thinking — замер и причина.
             extra_body=self.config.extra_body("qa"),
+            **extra,
         )
-        return (response.choices[0].message.content or "").strip()
+        return content_of(response, role="judge")
 
 
 def escalation_client(policy: Any, config: Any | None = None) -> QwenJudgeClient:
@@ -109,7 +150,7 @@ def load_templates() -> dict[str, str]:
     out: dict[str, str] = {}
     for key in ("qa.consistency", "qa.grounding", "qa.diversity"):
         path = find_prompt(key)
-        out[key] = path.read_text("utf-8") if path.exists() else ""
+        out[key] = body_of(path.read_text("utf-8")) if path.exists() else ""
     return out
 
 

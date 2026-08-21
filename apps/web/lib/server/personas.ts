@@ -35,6 +35,15 @@ export interface PersonaSet {
   createdAt: string;
   /** Сколько персон реально сохранено в наборе. Ноль — набор создан, но не заполнен. */
   personaCount: number;
+  /** `generating` — воркер ещё пишет персон в этот набор. */
+  status: "generating" | "ready" | "failed";
+  /**
+   * Сколько персон обработано на текущий момент. Обновляется воркером по ходу
+   * генерации — из этого числа и заказанного размера складывается «40 из 60».
+   */
+  generatedCount: number;
+  /** Причина отказа генерации. Без неё «failed» не подсказывает следующий шаг. */
+  error: string | null;
 }
 
 export interface Persona {
@@ -45,6 +54,8 @@ export interface Persona {
   narrative: string | null;
   seed: number | null;
   createdAt: string;
+  /** Имя или адрес автора набора. null — автор неизвестен либо удалён. */
+  author: string | null;
 }
 
 interface PersonaSetRow {
@@ -55,6 +66,9 @@ interface PersonaSetRow {
   seed: string | number | null;
   created_at: Date;
   persona_count: string;
+  status: string;
+  generated_count: number;
+  error: string | null;
 }
 
 interface PersonaRow {
@@ -65,6 +79,7 @@ interface PersonaRow {
   narrative: string | null;
   seed: string | number | null;
   created_at: Date;
+  author?: string | null;
 }
 
 /** bigint приезжает из pg строкой: JS не может представить его безопасно как number. */
@@ -82,6 +97,9 @@ function toSet(row: PersonaSetRow): PersonaSet {
     seed: toNumber(row.seed),
     createdAt: row.created_at.toISOString(),
     personaCount: Number(row.persona_count ?? 0),
+    status: (row.status as PersonaSet["status"]) ?? "ready",
+    generatedCount: Number(row.generated_count ?? 0),
+    error: row.error ?? null,
   };
 }
 
@@ -94,6 +112,7 @@ function toPersona(row: PersonaRow): Persona {
     narrative: row.narrative,
     seed: toNumber(row.seed),
     createdAt: row.created_at.toISOString(),
+    author: row.author ?? null,
   };
 }
 
@@ -107,7 +126,7 @@ export async function listPersonaSets(
   // обязан попасть в список. При JOIN он бы пропал, и преселект «Выбрать
   // существующую» не показывал бы только что созданный набор.
   const { rows } = await client.query<PersonaSetRow>(
-    `SELECT ps.id, ps.name, ps.size, ps.generation_config, ps.seed, ps.created_at,
+    `SELECT ps.id, ps.name, ps.size, ps.generation_config, ps.seed, ps.created_at, status, generated_count, error,
             (SELECT count(*) FROM personas p WHERE p.persona_set_id = ps.id) AS persona_count
        FROM persona_sets ps
       WHERE ($1::uuid IS NULL OR ps.id = $1::uuid)
@@ -123,14 +142,105 @@ export async function createPersonaSet(
   size: number,
   generationConfig: Record<string, unknown>,
   seed: number | null,
+  /**
+   * `generating` — набор заведён, персон в нём ещё нет: их пишет воркер.
+   * По умолчанию `ready`, потому что так набор создаётся вручную и из тестов.
+   */
+  status: "generating" | "ready" = "ready",
+  /**
+   * Слепок корпуса, по которому собирается набор.
+   *
+   * `null` — набор создан не из корпуса базы (ручной вызов, тесты, прогоны до
+   * этапа Е). Читается как «версия корпуса неизвестна», а не как «первая»:
+   * подставлять сюда что-то по умолчанию значило бы утверждать
+   * воспроизводимость, которой нет.
+   */
+  corpusSnapshotId: string | null = null,
+  /**
+   * Кто заказал генерацию. Наследуется персонами набора при записи.
+   *
+   * `null` законен: ручной вызов и тесты сессии не имеют. Читается как «автор
+   * неизвестен» — в команде из нескольких человек это единственный способ
+   * понять, чья аудитория, прежде чем её удалять.
+   */
+  createdBy: string | null = null,
 ): Promise<PersonaSet> {
   const { rows } = await client.query<PersonaSetRow>(
-    `INSERT INTO persona_sets (tenant_id, name, size, generation_config, seed)
-     VALUES (app.current_tenant(), $1, $2, $3::jsonb, $4)
-     RETURNING id, name, size, generation_config, seed, created_at, 0::bigint AS persona_count`,
-    [name, size, JSON.stringify(generationConfig), seed],
+    `INSERT INTO persona_sets (tenant_id, name, size, generation_config, seed, status,
+                               corpus_snapshot_id, created_by)
+     VALUES (app.current_tenant(), $1, $2, $3::jsonb, $4, $5, $6, $7)
+     RETURNING id, name, size, generation_config, seed, created_at, status,
+               generated_count, error, 0::bigint AS persona_count`,
+    [name, size, JSON.stringify(generationConfig), seed, status, corpusSnapshotId, createdBy],
   );
   return toSet(rows[0]);
+}
+
+/**
+ * Удаляет персон по списку идентификаторов. Возвращает, сколько удалено.
+ *
+ * Чужие идентификаторы просто не находятся: RLS не покажет строку другого
+ * арендатора, и `DELETE` по ней удалит ноль. Отдельной проверки на владение не
+ * нужно — и это лучше проверки, потому что её нельзя забыть.
+ *
+ * Персона, на ответах которой стоит отчёт, удаляется вместе со своей карточкой
+ * в реестре, но не из отчёта: карточки ответов живут в Mongo и ссылаются на
+ * идентификатор, а не на строку. Прежний отчёт остаётся читаемым — иначе
+ * уборка в реестре задним числом меняла бы уже принятые решения.
+ */
+export async function deletePersonas(
+  client: PoolClient,
+  ids: string[],
+): Promise<number> {
+  if (ids.length === 0) return 0;
+  const { rowCount } = await client.query(
+    "DELETE FROM personas WHERE id = ANY($1::uuid[])",
+    [ids],
+  );
+  return rowCount ?? 0;
+}
+
+
+/**
+ * Удаление наборов. Набор, на котором стоит исследование, НЕ удаляется.
+ *
+ * ─── Почему отказ, а не удаление ───────────────────────────────────────────
+ * Внешний ключ `tasks.persona_set_id` объявлен `ON DELETE SET NULL`: удаление
+ * набора не ломает прогон, оно тихо обнуляет ссылку. Отчёт остаётся на месте, а
+ * ответ на вопрос «на ком это проверяли» исчезает — и исчезает молча, без следа
+ * в интерфейсе. Уборка в списке наборов задним числом лишала бы смысла уже
+ * принятые по отчётам решения.
+ *
+ * Поэтому такие наборы возвращаются отдельным списком с числом прогонов: пусть
+ * человек решает, а не узнаёт постфактум.
+ */
+export async function deletePersonaSets(
+  client: PoolClient,
+  ids: string[],
+): Promise<{ deleted: number; blocked: { id: string; name: string; runs: number }[] }> {
+  if (ids.length === 0) return { deleted: 0, blocked: [] };
+
+  const { rows: used } = await client.query<{ id: string; name: string; runs: string }>(
+    `SELECT ps.id, ps.name, COUNT(t.id)::text AS runs
+       FROM persona_sets ps
+       JOIN tasks t ON t.persona_set_id = ps.id
+      WHERE ps.id = ANY($1::uuid[])
+      GROUP BY ps.id, ps.name`,
+    [ids],
+  );
+  const blocked = used.map((r) => ({ id: r.id, name: r.name, runs: Number(r.runs) }));
+  const blockedIds = new Set(blocked.map((b) => b.id));
+  const free = ids.filter((id) => !blockedIds.has(id));
+
+  if (free.length === 0) return { deleted: 0, blocked };
+
+  // Персоны уезжают каскадом (`personas_persona_set_id_fkey ON DELETE CASCADE`)
+  // — отдельного запроса не нужно, и его отсутствие здесь намеренное.
+  const { rowCount } = await client.query(
+    "DELETE FROM persona_sets WHERE id = ANY($1::uuid[])",
+    [free],
+  );
+  return { deleted: rowCount ?? 0, blocked };
 }
 
 // ─── Персоны ───────────────────────────────────────────────────────────────
@@ -140,10 +250,11 @@ export async function listPersonas(
   personaSetId?: string,
 ): Promise<Persona[]> {
   const { rows } = await client.query<PersonaRow>(
-    `SELECT id, persona_set_id, name, dna, narrative, seed, created_at
-       FROM personas
-      WHERE ($1::uuid IS NULL OR persona_set_id = $1::uuid)
-      ORDER BY created_at DESC`,
+    `SELECT p.id, p.persona_set_id, p.name, p.dna, p.narrative, p.seed, p.created_at,
+            (SELECT COALESCE(u.name, u.email) FROM users u WHERE u.id = p.created_by) AS author
+       FROM personas p
+      WHERE ($1::uuid IS NULL OR p.persona_set_id = $1::uuid)
+      ORDER BY p.created_at DESC`,
     [personaSetId ?? null],
   );
   return rows.map(toPersona);

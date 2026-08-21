@@ -31,6 +31,11 @@ import { Pool, type PoolClient } from "pg";
 
 const APP_ROLE = "agora_app";
 
+//: Роль публичной ссылки. Отдельная от прикладной намеренно: политики для неё
+//: (03_rls.sql) отдают ровно один отчёт — тот, на который выпущен токен, — и
+//: ничего больше. Читать чужие таблицы под ней нельзя даже с ошибкой в коде.
+const SHARE_ROLE = "agora_share";
+
 let pool: Pool | null = null;
 
 /**
@@ -121,6 +126,42 @@ export function withTenant<T>(tenantId: string, fn: (client: PoolClient) => Prom
  */
 export function withoutTenant<T>(fn: (client: PoolClient) => Promise<T>): Promise<T> {
   return inTransaction(null, fn);
+}
+
+/**
+ * Работа по публичной ссылке (#29).
+ *
+ * Токен кладётся в `app.share_token`, а политики сверяют его SHA-256 с
+ * `report_shares.token_hash`, заодно проверяя срок и отзыв. Хеш считает сама
+ * база (`app.current_share_token_hash()`), поэтому наружу токен не уходит и в
+ * запросах не повторяется.
+ *
+ * `set_config`, а не `SET LOCAL app.share_token = $1`: команда SET не принимает
+ * параметров запроса (CLAUDE.md §6), а склейка токена в текст запроса — это
+ * инъекция в чистом виде.
+ */
+export async function withShareToken<T>(
+  token: string,
+  fn: (client: PoolClient) => Promise<T>,
+): Promise<T> {
+  const client = await getPool().connect();
+  try {
+    await client.query("BEGIN");
+    await client.query(`SET LOCAL ROLE ${SHARE_ROLE}`);
+    await client.query("SELECT set_config('app.share_token', $1, true)", [token]);
+    const result = await fn(client);
+    await client.query("COMMIT");
+    return result;
+  } catch (error) {
+    try {
+      await client.query("ROLLBACK");
+    } catch {
+      // Соединение уже мертво — важнее не потерять исходную ошибку.
+    }
+    throw error;
+  } finally {
+    client.release();
+  }
 }
 
 /** Закрытие пула — для скриптов и тестов, чтобы процесс не висел на открытых сокетах. */

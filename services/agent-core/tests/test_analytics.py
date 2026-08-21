@@ -9,6 +9,8 @@ CDD-тест задачи проверяет требование целиком
 
 from __future__ import annotations
 
+import json
+
 from agent_core.analytics.aggregate import (
     aggregate,
     retention_risk_points,
@@ -441,3 +443,67 @@ def test_personas_absent_from_the_run_are_ignored():
 
 def test_no_personas_and_no_segment_still_gives_none():
     assert aggregate([answer("p0")], personas=[])["segment_breakdown"] is None
+
+
+# ─── Обоснования под цифрами (п. 37) ────────────────────────────────────────
+
+
+def test_numbers_carry_a_rationale_from_verbatims():
+    """
+    Под NPS, долей досмотра и эмоциональным индексом стоит объяснение.
+
+    ─── Зачем ────────────────────────────────────────────────────────────────
+    «NPS −33» — это результат, а не вывод. Решение по нему принимают, догадываясь
+    о причине, и догадка редко совпадает с тем, что персоны написали в
+    вербатимах. Число без обоснования выглядит объективнее, чем оно есть: за ним
+    стоят двенадцать текстов, которых читатель отчёта не видит.
+
+    ─── Почему одним вызовом, а не тремя ─────────────────────────────────────
+    Аналитик и так получает все ответы целиком. Отдельный вызов на каждую
+    метрику утроил бы стоимость синтеза ради трёх абзацев и вдобавок дал бы три
+    независимых пересказа одних и тех же вербатимов, которые могут не сойтись
+    между собой.
+    """
+    from agent_core.analytics.report import build_report
+
+    class Analyst:
+        def complete(self, *, system: str, user: str) -> str:  # noqa: ARG002
+            return json.dumps({
+                "narrative": [],
+                "rationales": {
+                    "nps": "Рекомендовать мешает финальный призыв (2:12–2:17).",
+                    "watched_share": "Внимание рассеивается к середине.",
+                    "emotional_index": "Преобладают интерес и скепсис.",
+                },
+            }, ensure_ascii=False)
+
+    report = build_report(
+        answers=[answer("p1")],
+        pack={"title": "t", "duration_sec": 100.0},
+        model=Analyst(),
+        template="{{aggregate}}",
+    )
+
+    rationales = report.get("rationales")
+    assert isinstance(rationales, dict), "поле rationales обязано быть в отчёте"
+    assert rationales.get("nps"), "у NPS нет обоснования"
+    assert rationales.get("watched_share")
+    assert rationales.get("emotional_index")
+
+
+def test_rationales_are_present_even_without_a_model():
+    """
+    Без модели поле есть и пусто, а не отсутствует.
+
+    Отсутствующее поле экран читает как «ещё не научились», пустое — как «модель
+    не отвечала». Числовая часть отчёта от модели не зависит и обязана
+    показываться при любом её состоянии.
+    """
+    from agent_core.analytics.report import build_report
+
+    report = build_report(
+        answers=[answer("p1")],
+        pack={"title": "t", "duration_sec": 100.0},
+        model=None,
+    )
+    assert report.get("rationales") == {}

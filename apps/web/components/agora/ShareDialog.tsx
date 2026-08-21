@@ -12,26 +12,57 @@ import { Share2, Copy, Check, ShieldAlert } from "lucide-react";
  * выбирается явно, а не прячется в умолчаниях.
  */
 
-const TTL_OPTIONS = [
-  { value: "24h", label: "24 часа" },
-  { value: "7d", label: "7 дней" },
-  { value: "30d", label: "30 дней" },
-] as const;
+import { TTL_OPTIONS, type Ttl } from "@/lib/share";
 
-export function ShareDialog() {
+export function ShareDialog({ runId }: { runId: string }) {
   const [open, setOpen] = useState(false);
-  const [ttl, setTtl] = useState<string>("7d");
+  const [ttl, setTtl] = useState<Ttl>("7d");
   const [scope, setScope] = useState<"full" | "aggregate">("full");
   const [link, setLink] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  const create = () => {
-    // Витрина: настоящий токен выпускает бэкенд и хранит только его SHA-256.
-    const token = Array.from({ length: 4 }, () =>
-      Math.random().toString(36).slice(2, 10),
-    ).join("");
-    setLink(`https://agora.studio/s/${token}`);
-    setCopied(false);
+  /**
+   * Ссылку выпускает СЕРВЕР.
+   *
+   * Прежде токен собирался здесь четырьмя вызовами Math.random и подставлялся в
+   * адрес несуществующего домена. `Math.random` не криптографический — для
+   * ссылки, открывающей отчёт без входа в систему, это то же самое, что
+   * открытый доступ; а домена agora.studio у продукта нет вовсе.
+   */
+  const create = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/tasks/${runId}/share`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ttl, scope }),
+      });
+      const data = (await res.json()) as { url?: string; error?: string };
+      if (!res.ok || !data.url) {
+        setError(data.error ?? "не удалось выпустить ссылку");
+        return;
+      }
+      setLink(data.url);
+      setCopied(false);
+    } catch {
+      setError("сервер не ответил");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  /** Отзыв: адрес перестаёт открываться сразу, проверку делает политика в базе. */
+  const revoke = async () => {
+    setBusy(true);
+    try {
+      await fetch(`/api/tasks/${runId}/share`, { method: "DELETE" });
+      setLink(null);
+    } finally {
+      setBusy(false);
+    }
   };
 
   const copy = async () => {
@@ -56,15 +87,23 @@ export function ShareDialog() {
           onClick={() => setOpen(false)}
         >
           <div
-            className="w-full max-w-md rounded-lg border border-hairline bg-[hsl(222_47%_8%)] p-6"
+            className="w-full max-w-md rounded-lg border border-hairline bg-card p-6"
             onClick={(e) => e.stopPropagation()}
           >
             <h2 className="text-lg font-semibold">Публичная ссылка на отчёт</h2>
 
+            {/*
+              Текст обёрнут в span, а не лежит в flex-контейнере голым.
+              Голый текст внутри flex становится анонимным flex-элементом, и
+              каждый его кусок, разорванный тегом <strong>, — отдельным: строка
+              разъезжалась на три колонки вместо одного абзаца.
+            */}
             <p className="mt-3 flex gap-2.5 rounded-md border border-warning/30 bg-warning-soft/60 p-3 text-xs leading-relaxed text-warning">
               <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0" />
-              По ссылке отчёт открывается <strong>без входа в систему</strong>. Любой, у
-              кого она есть, увидит содержимое. Ссылку можно отозвать в любой момент.
+              <span>
+                По ссылке отчёт открывается <strong>без входа в систему</strong>. Любой,
+                у кого она есть, увидит содержимое. Ссылку можно отозвать в любой момент.
+              </span>
             </p>
 
             <div className="mt-5">
@@ -125,16 +164,32 @@ export function ShareDialog() {
                 </div>
                 <p className="mt-2 text-xs text-slate">
                   Действует {TTL_OPTIONS.find((o) => o.value === ttl)?.label.toLowerCase()}.
-                  Просмотры записываются в журнал.
+                  Просмотры записываются в журнал. Ссылка показывается один раз: в базе
+                  хранится только её отпечаток, и восстановить адрес нельзя — потерянную
+                  выпускают заново.
                 </p>
+                <button
+                  onClick={revoke}
+                  disabled={busy}
+                  className="mt-3 w-full rounded-md border border-danger/40 py-2 text-sm text-danger transition-colors hover:bg-danger/5 disabled:opacity-50"
+                >
+                  Отозвать все ссылки на этот отчёт
+                </button>
               </div>
             ) : (
               <button
                 onClick={create}
-                className="mt-6 w-full rounded-md bg-foreground py-2.5 text-sm font-medium text-background transition-opacity hover:opacity-90"
+                disabled={busy}
+                className="mt-6 w-full rounded-md bg-foreground py-2.5 text-sm font-medium text-background transition-opacity hover:opacity-90 disabled:opacity-50"
               >
-                Создать ссылку
+                {busy ? "Выпускаю…" : "Создать ссылку"}
               </button>
+            )}
+
+            {error && (
+              <p className="mt-3 rounded-md border border-danger/40 bg-danger/5 p-2.5 text-xs text-danger">
+                {error}
+              </p>
             )}
 
             <button

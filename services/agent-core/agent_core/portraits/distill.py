@@ -324,13 +324,14 @@ def distill_portrait_llm(
     api_key: str | None = None,
     base_url: str | None = None,
     model: str | None = None,
+    temperature: float | None = None,
 ) -> str | None:
     """Call LLM with portrait.distill prompt to generate .md portrait.
 
     Returns None if the API call fails (caller falls back to deterministic).
     """
     try:
-        from openai import OpenAI
+        from ..tracing import llm_client
     except ImportError:
         return None
 
@@ -338,8 +339,12 @@ def distill_portrait_llm(
     if not key:
         return None
 
-    url = base_url or os.environ.get("OPENAI_BASE_URL", "https://api.timeweb.cloud/v1")
-    mdl = model or os.environ.get("AI_MODEL", "qwen3.6")
+    # Умолчаний нет по той же причине, что в ModelConfig.from_env: адрес и имя
+    # модели, зашитые здесь, пережили смену провайдера и указывали в пустоту.
+    url = base_url or os.environ.get("OPENAI_BASE_URL")
+    mdl = model or os.environ.get("AI_MODEL")
+    if not url or not mdl:
+        return None
 
     # Prepare segment records as compact JSON
     segment_records = json.dumps(records[:30], ensure_ascii=False, indent=2)
@@ -349,14 +354,25 @@ def distill_portrait_llm(
     prompt = prompt_template.replace("{{segment}}", segment_label)
     prompt = prompt.replace("{{segment_records}}", segment_records)
 
-    from ..config import ModelConfig
+    from ..config import ModelConfig, TemperatureConfig
+
+    # Стадия segmentPortraits, умолчание 0.3.
+    stage_temperature = (
+        TemperatureConfig.defaults().segmentPortraits
+        if temperature is None
+        else temperature
+    )
 
     try:
-        client = OpenAI(api_key=key, base_url=url)
+        client = llm_client(api_key=key, base_url=url)
         response = client.chat.completions.create(
+            # Имя наблюдения в трассе. Без него интеграция назовёт
+            # генерацию `OpenAI-generation` — одинаково для ответа
+            # персоны, вердикта судьи и разбора кадра.
+            name="distill-portrait",
             model=mdl,
             messages=[{"role": "user", "content": prompt}],
-            temperature=0.3,
+            temperature=stage_temperature,
             # Размышление выключено: см. ModelConfig.thinking — замер и причина.
             # Здесь функция, а не метод клиента, поэтому конфигурация читается
             # на месте: ключ и адрес выше берутся из окружения тем же способом.

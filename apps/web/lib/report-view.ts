@@ -44,6 +44,14 @@ export interface ReportView {
   /** Средняя доля просмотренного. null — в анкете не было вопроса о ней. */
   watchedShare: number | null;
   emotionalIndex: number | null;
+  /**
+   * Обоснования под числами: почему NPS такой, почему досмотр такой.
+   *
+   * Пустой словарь означает «модель не отвечала», отсутствие ключа — «по этой
+   * метрике оснований в ответах не нашлось». Оба случая честнее выдуманной
+   * фразы: по выдуманной примут решение.
+   */
+  rationales: Record<string, string>;
   topEmotions: { name: string; pct: number }[];
   sampleSize: number;
   excludedByQa: number;
@@ -59,6 +67,49 @@ export interface ReportView {
   minSegmentPersonas: number;
   /** null — разрез не считали (в ответах не было среза DNA). */
   hasSegments: boolean;
+  /**
+   * Вопросы, которые персоны действительно получили в промпте.
+   *
+   * Не анкета из базы: анкету можно отредактировать после прогона, и тогда
+   * экран показывал бы не то, что спрашивали. Воркер собирает этот список из
+   * готовой строки промпта — то есть из того, что ушло в модель.
+   *
+   * Пусто у прогонов до появления поля и у прогонов без анкеты (они законны:
+   * пять базовых критериев живут в формате ответа). Различать эти два случая
+   * экран не пытается — он просто не показывает секцию.
+   */
+  asked: AskedQuestion[];
+  /**
+   * Модели, которыми считался прогон: рассуждение, зрение, судья.
+   *
+   * Пустой объект — прогон сделан до того, как выбор моделей стал настройкой.
+   * Отличать это от «модель неизвестна» нужно: первое означает «тогда была одна
+   * на всех», второе — что запись потерялась.
+   */
+  modelsUsed: { text: string; vision: string; judge: string } | null;
+  /**
+   * Средняя готовность рекомендовать, 1–10.
+   *
+   * Рядом с NPS, а не вместо него. NPS — доля промоутеров минус доля критиков,
+   * он лежит в −100…+100 и при почти сплошных критиках честно даёт −86. Число
+   * без подписи шкалы читается как ошибка расчёта, а среднее по той же шкале
+   * 1–10 отвечает на вопрос «а насколько всё-таки плохо».
+   */
+  recommendation: number | null;
+  /**
+   * Сводка QA: сколько ответов проверено и сколько исключено из агрегата.
+   *
+   * Именно «исключено», а не «пересоздано»: механизма перегенерации в системе
+   * нет — забракованный ответ выбывает из расчёта и не переспрашивается.
+   */
+  qa: {
+    checked: number;
+    flagged: number;
+    byKind: { kind: string; count: number }[];
+    bySource: { source: string; count: number }[];
+    escalated: number;
+    judgeFailures: number;
+  } | null;
   disclaimer: string | null;
   degraded: string[];
 }
@@ -67,6 +118,27 @@ export interface Quote {
   text: string;
   persona: string;
   timecode: string | null;
+}
+
+/**
+ * Вопрос анкеты в том виде, в каком его ЗАДАЛИ персонам.
+ *
+ * Берётся из снимка `survey_asked` прогона, а не из анкеты на момент чтения
+ * отчёта: анкету правят между прогонами, и показать сегодняшние вопросы под
+ * вчерашними ответами значило бы соврать о том, что персону спрашивали.
+ */
+export interface AskedQuestion {
+  id: string;
+  label: string;
+  type: string;
+  /**
+   * Ключ базового критерия, если вопрос базовый.
+   *
+   * Ответ на такой вопрос промпт кладёт в `scores`, а не в `survey_answers` —
+   * без этого поля карточка ищет его не там и показывает «не ответила» под
+   * нарисованным рядом баллом.
+   */
+  baseKey?: Criterion;
 }
 
 export interface AnswerView {
@@ -85,6 +157,18 @@ export interface AnswerView {
   verbatim: string | null;
   groundingRefs: { timecode: string; note: string }[];
   qaFlags: string[];
+  /**
+   * Ответы на анкету, как их дала персона: ключ — идентификатор вопроса ЛИБО
+   * его текст (промпт разрешает и то, и другое).
+   *
+   * Хранится сырым словарём, а не готовым списком: сопоставление с заданными
+   * вопросами делает карточка, потому что только там известен порядок анкеты.
+   * Собранный здесь список пришлось бы пересобирать при каждом изменении
+   * анкеты, а он один на все карточки прогона.
+   */
+  surveyAnswers: Record<string, string>;
+  /** Свободные ответы: почему такое впечатление, что запомнилось, о героях. */
+  verbatims: Record<string, string>;
 }
 
 const SEGMENT_LABELS: Record<string, string> = {
@@ -115,6 +199,31 @@ function obj(value: unknown): Record<string, unknown> {
 }
 
 /**
+ * Словарь произвольных значений → словарь строк, годных для показа.
+ *
+ * Ответ на вопрос анкеты бывает числом (шкала), массивом (эмоции, ценности) и
+ * логическим значением — тип задаёт вопрос, а не персона. Показывать их надо
+ * все, поэтому приведение здесь, а не в разметке: `String(["интерес","скука"])`
+ * дал бы «интерес,скука» без пробела, а `String({})` — «[object Object]».
+ *
+ * Пустые значения отбрасываются: пустая строка в карточке неотличима от
+ * «вопрос задан, ответа нет», а это разные вещи.
+ */
+function flatten(source: Record<string, unknown>): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [key, value] of Object.entries(source)) {
+    if (value === null || value === undefined) continue;
+    const text = Array.isArray(value)
+      ? value.map((v) => String(v)).filter(Boolean).join(", ")
+      : typeof value === "object"
+        ? JSON.stringify(value)
+        : String(value);
+    if (text.trim()) out[key] = text;
+  }
+  return out;
+}
+
+/**
  * Цвет аватара выводится из идентификатора персоны, а не хранится.
  *
  * Персон в прогоне до пятисот, и держать для каждой поле ради оттенка — это
@@ -139,6 +248,32 @@ function scoresOf(source: Record<string, unknown>): Record<Criterion, number | n
   const out = {} as Record<Criterion, number | null>;
   for (const c of CRITERIA) out[c] = num(source[c]);
   return out;
+}
+
+/**
+ * Сводка QA из отчёта. `null` — прогон сделан до её появления.
+ *
+ * `null`, а не нули: «проверено 0» и «не знаем, проверялось ли» — разные факты,
+ * и первый на экране означал бы, что судья не посмотрел ни одного ответа.
+ */
+function qaOf(value: unknown): ReportView["qa"] {
+  const raw = obj(value);
+  if (Object.keys(raw).length === 0) return null;
+
+  const counts = (source: unknown, key: "kind" | "source") =>
+    Object.entries(obj(source))
+      .map(([name, count]) => ({ [key]: name, count: num(count) ?? 0 }))
+      .filter((row) => row.count > 0)
+      .sort((a, b) => b.count - a.count);
+
+  return {
+    checked: num(raw.checked) ?? 0,
+    flagged: num(raw.flagged) ?? 0,
+    byKind: counts(raw.by_kind, "kind") as { kind: string; count: number }[],
+    bySource: counts(raw.by_source, "source") as { source: string; count: number }[],
+    escalated: num(raw.escalated) ?? 0,
+    judgeFailures: num(raw.judge_failures) ?? 0,
+  };
 }
 
 function quotesOf(value: unknown): Quote[] {
@@ -200,6 +335,11 @@ export function parseReport(raw: Record<string, unknown>): ReportView {
     retentionRate: num(agg.retention_rate),
     watchedShare: num(agg.watched_share_mean),
     emotionalIndex: num(agg.emotional_index),
+    rationales: Object.fromEntries(
+      Object.entries(obj(raw.rationales)).flatMap(([k, v]) =>
+        typeof v === "string" && v.trim() ? [[k, v.trim()]] : [],
+      ),
+    ),
     topEmotions: (Array.isArray(agg.top_emotions) ? agg.top_emotions : []).flatMap((raw) => {
       const e = obj(raw);
       const name = str(e.name) ?? str(e.emotion);
@@ -224,6 +364,30 @@ export function parseReport(raw: Record<string, unknown>): ReportView {
     }),
     strengths: strings(raw.strengths),
     weaknesses: strings(raw.weaknesses),
+    recommendation: num(agg.recommendation_mean),
+    qa: qaOf(raw.qa_summary),
+    modelsUsed: (() => {
+      const m = obj(raw.models_used);
+      const text = str(m.text);
+      const vision = str(m.vision);
+      const judge = str(m.judge);
+      if (!text && !vision && !judge) return null;
+      return { text: text ?? "—", vision: vision ?? "—", judge: judge ?? "—" };
+    })(),
+    asked: (Array.isArray(raw.survey_asked) ? raw.survey_asked : []).flatMap((rawQ) => {
+      const q = obj(rawQ);
+      const label = str(q.label);
+      if (!label) return [];
+      const baseKey = str(q.baseKey);
+      return [{
+        id: str(q.id) ?? "?",
+        label,
+        type: str(q.type) ?? "открытый",
+        ...(baseKey && (CRITERIA as readonly string[]).includes(baseKey)
+          ? { baseKey: baseKey as Criterion }
+          : {}),
+      }];
+    }),
     riskPoints: (Array.isArray(raw.retention_risk_points) ? raw.retention_risk_points : [])
       .flatMap((rawPoint) => {
         const p = obj(rawPoint);
@@ -299,5 +463,103 @@ export function parseAnswer(card: {
       const reason = str(f.reason) ?? str(f.verdict);
       return reason ? [reason] : [];
     }),
+    surveyAnswers: flatten(obj(body.survey_answers)),
+    verbatims: flatten(verbatims),
   };
+}
+
+/**
+ * Строка вопроса в том виде, в каком её печатает промпт респондента:
+ * `[q-77] (scale) как дела?`. Модель охотно берёт её ключом ответа целиком.
+ */
+const PROMPT_LINE = /^\[([^\]]+)\]\s*(?:\(([^)]*)\)\s*)?(.*)$/;
+
+/** Ключ ответа во всех видах, какими персона могла назвать вопрос. */
+function answerKeys(answers: Record<string, string>): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const [raw, value] of Object.entries(answers)) {
+    const key = raw.trim();
+    const put = (k: string) => {
+      const norm = k.trim().toLocaleLowerCase();
+      if (norm && !out.has(norm)) out.set(norm, value);
+    };
+    put(key);
+    const m = PROMPT_LINE.exec(key);
+    if (m) {
+      put(m[1]);
+      put(m[3]);
+    }
+  }
+  return out;
+}
+
+const TYPED_IN_PERCEPTION: Record<string, "watchedShare" | "retentionIntent" | "recommendation"> = {
+  watched_share: "watchedShare",
+  retention: "retentionIntent",
+  nps: "recommendation",
+};
+
+/**
+ * Ответ персоны на заданный вопрос — откуда бы он ни пришёл. `null` — не ответила.
+ *
+ * Три источника, потому что промпт кладёт ответы в три разных места: базовые
+ * баллы в `scores`, типовые вопросы в `perception`, остальное в
+ * `survey_answers` — и там ключом может оказаться идентификатор, формулировка
+ * ЛИБО целая строка промпта «[q-77] (scale) как дела?».
+ *
+ * Живёт здесь, а не в карточке, ровно потому, что это уже четвёртый случай
+ * одной семьи: тот же разрыв чинили в `qa/checks.py` дважды и в
+ * `content/pack.py` один раз. Место, где он проверяется тестом, должно быть
+ * одно.
+ */
+export function answerForQuestion(a: AnswerView, q: AskedQuestion): string | null {
+  if (q.baseKey) {
+    const score = a.scores?.[q.baseKey];
+    if (typeof score === "number") return `${score} из 10`;
+  }
+
+  const keys = answerKeys(a.surveyAnswers ?? {});
+  const direct = keys.get(q.id.trim().toLocaleLowerCase())
+    ?? keys.get(q.label.trim().toLocaleLowerCase());
+  if (direct) return direct;
+
+  switch (TYPED_IN_PERCEPTION[q.type]) {
+    case "watchedShare":
+      return a.watchedShare !== null && a.watchedShare !== undefined
+        ? `${a.watchedShare}%` : null;
+    case "retentionIntent":
+      return a.retentionIntent || null;
+    case "recommendation":
+      return a.nps !== null && a.nps !== undefined ? `${a.nps} из 10` : null;
+    default:
+      return null;
+  }
+}
+
+
+/**
+ * Короткая подпись категории досмотра для узкой колонки.
+ *
+ * ─── Зачем ────────────────────────────────────────────────────────────────
+ * Полная формулировка корпуса — «Скорее хотелось досмотреть до конца» — в
+ * колонку строки персоны не влезает и обрезается многоточием на середине
+ * слова. Три коротких подписи различимы с одного взгляда, а полная
+ * формулировка остаётся в раскрытой части.
+ *
+ * ─── Почему неизвестное показывается как есть ─────────────────────────────
+ * Прочерк вместо непонятой строки означал бы, что расхождение промпта с
+ * моделью заметит только тот, кто полезет в JSON. Приведение к словарю корпуса
+ * делает воркер (agent_core/schemas/answer.py); если оно не сработало, это
+ * должно быть видно на экране.
+ */
+const RETENTION_SHORT: Record<string, string> = {
+  "Скорее хотелось досмотреть до конца": "Досмотрит",
+  "Скорее хотелось остановить просмотр": "Выключит",
+  "Затрудняюсь ответить": "Не решил",
+};
+
+export function retentionShort(value: string | null | undefined): string {
+  const text = (value ?? "").trim();
+  if (!text) return "—";
+  return RETENTION_SHORT[text] ?? text;
 }

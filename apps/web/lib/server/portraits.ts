@@ -160,6 +160,15 @@ export async function createPortrait(
   bodyMd: string,
   source: "manual" | "distilled" | "context_file" = "manual",
   userId?: string,
+  /**
+   * Ключ сегмента в формате дистилляции: `age_group|geo|gender`.
+   *
+   * По нему воркер сопоставляет персону с портретом при обогащении narrative.
+   * У портрета, заведённого вручную, сегмента нет — сопоставлять его не по
+   * чему, и в сборке он не участвует. Имя для этого не годится: человек правит
+   * его руками, и матчинг сломался бы на первом переименовании молча.
+   */
+  segmentKey?: string | null,
 ): Promise<Portrait> {
   // RLS policies fill tenant_id automatically, but we need it for the
   // versions table insert — get it from the current tenant context.
@@ -169,10 +178,10 @@ export async function createPortrait(
   const tenantId = tidRows[0]?.tid;
 
   const { rows } = await client.query<PortraitRow>(
-    `INSERT INTO audience_portraits (tenant_id, name, body_md, source)
-     VALUES ($1, $2, $3, $4)
+    `INSERT INTO audience_portraits (tenant_id, name, body_md, source, segment_key)
+     VALUES ($1, $2, $3, $4, $5)
      RETURNING id, tenant_id, name, body_md, source, created_at, updated_at`,
-    [tenantId, name, bodyMd, source],
+    [tenantId, name, bodyMd, source, segmentKey ?? null],
   );
 
   const portrait = rowToPortrait(rows[0]);

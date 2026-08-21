@@ -46,9 +46,12 @@ import copy
 import hashlib
 import json
 import os
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
+
+from .portraits import portrait_for
 
 DEFAULT_MODEL = "qwen3.6"
 
@@ -104,7 +107,12 @@ GROUNDED_FIELDS = (
 # ─── Кэш ─────────────────────────────────────────────────────────────────────
 
 
-def cache_key(skeleton: dict[str, Any], prompt_template: str, model: str) -> str:
+def cache_key(
+    skeleton: dict[str, Any],
+    prompt_template: str,
+    model: str,
+    portrait_md: str = "",
+) -> str:
     """
     Ключ обогащения одной персоны.
 
@@ -119,6 +127,16 @@ def cache_key(skeleton: dict[str, Any], prompt_template: str, model: str) -> str
     h.update(json.dumps(skeleton, sort_keys=True, ensure_ascii=False).encode("utf-8"))
     h.update(prompt_template.encode("utf-8"))
     h.update(model.encode("utf-8"))
+    # Портрет — часть промпта, а не часть скелета, и в ключ обязан входить.
+    # Иначе две персоны с одинаковым скелетом из разных сегментов получат один
+    # кэшированный narrative, собранный по чужому портрету, — и выглядеть он
+    # будет совершенно нормально.
+    #
+    # Пустой портрет ничего не дописывает намеренно: ключ прогонов без портрета
+    # обязан остаться прежним, иначе весь накопленный кэш обесценится в день
+    # выкладки и первый же прогон оплатит обогащение заново.
+    if portrait_md:
+        h.update(portrait_md.encode("utf-8"))
     return h.hexdigest()
 
 
@@ -161,32 +179,68 @@ class QwenTextClient:
     нельзя, потому что отсутствие ключа это штатное состояние CI.
     """
 
-    def __init__(self, config: Any | None = None, model: str | None = None):
-        from ..config import ModelConfig
+    def __init__(self, config: Any | None = None, model: str | None = None,
+                 temperature: float | None = None,
+                 response_schema: tuple[str, dict[str, Any]] | None = None,
+                 max_tokens: int | None = None):
+        from ..config import ModelConfig, TemperatureConfig
 
         self.config = config or ModelConfig.from_env()
         self.model = model or self.config.text_model
+        # `(имя, схема)` либо None. Клиент обслуживает две задачи: обогащение
+        # ждёт связный ТЕКСТ портрета, валидация — строгий JSON. Схема нужна
+        # только второй, и навязывать её первой значило бы требовать JSON там,
+        # где нужен абзац прозы.
+        self.response_schema = response_schema
+        self.max_tokens = max_tokens
+        # Стадия personaCreation. Прежде здесь стоял жёсткий ноль как условие
+        # воспроизводимости CDD #5 — но атрибуты DNA сэмплирует генератор через
+        # random.Random(seed) и модель к ним не прикасается, а этот вызов
+        # переписывает только narrative. Умолчание 0.9 даёт портретам различие
+        # формулировок; воспроизводимость narrative держит кэш.
+        self.temperature = (
+            TemperatureConfig.defaults().personaCreation
+            if temperature is None
+            else temperature
+        )
 
     def complete(self, *, prompt: str) -> str:
-        from openai import OpenAI
+        from ..schemas.responses import content_of, response_format
+        from ..tracing import llm_client
 
-        client = OpenAI(
+        # Клиент выдаётся agent_core.tracing: там он оборачивается для
+        # LangFuse, если трассировка включена, и остаётся обычным, если нет.
+        client = llm_client(
             api_key=self.config.api_key,
             base_url=self.config.base_url,
             default_headers=self.config.default_headers,
             timeout=REQUEST_TIMEOUT_SEC,
         )
+        extra: dict[str, Any] = {}
+        if self.response_schema is not None:
+            extra["response_format"] = response_format(*self.response_schema)
+        if self.max_tokens is not None:
+            extra["max_tokens"] = self.max_tokens
+
         response = client.chat.completions.create(
+            # Имя наблюдения в трассе. Без него интеграция назовёт
+            # генерацию `OpenAI-generation` — одинаково для ответа
+            # персоны, вердикта судьи и разбора кадра.
+            name="enrich-persona",
             model=self.model,
             messages=[{"role": "user", "content": prompt}],
-            # temperature=0 — не «поменьше фантазии», а условие воспроизводимости
-            # CDD #5. Провайдер вправе его не соблюсти полностью, поэтому вторым
-            # эшелоном стоит кэш.
-            temperature=0,
+            temperature=self.temperature,
             # Размышление выключено: см. ModelConfig.thinking — замер и причина.
             extra_body=self.config.extra_body("persona"),
+            **extra,
         )
-        return (response.choices[0].message.content or "").strip()
+        # Роль зависит от задачи клиента: со схемой он проверяет персон, без
+        # схемы — переписывает портрет. Обрыв по потолку важен в обоих случаях,
+        # но назвать его надо тем именем, под которым стоит потолок.
+        return content_of(
+            response,
+            role="persona_validation" if self.response_schema else "persona_enrich",
+        )
 
 
 # ─── Результат ───────────────────────────────────────────────────────────────
@@ -228,7 +282,9 @@ def _skeleton(persona: dict[str, Any]) -> dict[str, Any]:
     return {k: persona[k] for k in GROUNDED_FIELDS if k in persona}
 
 
-def render_prompt(template: str, persona: dict[str, Any]) -> str:
+def render_prompt(
+    template: str, persona: dict[str, Any], portrait_md: str = ""
+) -> str:
     """
     Подставляет скелет в шаблон persona.enrich.md.
 
@@ -241,6 +297,10 @@ def render_prompt(template: str, persona: dict[str, Any]) -> str:
     lifestyle = persona.get("lifestyle_and_interests", {})
     return (
         template
+        # Пустая строка, а не пропуск подстановки: оставленный `{{portrait_md}}`
+        # уехал бы в модель буквально, и она приняла бы фигурные скобки за часть
+        # задания.
+        .replace("{{portrait_md}}", portrait_md)
         .replace("{{skeleton_json}}", json.dumps(_skeleton(persona), ensure_ascii=False, indent=2))
         .replace("{{age}}", str(demo.get("age", "")))
         .replace("{{gender}}", str(demo.get("gender", "")))
@@ -260,6 +320,9 @@ def enrich_personas(
     prompt: str | None = None,
     cache: Cache | None = None,
     model: str | None = None,
+    on_progress: Callable[[int, int], None] | None = None,
+    temperature: float | None = None,
+    portraits: dict[str, str] | None = None,
 ) -> EnrichResult:
     """
     Переписывает narrative каждой персоны моделью, оставляя скелет нетронутым.
@@ -272,6 +335,14 @@ def enrich_personas(
     MIN_NARRATIVE_LEN отбрасывается и заменяется шаблонным: canonical JSON Schema
     (#4) такую персону всё равно не примет, и лучше это увидеть здесь, чем при
     сохранении в базу.
+
+    ─── on_progress ───────────────────────────────────────────────────────────
+    Зовётся после КАЖДОЙ персоны, включая взятые из кэша и оставшиеся с
+    шаблонным narrative: пользователь считает обработанных, а не оплаченных.
+
+    Отказ обратного вызова не роняет генерацию. Прогресс — служебная информация,
+    и уронить из-за неё аудиторию, наполовину написанную моделью, значит
+    поменять оплаченный результат на аккуратную отчётность.
     """
     model_name = model or os.environ.get("AI_MODEL") or DEFAULT_MODEL
 
@@ -285,17 +356,33 @@ def enrich_personas(
 
     if client is None:
         try:
-            client = QwenTextClient(model=model_name)
+            # Стадия personaCreation: разброс формулировок портрета.
+            client = QwenTextClient(model=model_name, temperature=temperature)
         except Exception as exc:  # ConfigError и всё, что зависит от среды
             return EnrichResult(
                 personas=copy.deepcopy(personas),
                 degraded_reason=f"модель недоступна: {type(exc).__name__}: {exc}",
             )
 
+    total = len(personas)
+
+    def report(done: int) -> None:
+        if on_progress is None:
+            return
+        try:
+            on_progress(done, total)
+        except Exception:  # noqa: BLE001 — см. докстринг: прогресс не роняет работу
+            pass
+
     result = EnrichResult()
-    for persona in personas:
+    for index, persona in enumerate(personas, start=1):
         enriched = copy.deepcopy(persona)
-        key = cache_key(_skeleton(persona), prompt, model_name)
+        # Портрет сегмента — часть промпта этой персоны, поэтому входит и в
+        # ключ кэша. Иначе две персоны с одинаковым скелетом из разных
+        # сегментов получат один кэшированный narrative, собранный по чужому
+        # портрету, — и выглядеть он будет совершенно нормально.
+        portrait = portrait_for(persona, portraits or {})
+        key = cache_key(_skeleton(persona), prompt, model_name, portrait_md=portrait)
 
         cached = cache.get(key) if cache else None
         if cached is not None:
@@ -303,10 +390,13 @@ def enrich_personas(
             result.personas.append(enriched)
             result.sources.append("model")
             result.cache_hits += 1
+            report(index)
             continue
 
         try:
-            text = client.complete(prompt=render_prompt(prompt, persona))
+            text = client.complete(
+                prompt=render_prompt(prompt, persona, portrait_md=portrait)
+            )
         except Exception as exc:
             # Отказ на середине списка: уже обогащённые персоны сохраняются,
             # остальные остаются с шаблонным narrative. Наполовину обогащённый
@@ -315,12 +405,14 @@ def enrich_personas(
             result.degraded_reason = f"вызов модели не удался: {type(exc).__name__}: {exc}"
             result.personas.append(enriched)
             result.sources.append("template")
+            report(index)
             continue
 
         result.calls_made += 1
         if len(text) < MIN_NARRATIVE_LEN:
             result.personas.append(enriched)
             result.sources.append("template")
+            report(index)
             continue
 
         if cache:
@@ -328,5 +420,6 @@ def enrich_personas(
         enriched["narrative"] = text
         result.personas.append(enriched)
         result.sources.append("model")
+        report(index)
 
     return result

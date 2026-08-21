@@ -14,6 +14,9 @@ import os
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
+from .dedup import DEFAULT_THRESHOLD as DEDUP_THRESHOLD
+from .dedup import hamming
+
 DEFAULT_MODEL = "qwen3.6"
 
 #: Сколько секунд ждать ответа модели на одну панель. Разбор изображения идёт
@@ -160,13 +163,22 @@ class MongoCache:
         self.collection = collection
         self.tenant_id = tenant_id
 
+    #: Имя поля ключа в документе.
+    #:
+    #: `content_hash`, а не `cache_key`: именно так поле названо в схеме
+    #: коллекции и именно по нему построен индекс
+    #: (`infra/mongo/init/01_collections.js`). Писать под другим именем значило
+    #: держать кэш, который никогда не попадает в индекс: на пустой коллекции
+    #: это незаметно, а на выросшей — полный перебор при каждом промахе.
+    KEY_FIELD = "content_hash"
+
     def get(self, key: str) -> dict[str, Any] | None:
-        doc = self.collection.find_one({"tenant_id": self.tenant_id, "cache_key": key})
+        doc = self.collection.find_one({"tenant_id": self.tenant_id, self.KEY_FIELD: key})
         return doc.get("analysis") if doc else None
 
     def set(self, key: str, value: dict[str, Any]) -> None:
         self.collection.update_one(
-            {"tenant_id": self.tenant_id, "cache_key": key},
+            {"tenant_id": self.tenant_id, self.KEY_FIELD: key},
             {"$set": {"analysis": value}},
             upsert=True,
         )
@@ -182,6 +194,16 @@ class AnalysisResult:
     scenes: list[dict[str, Any]] = field(default_factory=list)
     calls_made: int = 0
     cache_hits: int = 0
+    #: Сцены, описание которым досталось от предыдущей — визуально та же
+    #: картинка. Отдельно от cache_hits: попадание в кэш означает «это уже
+    #: разбирали когда-то», а дедупликация — «соседняя сцена выглядит так же».
+    #: Слить их в один счётчик значит потерять способность понять, за что
+    #: заплачено и почему у двух сцен одинаковое описание.
+    deduped: int = 0
+    #: Панели, которые провайдер отказался разбирать. Сцена остаётся в таймлайне
+    #: со своими границами и признаком отказа — см. analyze_panels.
+    failures: int = 0
+    failure_reasons: list[str] = field(default_factory=list)
 
 
 class VlmClient(Protocol):
@@ -222,13 +244,39 @@ def analyze_panels(
     budget = budget or CallBudget.unlimited()
     result = AnalysisResult()
 
+    previous_hash: int | None = None
+    previous_analysis: dict[str, Any] | None = None
+
     for panel in panels:
+        # ── Соседняя сцена, визуально неотличимая от предыдущей ─────────────
+        #
+        # Слайд, который лектор держит три минуты, режется на блоки по 30 секунд
+        # (см. build_scenes) — и каждый блок стоил бы отдельного вызова за один и
+        # тот же ответ. Кэш здесь не помогает: панели собраны из разных кадров, и
+        # байты у них разные, а значит и ключ разный.
+        #
+        # Сравнение только с НЕПОСРЕДСТВЕННО предыдущей панелью, а не со всеми
+        # виденными: возврат к той же локации через десять минут — это событие
+        # материала, и описание ему полагается своё. Тем же порогом, что и кадры:
+        # 4 бита из 64.
+        current_hash = _panel_hash(panel)
+        if (
+            previous_analysis is not None
+            and previous_hash is not None
+            and current_hash is not None
+            and hamming(current_hash, previous_hash) <= DEDUP_THRESHOLD
+        ):
+            result.scenes.append(_stamp({**previous_analysis, "deduped": True}, panel))
+            result.deduped += 1
+            continue
+
         key = cache_key(panel.image, prompt, model_name)
 
         cached = cache.get(key) if cache else None
         if cached is not None:
             result.scenes.append(_stamp(cached, panel))
             result.cache_hits += 1
+            previous_hash, previous_analysis = current_hash, cached
             continue
 
         if budget.limit is not None and result.calls_made >= budget.limit:
@@ -238,31 +286,109 @@ def analyze_panels(
                 remaining=len(panels) - len(result.scenes),
             )
 
-        analysis = client.analyze(image=panel.image, prompt=_render(prompt, panel))
+        # ── Отказ на одной панели не отменяет разбор ролика ─────────────────
+        #
+        # Провайдер отвергает вход по модерации («data_inspection_failed») на
+        # отдельных кадрах — и один такой отказ уносил весь прогон, уже
+        # оплативший скачивание, прокси, звук, транскрипцию и часть панелей.
+        #
+        # Выбор тот же, что для опроса персон: панель — независимое наблюдение,
+        # и девятнадцать разобранных сцен полезнее, чем ноль. Но сцена остаётся
+        # в таймлайне со своими границами: без неё в материале появилась бы
+        # дыра, и следующая сцена молча растянулась бы на чужой кусок.
+        #
+        # Описание при этом НЕ выдумывается. Пустое честнее правдоподобного:
+        # персона сошлётся на то, чего не видела, а судья справедливо забракует
+        # её ответ.
+        try:
+            analysis = client.analyze(image=panel.image, prompt=_render(prompt, panel))
+        except Exception as exc:  # noqa: BLE001 — причина обязана дойти до отчёта
+            result.failures += 1
+            reason = (
+                f"{panel.timestamp_sec:.2f}–{(getattr(panel, 'end_sec', 0.0) or 0.0):.2f} с: "
+                f"{type(exc).__name__}: {exc}"
+            )
+            result.failure_reasons.append(reason)
+            result.scenes.append(_stamp({"analysis_failed": True, "reason": reason}, panel))
+            # В кэш отказ не кладётся: иначе повторный прогон получил бы пустое
+            # описание бесплатно и не сделал бы ни одной попытки — дефект стал бы
+            # постоянным и потому незаметным.
+            continue
+
         result.calls_made += 1
         if cache:
             cache.set(key, analysis)
         result.scenes.append(_stamp(analysis, panel))
+        previous_hash, previous_analysis = current_hash, analysis
+
+    # Ноль разобранных сцен — отказ, а не деградация: персонам показывать нечего,
+    # и отчёт получился бы по ролику, которого никто не смотрел.
+    if panels and result.failures == len(panels):
+        raise RuntimeError(
+            f"не разобрано ни одной панели из {len(panels)}: "
+            f"{'; '.join(result.failure_reasons[:3])}"
+        )
 
     return result
 
 
+def _panel_hash(panel: Any) -> int | None:
+    """
+    Перцептивный хеш панели. `None` — посчитать не вышло.
+
+    Отказ хеширования не должен ронять разбор: он всего лишь означает, что
+    сцена будет оплачена, хотя могла бы не быть. Ронять из-за этого прогон,
+    в котором уже оплачены транскрипция и часть панелей, несоразмерно.
+    """
+    from .dedup import dhash_bytes
+
+    try:
+        return dhash_bytes(panel.image)
+    except Exception:  # noqa: BLE001 — см. докстринг
+        return None
+
+
 def _render(template: str, panel: Any) -> str:
     """Подстановка переменных промпта content.frame_analysis."""
+    end = getattr(panel, "end_sec", 0.0) or panel.timestamp_sec
+    times = getattr(panel, "frame_times", None) or []
     return (
         template
         .replace("{{timestamp}}", f"{panel.timestamp_sec:.2f}")
+        .replace("{{scene_start}}", f"{panel.timestamp_sec:.2f}")
+        .replace("{{scene_end}}", f"{end:.2f}")
         .replace("{{panel_size}}", str(len(panel.frames) or 1))
+        .replace(
+            "{{frame_times}}",
+            ", ".join(f"{t:.2f}" for t in times) or f"{panel.timestamp_sec:.2f}",
+        )
         .replace("{{frames}}", f"панель #{panel.index}")
     )
 
 
 def _stamp(analysis: dict[str, Any], panel: Any) -> dict[str, Any]:
-    """Приклеивает к разбору таймкод и номер панели из proxy, а не из ответа."""
+    """
+    Приклеивает к разбору границы сцены из proxy, а не из ответа модели.
+
+    Раньше приклеивался один момент — время первого кадра панели, — и описание
+    четырёх разных моментов оказывалось привязано к одному. Персона, сославшаяся
+    на середину, получала описание от начала; судья видел несовпадение и был
+    прав. Теперь у описания есть начало и конец, и внутри этих границ оно верно
+    по построению.
+
+    `timestamp` из ответа модели затирается намеренно: промпт просит его вернуть
+    ради связности рассуждения, но единственный источник времени — proxy
+    (Decision Log #14). Модель видит только подставленное значение и вольна его
+    переписать.
+    """
+    end = getattr(panel, "end_sec", 0.0) or panel.timestamp_sec
     return {
         **analysis,
         "panel_index": panel.index,
         "timestamp_sec": panel.timestamp_sec,
+        "end_sec": end,
+        "is_cut": bool(getattr(panel, "is_cut", True)),
+        "frame_times": list(getattr(panel, "frame_times", None) or []),
     }
 
 
@@ -286,16 +412,29 @@ class QwenVlmClient:
         self.model = model or self.config.vlm_model
 
     def analyze(self, *, image: bytes, prompt: str) -> dict[str, Any]:
-        from openai import OpenAI
+        from ..tracing import llm_client
 
-        client = OpenAI(
+        # Клиент выдаётся agent_core.tracing: там он оборачивается для
+        # LangFuse, если трассировка включена, и остаётся обычным, если нет.
+        client = llm_client(
             api_key=self.config.api_key,
             base_url=self.config.vlm_base_url,
             default_headers=self.config.default_headers,
             timeout=REQUEST_TIMEOUT_SEC,
         )
+        from ..schemas.responses import (
+            FRAME_ANALYSIS,
+            MAX_TOKENS,
+            content_of,
+            response_format,
+        )
+
         data_url = "data:image/jpeg;base64," + base64.b64encode(image).decode("ascii")
         response = client.chat.completions.create(
+            # Имя наблюдения в трассе. Без него интеграция назовёт
+            # генерацию `OpenAI-generation` — одинаково для ответа
+            # персоны, вердикта судьи и разбора кадра.
+            name="analyze-frame",
             model=self.model,
             messages=[{
                 "role": "user",
@@ -304,11 +443,17 @@ class QwenVlmClient:
                     {"type": "image_url", "image_url": {"url": data_url}},
                 ],
             }],
+            # Схема, а не уговоры в промпте: без неё модель вольна ответить
+            # прозой, и вся эта проза уезжала в scene_description под флагом
+            # parse_failed — то есть в таймлайн, который видит персона.
+            response_format=response_format("SceneAnalysis", FRAME_ANALYSIS),
+            # Потолок обязателен при схеме — см. MAX_TOKENS.
+            max_tokens=MAX_TOKENS["frame_analysis"],
             # Размышление выключено — здесь особенно очевидно: разбор кадра это
             # описание увиденного, а не вывод. См. ModelConfig.thinking.
             extra_body=self.config.extra_body("frames"),
         )
-        return _parse_json(response.choices[0].message.content or "")
+        return _parse_json(content_of(response, role="frame_analysis"))
 
 
 def _parse_json(text: str) -> dict[str, Any]:

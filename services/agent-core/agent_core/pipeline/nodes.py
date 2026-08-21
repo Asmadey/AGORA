@@ -30,6 +30,8 @@ from __future__ import annotations
 
 import json
 import os
+import time
+from functools import partial
 from pathlib import Path
 from typing import Any
 
@@ -54,6 +56,76 @@ def workdir(state: PipelineState) -> Path:
     return path
 
 
+def _temperatures(state: PipelineState) -> Any:
+    """
+    Температуры прогона из снимка настроек задачи.
+
+    Снимок, а не текущие настройки арендатора: пока задача стоит в очереди,
+    команда может сменить значение, и тогда персоны созданы под одной
+    температурой, а опрошены под другой — разница в разбросе ответов выглядела
+    бы свойством материала. Тот же приём, что у капа вызовов и модели Whisper.
+    """
+    from ..config import TemperatureConfig
+
+    return TemperatureConfig.for_task(state.get("settings_snapshot"))
+
+
+def _model_config(state: PipelineState) -> Any:
+    """
+    Конфигурация моделей прогона: выбор из снимка поверх окружения.
+
+    Как и температуры, берётся из снимка задачи, а не из настроек на лету: смена
+    модели, пока задача стоит в очереди, дала бы отчёт, у которого в карточке
+    одна модель, а считала его другая.
+    """
+    from dataclasses import replace
+
+    from ..config import ModelConfig
+    from ..secrets import tenant_api_key
+
+    config = ModelConfig.for_task(state.get("settings_snapshot"))
+
+    # Ключ читается из настроек арендатора В МОМЕНТ ПРОГОНА, а не из снимка:
+    # снимок живёт столько же, сколько отчёт, и копия секрета в каждой строке
+    # `tasks` — это тот же секрет, размноженный по резервным копиям базы без
+    # единого способа его отозвать.
+    #
+    # Отсутствие своего ключа — самый частый случай и не ошибка: работает ключ
+    # окружения. А вот ошибка расшифровки наружу выходит, а не превращается в
+    # откат: прогон под чужим ключом заметить было бы нечем.
+    own = tenant_api_key(str(state.get("tenant_id") or ""))
+    return replace(config, api_key=own) if own else config
+
+
+def _models_used(state: PipelineState) -> dict[str, str]:
+    """
+    Какими моделями считался прогон — для карточки отчёта.
+
+    Берётся из той же конфигурации, по которой шли вызовы, а не из окружения на
+    момент чтения: модель меняется из интерфейса, и отчёт, называющий текущую
+    вместо использованной, врал бы тем убедительнее, чем чаще её меняют.
+
+    Ключа здесь нет: отчёт живёт долго и уезжает в Mongo, а секрет, попавший
+    туда, не отозвать.
+
+    Отсутствие конфигурации — не отказ. Узел analytics считает агрегат и без
+    провайдера (числа не требуют модели), и падение здесь роняло бы весь отчёт
+    ради подписи под ним. Пустой словарь означает «не знаем», и карточка так и
+    напишет.
+    """
+    from ..config import ConfigError
+
+    try:
+        config = _model_config(state)
+    except ConfigError:
+        return {}
+    return {
+        "text": config.text_model,
+        "vision": config.vlm_model,
+        "judge": config.judge_model_or_text,
+    }
+
+
 def _prompt(name: str, state: PipelineState) -> tuple[str, str | None]:
     """
     Шаблон промпта: сначала запиннённая версия прогона, потом файл.
@@ -66,7 +138,13 @@ def _prompt(name: str, state: PipelineState) -> tuple[str, str | None]:
 
     Поэтому падение назад к файлу возможно, но не бесшумно: причина уходит в
     `degraded` и обязана попасть в отчёт.
+
+    Служебная шапка файла снимается `body_of`: до этого строка «Переменные: …»
+    проходила подстановку наравне с телом, и ответ персоны уезжал в модель
+    дважды — см. agent_core/prompt_text.py.
     """
+    from ..prompt_text import body_of
+
     snapshot = state.get("prompts_snapshot") or {}
     pinned = snapshot.get(name)
     dsn = os.environ.get("DATABASE_URL")
@@ -86,7 +164,7 @@ def _prompt(name: str, state: PipelineState) -> tuple[str, str | None]:
             cur.execute("SELECT template FROM prompts WHERE id = %s", (pinned["id"],))
             row = cur.fetchone()
             if row:
-                return row[0], None
+                return body_of(row[0]), None
 
     here = Path(__file__).resolve()
     for parent in here.parents[:6]:
@@ -96,7 +174,7 @@ def _prompt(name: str, state: PipelineState) -> tuple[str, str | None]:
                 f"промпт {name}: снимок есть, но версия не прочитана из базы — "
                 f"взят файл prompts/{name}.md"
             )
-            return candidate.read_text("utf-8"), why
+            return body_of(candidate.read_text("utf-8")), why
     raise StageNotImplemented(f"промпт {name} не найден ни в снимке, ни в prompts/")
 
 
@@ -129,7 +207,64 @@ def probe_and_normalize(state: PipelineState) -> dict[str, Any]:
     info = probe(src)
     proxy = workdir(state) / "proxy.mp4"
     make_proxy(src, proxy)
-    return {"proxy_ref": str(proxy), "duration_sec": info.duration_sec}
+
+    update: dict[str, Any] = {"proxy_ref": str(proxy), "duration_sec": info.duration_sec}
+    degraded = _build_playback(state, src)
+    if degraded:
+        update["degraded"] = degraded
+    return update
+
+
+def _build_playback(state: PipelineState, src: Path) -> list[str]:
+    """
+    Собирает копию ролика для просмотра и выгружает её в S3.
+
+    Отказ не роняет прогон: плеер в этом случае возьмёт исходник, как и до
+    появления копии. Ронять разбор материала из-за того, что видео будет хуже
+    перематываться, — обмен не в ту сторону.
+
+    Считается здесь, а не отдельной задачей Celery: шаг занимает около минуты на
+    трёхминутном ролике (замер 18.08.2026), и вынос его в отдельную задачу дал
+    бы вторую очередь, второй набор состояний и второй способ «зависнуть» ради
+    экономии, которой нет — конвейер всё равно ждёт разбор кадров.
+    """
+    from ..media.playback import make_playback
+
+    degraded: list[str] = []
+    try:
+        dst = workdir(state) / "playback.mp4"
+        make_playback(src, dst)
+
+        from ..storage import Boto3S3
+
+        key = f"playback/{state['tenant_id']}/{state['task_id']}.mp4"
+        Boto3S3().upload(dst, key, "video/mp4")
+    except Exception as exc:  # noqa: BLE001
+        return [
+            f"копия для просмотра не собрана ({type(exc).__name__}: {exc}); "
+            f"плеер возьмёт исходник"
+        ]
+
+    dsn = os.environ.get("DATABASE_URL")
+    if not dsn:
+        return ["копия для просмотра собрана, но ключ не записан: нет DATABASE_URL"]
+
+    try:
+        import psycopg
+
+        from ..db import tenant_scope
+
+        with psycopg.connect(dsn) as conn, tenant_scope(conn, state["tenant_id"]) as cur:
+            cur.execute(
+                "UPDATE tasks SET playback_ref = %s WHERE id = %s::uuid",
+                (key, str(state["task_id"])),
+            )
+    except Exception as exc:  # noqa: BLE001
+        degraded.append(
+            f"копия для просмотра выгружена, но ключ не записан "
+            f"({type(exc).__name__}: {exc}); плеер возьмёт исходник"
+        )
+    return degraded
 
 
 def extract_audio(state: PipelineState) -> dict[str, Any]:
@@ -173,7 +308,14 @@ def segment_video(state: PipelineState) -> dict[str, Any]:
 
 
 def transcribe(state: PipelineState) -> dict[str, Any]:
-    from ..asr.transcribe import transcribe as run
+    """
+    Расшифровка. Отдельно от диаризации — для прямых вызовов и проверок.
+
+    В графе обе половины исполняет `transcribe_and_diarize`: по очереди они
+    съедали 473 секунды из восьмисот, и гейт #22 (600 с) не выполнялся из-за
+    этого, а не из-за разбора кадров.
+    """
+    run = _asr(state)
 
     segments = run(str(state["audio_ref"]))
     return {
@@ -181,6 +323,175 @@ def transcribe(state: PipelineState) -> dict[str, Any]:
             {"start": s.start, "end": s.end, "text": s.text} for s in segments
         ]
     }
+
+
+
+def _asr(state: PipelineState):
+    """
+    Какой моделью распознавать. Возвращает функцию с сигнатурой whisper.
+
+    Выбор идёт по СНИМКУ настроек прогона, а не по окружению: модель меняется из
+    интерфейса, и прогон обязан исполниться той, что была выбрана на момент
+    запуска. Иначе задача, простоявшая в очереди, распозналась бы одной моделью,
+    а отчёт назвал бы другую.
+
+    Перечень ONNX-моделей закрытый, а не признак в имени: имя видит
+    пользователь, и завязывать на его подстроку выбор кода значит однажды
+    переименовать модель и сломать конвейер.
+    """
+    from ..config import GIGAAM_MODELS, ONNX_MODELS, TranscriptionConfig
+
+    snapshot = state.get("settings_snapshot") or {}
+    name = TranscriptionConfig.for_task(snapshot.get("whisperModel")).whisper_model
+
+    import importlib
+
+    # Модуль берётся по имени, а не через `from ..asr import transcribe`: в
+    # `asr/__init__.py` стоит ре-экспорт `from .transcribe import transcribe`, и
+    # это имя перекрывает одноимённый подмодуль. Импорт «как обычно» дал бы
+    # функцию вместо модуля — и молча, потому что вызвать можно и то, и другое.
+    if name in GIGAAM_MODELS:
+        where = "agent_core.asr.gigaam"
+    elif name in ONNX_MODELS:
+        where = "agent_core.asr.parakeet"
+    else:
+        where = "agent_core.asr.transcribe"
+    module = importlib.import_module(where)
+    return partial(_call, module, name)
+
+
+def _call(module: Any, model: str, audio: Any) -> Any:
+    """
+    Зовёт распознаватель модуля, передавая ИМЯ МОДЕЛИ.
+
+    Через модуль, а не через прямой импорт функции: тесты подменяют
+    `module.transcribe`, и импортированная заранее ссылка мимо подмены прошла бы
+    — заглушка стоит, а вызывается настоящий движок.
+    """
+    return module.transcribe(audio, model=model)
+
+
+def transcribe_and_diarize(state: PipelineState) -> dict[str, Any]:
+    """
+    Расшифровка и диаризация одновременно.
+
+    ─── Почему одним узлом ─────────────────────────────────────────────────
+    PRD §8 объявляет их параллельными, и граф это отражал: `detect_speech`
+    ветвился на два узла, оба сходились в `merge_transcript`. Параллелизм
+    оказался структурным, а не временным — разные каналы состояния, чтобы
+    LangGraph не отверг одновременную запись, — но исполнялись ветки по очереди:
+    синхронный Pregel проходит суперступень узел за узлом. Замер: 245 с и 228 с
+    подряд.
+
+    Асинхронный запуск графа развёл бы ветки по потокам сам, но чекпоинтер
+    прогона реализует только синхронные `put` и `get_tuple`, а именно он даёт
+    прогону пережить перезапуск воркера посреди транскрипции. Менять его ради
+    параллелизма — менять то, что работает, ради того, что можно получить проще.
+
+    Поэтому потоки заводятся здесь явно. И CTranslate2 (whisper), и torch
+    (pyannote) отпускают GIL на время счёта, так что перекрытие настоящее: на
+    восьми ядрах при OMP_NUM_THREADS=4 каждая половина занимает четыре, вместе
+    они занимают машину целиком.
+
+    ─── Разные права на отказ ──────────────────────────────────────────────
+    Диаризация может не состояться: транскрипт без ярлыков спикеров остаётся
+    полезным, и `DiarizationUnavailable` уходит в `degraded`. Расшифровка — нет:
+    содержание речи больше взять неоткуда, разбор кадров описывает картинку.
+    Отчёт по немому ролику выглядел бы полноценным.
+    """
+    from concurrent.futures import ThreadPoolExecutor
+
+    from ..asr import budget
+    from ..asr.diarize import DiarizationUnavailable
+    from ..asr.diarize import diarize as run_diarize
+    from ..config import TranscriptionConfig
+    from ..tracing import submit_in_context
+
+    audio = str(state["audio_ref"])
+    spans = [(a, b) for a, b in state.get("speech_regions", [])]
+    stage_timings: dict[str, float] = {}
+
+    def timed(name: str, fn: Any) -> Any:
+        started = time.monotonic()
+        try:
+            return fn()
+        finally:
+            # Замер снимается и на отказе: «на чём встало и через сколько» —
+            # самый нужный при разборе случай, и терять его незачем.
+            stage_timings[name] = round(time.monotonic() - started, 3)
+
+    def do_transcribe():
+        return timed("transcribe", lambda: _asr(state)(audio))
+
+    def do_diarize():
+        return timed("diarize", lambda: run_diarize(audio, spans=spans or None))
+
+    degraded: list[str] = []
+
+    # ─── Помещаются ли они в память вместе ────────────────────────────────
+    #
+    # Потоки одного процесса складывают пик. Замер 18.08.2026 на дорожке 15
+    # минут: pyannote 2,4 ГБ, whisper large-v3 5,0 ГБ, parakeet кусками 1,2 ГБ.
+    # С whisper пара просит 7,4 ГБ — и это те шесть убийств по OOM, что лежат в
+    # журнале ядра сервера. Убитый воркер не выглядит нехваткой памяти: прогон
+    # обрывается, следующий на том же ролике обрывается снова, и причину ищут
+    # в ролике.
+    model = TranscriptionConfig.for_task(
+        (state.get("settings_snapshot") or {}).get("whisperModel")
+    ).whisper_model
+
+    if budget.can_run_together(model):
+        with ThreadPoolExecutor(max_workers=2, thread_name_prefix="asr") as pool:
+            # Контекст трассы переносится в оба потока: иначе спан, открытый
+            # внутри распознавания, окажется корнем собственной трассы, а не
+            # частью прогона. Сегодня спанов внутри нет — но добавляются они
+            # одной строкой и ничего не ломают заметно.
+            transcription = submit_in_context(pool, do_transcribe)
+            diarization = submit_in_context(pool, do_diarize)
+
+            # Расшифровка забирается первой: её отказ отменяет прогон, и ждать
+            # ради него ещё и диаризацию незачем. Пул при выходе из with всё
+            # равно дождётся второго потока — бросить его на середине нельзя,
+            # он держит модель.
+            segments = transcription.result()
+            try:
+                turns = diarization.result()
+            except DiarizationUnavailable as exc:
+                turns = []
+                degraded.append(f"diarize: {exc}")
+    else:
+        # По очереди. Дороже на время диаризации, но живой прогон дороже
+        # быстрого. В отчёт это идёт строкой: замедление, о котором не сказано,
+        # разбирают как дефект — а это решение, и у него есть причина.
+        segments = do_transcribe()
+        try:
+            turns = do_diarize()
+        except DiarizationUnavailable as exc:
+            turns = []
+            degraded.append(f"diarize: {exc}")
+        need = (
+            budget.TRANSCRIBE_PEAK_MB.get(model, budget.UNKNOWN_PEAK_MB)
+            + budget.DIARIZE_PEAK_MB
+        )
+        degraded.append(
+            f"расшифровка и диаризация выполнены по очереди: вместе они просят "
+            f"{need} МБ, а свободно {budget.available_mb():.0f} МБ"
+        )
+
+    update: dict[str, Any] = {
+        "transcript_raw": [
+            {"start": s.start, "end": s.end, "text": s.text} for s in segments
+        ],
+        "speaker_turns": [
+            {"start": t.start, "end": t.end, "speaker": t.speaker} for t in turns
+        ],
+        # Длительность каждой половины по отдельности. На уровне графа это теперь
+        # один узел, а разбивка — ровно то, что показало, куда уходит время.
+        "stage_timings": stage_timings,
+    }
+    if degraded:
+        update["degraded"] = degraded
+    return update
 
 
 def diarize(state: PipelineState) -> dict[str, Any]:
@@ -222,31 +533,73 @@ def merge_transcript(state: PipelineState) -> dict[str, Any]:
 
 
 def sample_frames(state: PipelineState) -> dict[str, Any]:
-    from ..frames.dedup import dedupe
-    from ..frames.extract import build_panels, extract_frames
-    from ..frames.scenes import detect_scenes, keyframe_timestamps
+    """
+    Сцены → панели. Одна сцена — одна панель — один вызов модели.
+
+    ─── Что здесь было ─────────────────────────────────────────────────────
+    Кадры брались по одному на сцену (середина), потом склеивались в панели по
+    четыре ПОДРЯД — то есть в одну картинку попадали моменты, разнесённые на
+    полминуты, а описание получало время первого из них. Отсюда шесть описаний
+    на ролик 2:42 и отбраковки по grounding.
+
+    Вторая беда была тише: `kept_stamps = [stamps[frames.index(f)] for f in kept]`.
+    `extract_frames` штатно пропускает кадры, которые ffmpeg не отдал, — и после
+    первого же пропуска эта строка сдвигала времена всех последующих кадров.
+    Рассинхрон включался сам собой и ничем себя не выдавал. Теперь времена
+    приезжают парами из `extract_frames` и никем не пересчитываются.
+
+    Дедупликация переехала на уровень панелей (`analyze_panels`): выбрасывать
+    кадры внутри сцены нельзя — они там затем и стоят, чтобы модель увидела
+    движение, — а вот две подряд идущие одинаковые сцены платить дважды не
+    должны.
+    """
+    from ..frames.extract import panels_for_scenes
+    from ..frames.scenes import detect_scenes
 
     proxy = str(state["proxy_ref"])
     scenes = detect_scenes(proxy)
-    stamps = keyframe_timestamps(scenes)
-    frames = extract_frames(proxy, stamps, workdir(state) / "frames")
-
-    kept = dedupe(frames)
-    kept_stamps = [stamps[frames.index(f)] for f in kept]
+    panels = panels_for_scenes(proxy, scenes, workdir(state) / "frames")
 
     panels_dir = workdir(state) / "panels"
     panels_dir.mkdir(parents=True, exist_ok=True)
     refs: list[dict[str, Any]] = []
-    for i, panel in enumerate(build_panels(kept, timestamps=kept_stamps)):
-        path = panels_dir / f"panel_{i:04d}.jpg"
+    for panel in panels:
+        path = panels_dir / f"panel_{panel.index:04d}.jpg"
         path.write_bytes(panel.image)
-        refs.append({"path": str(path), "timestamp_sec": panel.timestamp_sec})
+        refs.append({
+            "path": str(path),
+            "timestamp_sec": panel.timestamp_sec,
+            "end_sec": panel.end_sec,
+            "is_cut": panel.is_cut,
+            "frame_times": panel.frame_times,
+            "frames": [str(p) for p in panel.frames],
+        })
     return {"panel_refs": refs}
+
+
+def _vlm_cache(state: PipelineState) -> Any:
+    """
+    Кэш разбора панелей — в Mongo, между процессами.
+
+    Кэш был написан и не подключён: `analyze_panels` звался без него, и повтор
+    прогона (#30) заново оплачивал уже разобранные панели. Дефект тихий вдвойне
+    — он не мешает работать, он только стоит денег.
+
+    Недоступная Mongo не роняет разбор: кэш ускоряет, а не определяет результат.
+    Возвращается None, и разбор идёт как раньше — платя за всё.
+    """
+    try:
+        from ..frames.analyze import MongoCache
+        from ..mongo import mongo_db
+
+        return MongoCache(mongo_db().chunk_analyses, tenant_id=str(state["tenant_id"]))
+    except Exception:  # noqa: BLE001 — причина уедет в degraded вызывающего
+        return None
 
 
 def analyze_chunks(state: PipelineState) -> dict[str, Any]:
     """MAP по панелям. Результат кладётся на диск: в state ему не место по объёму."""
-    from ..frames.analyze import QwenVlmClient, analyze_panels
+    from ..frames.analyze import CallBudget, QwenVlmClient, analyze_panels
 
     refs = state.get("panel_refs", [])
     if not refs:
@@ -256,32 +609,171 @@ def analyze_chunks(state: PipelineState) -> dict[str, Any]:
 
     template, degraded = _prompt("content.frame_analysis", state)
     panels = [
-        Panel(index=i, timestamp_sec=r["timestamp_sec"], image=Path(r["path"]).read_bytes())
+        Panel(
+            index=i,
+            timestamp_sec=r["timestamp_sec"],
+            # Прогоны, начатые до перехода на сцены, несут только начало. Конец
+            # у них не выдумывается: пусть интервал вырожден, зато честен.
+            end_sec=float(r.get("end_sec") or r["timestamp_sec"]),
+            is_cut=bool(r.get("is_cut", True)),
+            frame_times=list(r.get("frame_times") or []),
+            frames=[Path(p) for p in (r.get("frames") or [])],
+            image=Path(r["path"]).read_bytes(),
+        )
         for i, r in enumerate(refs)
     ]
 
-    result = analyze_panels(panels, client=QwenVlmClient(), prompt=template)
+    result = analyze_panels(
+        panels,
+        client=QwenVlmClient(config=_model_config(state)),
+        prompt=template,
+        # Кэш и кап были написаны и не подключены: разбор платил заново за уже
+        # разобранные панели, а жёсткий кап из Настроек (#27) не действовал
+        # вовсе — то есть настройка была, а ограничения не было.
+        cache=_vlm_cache(state),
+        budget=CallBudget.for_task(state.get("settings_snapshot")),
+    )
+    # Пути кадров кладутся рядом с описанием: следующий узел выгружает по
+    # одному кадру на сцену в S3, и связь «описание → картинка» должна пережить
+    # границу узлов. В сам разбор (то, что уходит в кэш) им не место: пути
+    # локальные и к содержимому панели отношения не имеют.
+    frames_by_panel = {i: (r.get("frames") or []) for i, r in enumerate(refs)}
+    for scene in result.scenes:
+        scene["frames"] = frames_by_panel.get(scene.get("panel_index"), [])
+
     out = workdir(state) / "chunk_analyses.json"
     out.write_text(json.dumps(result.scenes, ensure_ascii=False), "utf-8")
 
     update: dict[str, Any] = {"chunk_analyses_ref": str(out)}
-    if degraded:
-        update["degraded"] = [degraded]
+    reasons: list[str] = [degraded] if degraded else []
+
+    # Панели, которые провайдер отказался разбирать, обязаны быть названы в
+    # отчёте. Иначе «модель не заметила финал» объясняется свойствами ролика, а
+    # не отказом модерации, — и опровергнуть это будет нечем: к моменту разбора
+    # отчёта исходное видео удалено по политике хранения.
+    if result.failures:
+        reasons.append(
+            f"разбор кадров: провайдер отказал на {result.failures} панелях из "
+            f"{len(panels)} — эти отрезки персоны не видели. "
+            f"{'; '.join(result.failure_reasons[:3])}"
+        )
+    if reasons:
+        update["degraded"] = reasons
     return update
 
 
 # ─── Склейка и пакет (#17) ───────────────────────────────────────────────────
 
 
+def _frames_prefix(state: PipelineState) -> str:
+    return f"tenants/{state['tenant_id']}/runs/{state['task_id']}/frames"
+
+
+def _publish_frames(state: PipelineState, scenes: list[dict[str, Any]]) -> list[str]:
+    """
+    Выгружает по кадру на сцену в S3 и проставляет сценам `screenshot`.
+
+    ─── Зачем ──────────────────────────────────────────────────────────────
+    Кадры, панели и пакет жили в `/tmp/agora/<task>` внутри контейнера. Каталог
+    не смонтирован, поэтому всё это умирало вместе с контейнером, и показать
+    таймлайн со скриншотами было не из чего: файлов нет, других копий не
+    делалось. Дефект не проявлялся как отказ — просто экрана не существовало.
+
+    Один кадр на сцену, а не четыре: панель нужна модели, чтобы увидеть
+    движение, а человеку на таймлайне — одна картинка на ячейку. Берётся первый
+    кадр сцены как самый близкий к её началу.
+
+    Отказ выгрузки не роняет прогон: ответы персон уже оплачены, и терять их
+    из-за недоступного бакета незачем. Причины возвращаются вызывающему —
+    молчать нельзя, иначе пустой таймлайн выглядит как дефект интерфейса.
+    """
+    degraded: list[str] = []
+    try:
+        from ..storage import Boto3S3
+
+        client = Boto3S3()
+    except Exception as exc:  # noqa: BLE001
+        return [f"кадры не выгружены ({type(exc).__name__}: {exc}); таймлайн будет без скриншотов"]
+
+    prefix = _frames_prefix(state)
+    failures = 0
+    for scene in scenes:
+        frames = scene.get("frames") or []
+        if not frames:
+            continue
+        src = Path(str(frames[0]))
+        if not src.exists():
+            continue
+        key = f"{prefix}/{int(round(float(scene.get('timestamp_sec') or 0) * 1000)):09d}.jpg"
+        try:
+            client.upload(src, key, "image/jpeg")
+        except Exception:  # noqa: BLE001 — счётчик вместо тысячи одинаковых строк
+            failures += 1
+            continue
+        scene["screenshot"] = key
+
+    if failures:
+        degraded.append(f"кадры сцен выгружены не полностью: отказов {failures} из {len(scenes)}")
+
+    # Первый выгруженный кадр — заставка прогона. Записывается сюда, а не
+    # достаётся потом из пакета в Mongo: список исследований показывает по
+    # картинке на карточку, и сто прогонов означали бы сто запросов к Mongo ради
+    # угла карточки. Ключ уже известен, стоит он один UPDATE.
+    poster = next((s.get("screenshot") for s in scenes if s.get("screenshot")), None)
+    if poster:
+        degraded.extend(_save_poster(state, str(poster)))
+    return degraded
+
+
+def _save_poster(state: PipelineState, key: str) -> list[str]:
+    """Кладёт ключ заставки в задачу. Отказ не роняет прогон — карточка обойдётся."""
+    dsn = os.environ.get("DATABASE_URL")
+    if not dsn:
+        return []
+    try:
+        import psycopg
+
+        from ..db import tenant_scope
+
+        with psycopg.connect(dsn) as conn, tenant_scope(conn, state["tenant_id"]) as cur:
+            cur.execute(
+                "UPDATE tasks SET poster_ref = %s WHERE id = %s::uuid",
+                (key, str(state["task_id"])),
+            )
+    except Exception as exc:  # noqa: BLE001
+        return [f"заставка не записана ({type(exc).__name__}: {exc}); карточка будет без картинки"]
+    return []
+
+
 def stitch(state: PipelineState) -> dict[str, Any]:
+    """
+    Сводит разбор панелей в video_understanding и выгружает кадры в S3.
+
+    Промпт `content.stitch_summary` здесь не вызывается и никогда не вызывался:
+    склейка — это перекладывание уже полученных описаний в общий список, и
+    модели тут делать нечего. Числится в реестре промптов он ошибочно; помечен
+    неиспользуемым в `apps/web/lib/prompt-registry.ts`, чтобы Промпт-студия не
+    предлагала править инструкцию, которая ни на что не влияет.
+    """
     ref = state.get("chunk_analyses_ref")
     scenes = json.loads(Path(str(ref)).read_text("utf-8")) if ref else []
-    return {
+
+    degraded = _publish_frames(state, scenes)
+
+    # Пути кадров в состоянии не нужны: они локальные и умрут вместе с
+    # контейнером, а ссылка на S3 уже проставлена.
+    for scene in scenes:
+        scene.pop("frames", None)
+
+    update: dict[str, Any] = {
         "video_understanding": {
             "scenes": scenes,
             "stitched": state.get("mode") == "long",
         }
     }
+    if degraded:
+        update["degraded"] = degraded
+    return update
 
 
 def pack(state: PipelineState) -> dict[str, Any]:
@@ -296,7 +788,36 @@ def pack(state: PipelineState) -> dict[str, Any]:
         mode=str(state.get("mode") or "short"),
         title=str(state.get("task_id")),
     )
-    return {"content_pack_full": built.full(), "content_pack_compact": built.compact()}
+    full = built.full()
+
+    # Пакет обязан пережить контейнер: экран исследования строит по нему
+    # таймлайн, а состояние графа живёт в чекпоинтере и наружу не выходит.
+    # Отказ записи не роняет прогон — материал уже разобран и оплачен, — но и не
+    # молчит: пустой таймлайн иначе выглядит как дефект интерфейса.
+    degraded: list[str] = []
+    try:
+        from ..analytics.store import save_content_pack
+        from ..mongo import mongo_db
+
+        save_content_pack(
+            mongo_db(),
+            tenant_id=str(state["tenant_id"]),
+            task_id=str(state["task_id"]),
+            pack=full,
+        )
+    except Exception as exc:  # noqa: BLE001
+        degraded.append(
+            f"пакет материала не сохранён ({type(exc).__name__}: {exc}); "
+            f"таймлайн на экране исследования будет пуст"
+        )
+
+    update: dict[str, Any] = {
+        "content_pack_full": full,
+        "content_pack_compact": built.compact(),
+    }
+    if degraded:
+        update["degraded"] = degraded
+    return update
 
 
 # ─── Респонденты (#18) ───────────────────────────────────────────────────────
@@ -318,18 +839,91 @@ def evaluate_personas(state: PipelineState) -> dict[str, Any]:
             "персоны не загружены: persona_ids пуст или нет доступа к Postgres"
         )
 
+    # Промпты — из снимка прогона, а не из файла в образе.
+    #
+    # Снимок пиннит каждый активный промпт реестра, включая эти два, и делает
+    # это ровно затем, чтобы правка в Промпт-студии не меняла прежние прогоны.
+    # Пока шаблоны сюда не передавались, run_survey читал файлы: снимок для
+    # главного промпта продукта записывался и не использовался, а отчёт
+    # ссылался на версию, по которой прогон не шёл. Разойтись эти два источника
+    # могут только после первой правки промпта — то есть дефект просыпается в
+    # тот день, когда Промпт-студией начинают пользоваться.
+    degraded: list[str] = []
+    system_template, why = _prompt("respondent.system", state)
+    if why:
+        degraded.append(why)
+    user_template, why = _prompt("respondent.user", state)
+    if why:
+        degraded.append(why)
+
     outcome = run_survey(
         personas=personas,
         pack=state.get("content_pack_compact") or {},
         survey=state.get("survey") or {},
-        client=QwenRespondentClient(),
+        client=QwenRespondentClient(
+            config=_model_config(state),
+            temperature=_temperatures(state).responseSimulation,
+        ),
         replication_count=int(state.get("replication_count") or 1),
         artifact_path=workdir(state) / "persona_answers.json",
+        system_template=system_template,
+        user_template=user_template,
+        # Контекст аудитории из приложенного .txt/.md (#31). Берётся из СНИМКА
+        # настроек прогона, а не из настроек на лету: он часть того, что
+        # спросили у персон, и меняться между постановкой задачи и её
+        # исполнением не должен — иначе половина ответов дана с ним, половина без.
+        extra_context=_audience_context(state),
     )
-    update: dict[str, Any] = {"persona_answers": outcome.answers}
-    if outcome.failures:
-        update["degraded"] = [f"evaluate_personas: отказов {outcome.failures}"]
+    update: dict[str, Any] = {
+        "persona_answers": outcome.answers,
+        # Заданные вопросы едут в состояние: отчёт обязан показывать те
+        # формулировки, которые получили персоны, а не те, что лежат в анкете
+        # на момент чтения отчёта.
+        "survey_asked": outcome.asked,
+    }
+    degraded.extend(_respondent_degraded(outcome))
+    if degraded:
+        update["degraded"] = degraded
     return update
+
+
+def _audience_context(state: PipelineState) -> str | None:
+    """Дополнительный контекст об аудитории из снимка настроек прогона."""
+    snapshot = state.get("settings_snapshot") or {}
+    value = snapshot.get("audienceContext")
+    return value.strip() if isinstance(value, str) and value.strip() else None
+
+
+#: Сколько причин отказа показывать. Три — не круглое число: одинаковых строк
+#: среди отказов обычно большинство, и человеку нужен ВИД отказа, а не перечень.
+#: На пятистах персонах полный список превратил бы экран в лог, а лог на экране
+#: перестают читать целиком.
+MAX_SHOWN_REASONS = 3
+
+
+def _respondent_degraded(outcome: Any) -> list[str]:
+    """
+    Отказы опроса словами, а не только числом.
+
+    Владелец увидел «evaluate_personas: отказов 1» и спросил почему — ответить
+    было нечем: причины складывались в `failure_reasons`, но наружу уходило одно
+    число, а сами объяснения писались в `persona_answers.json` в рабочем
+    каталоге контейнера и умирали вместе с ним.
+
+    Отказ одной персоны из двадцати — законное событие: провайдер отвечает
+    ошибкой, модель возвращает неразбираемый JSON. Ненормально то, что по экрану
+    нельзя отличить «сеть моргнула» от «промпт сломан»: в первом случае прогон
+    перезапускают, во втором чинят.
+    """
+    if not outcome.failures:
+        return []
+
+    lines = [f"evaluate_personas: отказов {outcome.failures}"]
+    reasons = list(outcome.failure_reasons or [])
+    lines.extend(f"  · {r}" for r in reasons[:MAX_SHOWN_REASONS])
+    if len(reasons) > MAX_SHOWN_REASONS:
+        lines.append(f"  · и ещё {len(reasons) - MAX_SHOWN_REASONS} такого же рода")
+    return lines
 
 
 def _load_personas(state: PipelineState) -> list[dict[str, Any]]:
@@ -416,7 +1010,10 @@ def qa(state: PipelineState) -> dict[str, Any]:
     try:
         from ..qa.judge import QwenJudgeClient
 
-        judge = QwenJudgeClient()
+        judge = QwenJudgeClient(
+            config=_model_config(state),
+            temperature=_temperatures(state).answerJudge,
+        )
     except ConfigError as exc:
         degraded.append(f"qa: судья не поднят ({exc}); проверены только правила")
 
@@ -433,24 +1030,153 @@ def qa(state: PipelineState) -> dict[str, Any]:
         if why:
             degraded.append(why)
 
-    outcome = run_qa(
-        answers=answers,
-        pack=state.get("content_pack_compact") or state.get("content_pack_full") or {},
-        personas=_load_personas(state),
-        survey=state.get("survey") or {},
-        judge=judge,
-        policy=policy,
-        templates=templates,
-        artifact_path=workdir(state) / "qa_report.json",
-    )
+    def check(current: list[dict[str, Any]], artifact: str) -> Any:
+        return run_qa(
+            answers=current,
+            pack=state.get("content_pack_compact") or state.get("content_pack_full") or {},
+            personas=_load_personas(state),
+            survey=state.get("survey") or {},
+            judge=judge,
+            policy=policy,
+            templates=templates,
+            artifact_path=workdir(state) / artifact,
+        )
 
-    update: dict[str, Any] = {"qa_flags": outcome.flagged}
+    outcome = check(answers, "qa_report.json")
+
+    # ─── Переспрос забракованных (п. 33) ─────────────────────────────────────
+    #
+    # До этого забракованный ответ просто выпадал из агрегата: персона не
+    # переспрашивалась, деньги за ответ были потрачены, а отчёт вставал на
+    # остатке — и выглядел при этом нормальным отчётом.
+    #
+    # Переспрос идёт здесь, а не отдельным узлом графа, потому что ему нужны
+    # разом и ответы, и вердикты, и вторая проверка тех же ответов: узел,
+    # получающий это через состояние, пришлось бы вставлять между qa и
+    # analytics, а состояние между ними уже описано отчётом.
+    answers, requestioned = _requestion_flagged(state, answers, outcome, degraded)
+    if requestioned:
+        # Вторая проверка — тех же ответов после переспроса. Без неё переспрос
+        # был бы декорацией: новые ответы есть, а из агрегата их по-прежнему
+        # исключают вердикты первого круга.
+        #
+        # Круг ровно один (`requestion.MAX_ROUNDS`): вторая отбраковка
+        # окончательна. Без дна цикл крутился бы, пока не кончатся деньги, и
+        # каждый круг выглядел бы осмысленной работой — доля выживших растёт,
+        # значит система «чинится».
+        outcome = check(answers, "qa_report_after_requestion.json")
+
+    update: dict[str, Any] = {
+        "persona_answers": answers,
+        "qa_flags": outcome.flagged,
+        "qa_requestioned": requestioned,
+        # Сводка едет в состояние и дальше в отчёт: полный список вердиктов
+        # лежит в qa_report.json внутри контейнера и умирает вместе с ним, а
+        # экран обязан показать, сколько ответов забраковано и по каким видам.
+        "qa_summary": outcome.summary(),
+    }
     degraded.extend(outcome.degraded)
     if outcome.failures:
         degraded.append(f"qa: отказов судьи {outcome.failures}")
     if degraded:
         update["degraded"] = degraded
     return update
+
+
+
+def _requestion_flagged(
+    state: PipelineState,
+    answers: list[dict[str, Any]],
+    outcome: Any,
+    degraded: list[str],
+) -> tuple[list[dict[str, Any]], int]:
+    """
+    Переспрашивает забракованные персоны и проверяет их ответы заново.
+
+    Возвращает обновлённый список ответов и число переспрошенных. Порог, дно
+    цикла и запрет на подсказку живут в `respondent.requestion` — здесь только
+    сшивание с конвейером.
+
+    Отказ переспроса не роняет прогон: агрегат по остатку хуже полного, но
+    лучше отсутствующего. Причина уходит в `degraded` и обязана попасть в отчёт.
+    """
+    from ..respondent import requestion as rq
+
+    flagged = outcome.flagged
+    # Потолок берётся из снимка настроек прогона, а не из константы: пока
+    # задача стоит в очереди, настройку можно сменить, и тогда часть ответов
+    # переспрошена, часть нет — внутри одного прогона, который читают как целое.
+    from ..config import RequestionConfig
+
+    cap = RequestionConfig.for_task(state.get("settings_snapshot")).cap
+
+    if not rq.needs_requestion(answers, flagged, cap=cap):
+        return answers, 0
+
+    all_targets = rq.personas_to_ask(flagged)
+    targets = rq.limit_to_cap(all_targets, cap=cap)
+    if rq.cap_exhausted(all_targets, cap=cap):
+        # Названо до вызова модели: если переспрос дальше отвалится, эта строка
+        # всё равно доедет до отчёта. Отчёт, стоящий на остатке и молчащий об
+        # этом, — то самое, ради чего переспрос и заводился.
+        degraded.append(
+            f"qa: потолок переспроса исчерпан — переспрошено {len(targets)} "
+            f"ответов из {len(all_targets)} забракованных; остальные "
+            f"{len(all_targets) - len(targets)} остались исключёнными. "
+            f"Потолок меняется в настройках команды"
+        )
+    personas = {str(p.get("id")): p for p in _load_personas(state)}
+    to_ask = [personas[pid] for pid, _ in sorted(targets) if pid in personas]
+    if not to_ask:
+        return answers, 0
+
+    try:
+        from ..respondent.run import QwenRespondentClient, run_survey
+
+        system_template, _ = _prompt("respondent.system", state)
+        user_template, _ = _prompt("respondent.user", state)
+
+        # Подсказка дописывается в КОНЕЦ пользовательского промпта: персона
+        # видит её после материала и анкеты, то есть как уточнение задачи, а не
+        # как часть материала.
+        kinds: set[str] = set()
+        for target in targets:
+            kinds |= rq.kinds_for(flagged, target)
+        hint = rq.hint_for(kinds)
+
+        retry = run_survey(
+            personas=to_ask,
+            pack=state.get("content_pack_compact") or {},
+            survey=state.get("survey") or {},
+            client=QwenRespondentClient(
+                config=_model_config(state),
+                temperature=_temperatures(state).responseSimulation,
+            ),
+            replication_count=1,
+            artifact_path=workdir(state) / "persona_answers_retry.json",
+            system_template=system_template,
+            user_template=(user_template or "") + ("\n\n" + hint if hint else ""),
+        )
+    except Exception as exc:  # noqa: BLE001
+        degraded.append(
+            f"qa: переспрос не состоялся ({type(exc).__name__}: {exc}); "
+            f"агрегат построен на первой попытке"
+        )
+        return answers, 0
+
+    fresh = {
+        (str(a.get("persona_id")), int(a.get("replication") or 0)): a
+        for a in retry.answers
+    }
+    merged = [
+        fresh.get((str(a.get("persona_id")), int(a.get("replication") or 0)), a)
+        for a in answers
+    ]
+    degraded.append(
+        f"qa: переспрошено ответов {len(fresh)} из {len(answers)}; "
+        f"вторая отбраковка окончательна"
+    )
+    return merged, len(fresh)
 
 
 # ─── Аналитика и отчёт (#20) ─────────────────────────────────────────────────
@@ -485,7 +1211,10 @@ def analytics(state: PipelineState) -> dict[str, Any]:
     try:
         from ..analytics.report import QwenAnalystClient
 
-        model = QwenAnalystClient()
+        model = QwenAnalystClient(
+            config=_model_config(state),
+            temperature=_temperatures(state).aggregation,
+        )
     except ConfigError as exc:
         degraded.append(f"analytics: аналитик не поднят ({exc}); собран только агрегат")
 
@@ -502,6 +1231,9 @@ def analytics(state: PipelineState) -> dict[str, Any]:
         template=template,
         replication_count=int(state.get("replication_count") or 1),
         artifact_path=workdir(state) / "report.json",
+        asked=state.get("survey_asked") or [],
+        qa_summary=state.get("qa_summary") or {},
+        models_used=_models_used(state),
         # Запасной источник среза для посегментного разреза. Ответы нового
         # прогона несут срез сами, и тогда реестр не читается вовсе.
         personas=_personas_for_segments(state, degraded),
@@ -544,8 +1276,10 @@ DEFAULT_NODES = {
     "probe_and_normalize": probe_and_normalize,
     "extract_audio": extract_audio,
     "detect_speech": detect_speech,
-    "transcribe": transcribe,
-    "diarize": diarize,
+    # Один узел вместо двух: обе половины идут в потоках внутри него.
+    # `transcribe` и `diarize` остаются функциями модуля — их зовут прямые
+    # проверки и CDD-тесты #15, которым нужна одна половина без другой.
+    "transcribe_and_diarize": transcribe_and_diarize,
     "merge_transcript": merge_transcript,
     "segment_video": segment_video,
     "sample_frames": sample_frames,

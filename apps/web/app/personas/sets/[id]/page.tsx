@@ -8,6 +8,8 @@ import { EmptyState } from "@/components/agora/States";
 import { withTenant } from "@/lib/server/db";
 import { requireSession } from "@/lib/server/guard";
 import { listPersonas, listPersonaSets } from "@/lib/server/personas";
+import { snapshotRecordsOfPersonaSet } from "@/lib/server/corpus-db";
+import { groundingReport, GROUNDING_PROP_TOL } from "@/lib/persona-grounding";
 import { avatarHue, initials } from "@/lib/report-view";
 
 /**
@@ -42,9 +44,13 @@ export default async function PersonaSetPage({
   const { id } = await params;
   const { tenantId } = await requireSession();
 
-  const { set, personas } = await withTenant(tenantId, async (client) => {
+  const { set, personas, records } = await withTenant(tenantId, async (client) => {
     const sets = await listPersonaSets(client, id);
-    return { set: sets[0] ?? null, personas: await listPersonas(client, id) };
+    return {
+      set: sets[0] ?? null,
+      personas: await listPersonas(client, id),
+      records: await snapshotRecordsOfPersonaSet(client, id),
+    };
   });
 
   // 404, а не пустая страница: чужой набор под RLS не находится, и это тот же
@@ -52,6 +58,13 @@ export default async function PersonaSetPage({
   if (!set) notFound();
 
   const incomplete = set.personaCount < set.size;
+
+  /*
+    Заземление считается по СЛЕПКУ, с которого собран набор, а не по датасету на
+    сегодня: датасет правят, и сравнение с его текущей версией отвечало бы на
+    другой вопрос — «похож ли старый набор на новые данные».
+  */
+  const grounding = groundingReport(personas, records);
 
   return (
     <>
@@ -72,6 +85,50 @@ export default async function PersonaSetPage({
       />
 
       <div className="space-y-6 p-8">
+        {/*
+          Метрика persona_grounding жила только в отчёте гейта — там, куда
+          владелец продукта не заходит. Вопрос «похожа ли собранная аудитория на
+          датасет» задают, глядя на набор, и отвечать на него приходилось на
+          слово.
+        */}
+        <section className="rounded-lg border border-hairline bg-card p-6">
+          <h2 className="text-sm font-semibold">Заземление на датасет</h2>
+          {!grounding.comparable ? (
+            <p className="mt-2 text-xs leading-relaxed text-slate">
+              Сравнивать не с чем: слепок датасета пуст либо набор ещё собирается.
+              Это «не проверено», а не «всё в порядке».
+            </p>
+          ) : grounding.deviations.length === 0 ? (
+            <p className="mt-2 text-xs leading-relaxed text-slate">
+              Доли возраста, типа населённого пункта и пола совпадают с датасетом
+              в пределах {Math.round(GROUNDING_PROP_TOL * 100)} процентных пунктов.
+            </p>
+          ) : (
+            <>
+              <p className="mt-2 text-xs leading-relaxed text-slate">
+                Доли разошлись с датасетом больше чем на{" "}
+                {Math.round(GROUNDING_PROP_TOL * 100)} процентных пунктов. Само по
+                себе это не дефект — набор меньше корпуса, и округление на
+                маленьком наборе даёт перекос. Но выводы по перекошенному срезу
+                относятся к нему, а не к аудитории.
+              </p>
+              <dl className="mt-3 space-y-1 text-xs">
+                {grounding.deviations.map((d) => (
+                  <div key={`${d.dimension}-${d.bucket}`} className="flex items-baseline gap-2">
+                    <dt className="text-slate">
+                      {d.dimension} · {d.bucket}
+                    </dt>
+                    <dd className="tabular-nums">
+                      набор {Math.round(d.generated * 100)}% против{" "}
+                      {Math.round(d.real * 100)}% в датасете
+                    </dd>
+                  </div>
+                ))}
+              </dl>
+            </>
+          )}
+        </section>
+
         {incomplete && (
           <p className="rounded-lg border border-warning/30 bg-warning-soft/60 p-4 text-sm leading-relaxed">
             В наборе {set.personaCount} персон из заказанных {set.size}: генерация

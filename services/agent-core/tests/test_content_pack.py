@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 
 from agent_core.content.pack import (
-    MAX_KEY_SCENES,
+    MAX_SCENE_CHARS,
     MIN_COMPACT_LINE_CHARS,
     build_pack,
 )
@@ -196,6 +196,17 @@ def test_compact_has_no_transcript_or_diagnostics():
     assert "dropped_scenes" not in compact
 
 
+#: Описание сцены длиной как настоящее. Восемнадцать знаков, которыми
+#: пользуются остальные проверки, здесь не годятся: потолок ключевых сцен
+#: меряется объёмом запроса, и на игрушечных описаниях он не срабатывает вовсе —
+#: тест мерил бы экономию, которой в продакшене не будет.
+REAL_DESC = (
+    "Мужчина в тёмном пиджаке говорит с камерой, за спиной у него доска с "
+    "формулами; по ходу реплики он поворачивается и указывает на график, "
+    "камера медленно наезжает"
+)
+
+
 def test_compact_smaller_on_realistic_volume():
     """Экономия должна быть заметной, а не арифметической.
 
@@ -203,7 +214,7 @@ def test_compact_smaller_on_realistic_volume():
     """
     pack = build(
         transcript=[line(float(i), float(i) + 0.9) for i in range(300)],
-        scenes=[scene(float(i * 6), mood=f"m{i % 3}") for i in range(50)],
+        scenes=[scene(float(i * 6), mood=f"m{i % 3}", desc=REAL_DESC) for i in range(50)],
         duration_sec=400.0, mode="long",
     )
     full_len = len(json.dumps(pack.full(), ensure_ascii=False))
@@ -213,11 +224,25 @@ def test_compact_smaller_on_realistic_volume():
 
 
 def test_key_scenes_capped():
+    """
+    Потолок мерится объёмом запроса, а не числом сцен.
+
+    Прежний потолок в 12 штук выбирали, когда сцена была результатом
+    дедупликации кадров и трёхминутный ролик давал шесть. Со сценной сеткой тот
+    же ролик даёт двадцать четыре, и потолок начал молча выбрасывать половину
+    материала: персона видела 105 секунд из 162 и привязывала вспомненное к
+    ближайшему видимому таймкоду.
+
+    Ограничивает потолок цену запроса — значит и мерить его надо ею.
+    """
     pack = build(
         scenes=[scene(float(i * 5), mood=f"m{i}") for i in range(40)],
         duration_sec=400.0,
     )
-    assert sum(1 for s in pack.full()["scenes"] if s["key"]) <= MAX_KEY_SCENES
+    key_scenes = [s for s in pack.full()["scenes"] if s["key"]]
+    spent = sum(len(str(s.get("scene_description") or "")) for s in key_scenes)
+
+    assert spent <= MAX_SCENE_CHARS * 1.2, f"описания ключевых сцен: {spent} знаков"
 
 
 def test_edges_always_key():

@@ -7,7 +7,8 @@ from __future__ import annotations
 
 import os
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
+from typing import Any, ClassVar
 
 
 class ConfigError(RuntimeError):
@@ -84,6 +85,20 @@ class ModelConfig:
     #: `none` — выключить везде, `all` — включить везде.
     thinking_roles: frozenset[str] = frozenset({"respondent"})
 
+    #: Модель судьи. Пусто — судить той же, что отвечает (`judge_model_or_text`).
+    #:
+    #: Отдельное поле, а не второй адрес: провайдер, под которого писался
+    #: `escalation_base_url`, выбирал модель адресом агента, а нынешний —
+    #: полем `model`. Подстановка идентификатора в сегмент `/agents/<id>` на
+    #: адресе Cloud.ru падает: такого сегмента там нет.
+    judge_model: str = ""
+
+    #: Режим рассуждения из настроек: {"thinking": bool, "effort": str}.
+    #: Пустой словарь — брать поведение из `thinking_roles`, как было до
+    #: появления настроек.
+    reasoning: dict[str, Any] = field(default_factory=dict)
+    judge_reasoning: dict[str, Any] = field(default_factory=dict)
+
     @property
     def default_headers(self) -> dict[str, str]:
         """Передаётся в OpenAI(..., default_headers=...) — иначе запрос отклонят."""
@@ -91,6 +106,61 @@ class ModelConfig:
 
     #: Роли, которые вообще бывают. Список закрытый намеренно — см. extra_body.
     ROLES = ("respondent", "frames", "qa", "analytics", "persona", "portrait")
+
+    @classmethod
+    def for_task(
+        cls, settings_snapshot: dict[str, Any] | None, base: ModelConfig | None = None
+    ) -> ModelConfig:
+        """
+        Конфигурация прогона: выбор моделей и адрес из снимка настроек.
+
+        Пустая строка в снимке означает «как в окружении», а не «без модели»:
+        так выглядят все прогоны до первого захода в настройки, и подставлять
+        туда конкретное имя нельзя — оно разъедется с `.env` при первой смене, и
+        отчёт станет называть модель, по которой прогон не шёл.
+
+        Ключа в снимке нет и не должно быть. Снимок живёт столько же, сколько
+        отчёт, и копия ключа в каждой строке `tasks` — это секрет, размноженный
+        по резервным копиям базы без единого способа его отозвать.
+        """
+        config = base or cls.from_env()
+        stored = settings_snapshot or {}
+        models = stored.get("models") or {}
+
+        def pick(role: str, fallback: str) -> str:
+            value = models.get(role)
+            return value.strip() if isinstance(value, str) and value.strip() else fallback
+
+        endpoint = stored.get("endpoint")
+        base_url = (
+            endpoint.strip()
+            if isinstance(endpoint, str) and endpoint.strip()
+            else config.base_url
+        )
+
+        return replace(
+            config,
+            base_url=base_url,
+            # vlm_base_url следует за основным, если не задан отдельно: он
+            # заведён под провайдера, у которого «другая модель» означала
+            # «другой агент», то есть другой адрес. Там, где модель выбирается
+            # полем `model`, второй адрес не нужен.
+            vlm_base_url=(
+                config.vlm_base_url
+                if config.vlm_base_url != config.base_url
+                else base_url
+            ),
+            text_model=pick("text", config.text_model),
+            vlm_model=pick("vision", config.vlm_model),
+            judge_model=pick("judge", ""),
+            reasoning=_reasoning_of(stored.get("reasoning")),
+            judge_reasoning=_reasoning_of(stored.get("judgeReasoning")),
+        )
+
+    @property
+    def judge_model_or_text(self) -> str:
+        """Модель судьи либо текстовая. Пусто = судить тем же, чем отвечали."""
+        return self.judge_model or self.text_model
 
     def extra_body(self, role: str) -> dict[str, object]:
         """
@@ -110,6 +180,22 @@ class ModelConfig:
             raise ValueError(
                 f"неизвестная роль модели {role!r}; ожидается одна из {', '.join(self.ROLES)}"
             )
+
+        # Настройки арендатора главнее умолчания по ролям: `thinking_roles`
+        # описывает, где размышление полезно ВООБЩЕ, а настройка — чего хочет
+        # команда на своих прогонах. Пустой словарь означает «настройки не
+        # трогали», и тогда работает прежнее правило.
+        settings = self.judge_reasoning if role == "qa" else self.reasoning
+        if settings:
+            kwargs: dict[str, object] = {"enable_thinking": bool(settings.get("thinking"))}
+            effort = settings.get("effort")
+            if effort:
+                # Текущий шлюз параметр игнорирует (замер 17.08.2026), но
+                # отправляется он всё равно: заработает при смене провайдера, а
+                # молча выбрасывать выбор пользователя нельзя.
+                kwargs["reasoning_effort"] = effort
+            return {"chat_template_kwargs": kwargs}
+
         if role in self.thinking_roles:
             return {}
         return {"chat_template_kwargs": {"enable_thinking": False}}
@@ -121,12 +207,17 @@ class ModelConfig:
 
     @classmethod
     def from_env(cls) -> ModelConfig:
-        base_url = _optional("OPENAI_BASE_URL", "https://api.timeweb.cloud/v1")
+        # Без умолчания намеренно. Здесь стоял `https://api.timeweb.cloud/v1`
+        # — адрес провайдера, которым мы не пользуемся с перехода на Cloud.ru.
+        # Умолчание, указывающее на чужой хост, не спасает от забытой
+        # переменной: оно превращает отказ конфигурации в загадочную ошибку
+        # авторизации посреди оплаченного прогона. Пусть лучше не стартует.
+        base_url = _required("OPENAI_BASE_URL")
         return cls(
             api_key=_required("OPENAI_API_KEY"),
             base_url=base_url,
             vlm_base_url=_optional("VLM_BASE_URL", base_url),
-            text_model=_optional("AI_MODEL", "qwen3.6"),
+            text_model=_required("AI_MODEL"),
             vlm_model=_optional("VLM_MODEL", "qwen3.6"),
             proxy_source=_optional("MODEL_PROXY_SOURCE", "agora"),
             thinking_roles=_thinking_roles(),
@@ -154,6 +245,25 @@ DEFAULT_ESCALATION_CONFIDENCE = 0.6
 #: «другая модель» означает «другой агент», а не другое значение поля model:
 #: поле model этим endpoint игнорируется.
 _AGENT_SEGMENT = re.compile(r"(/agents/)[^/]+(/|$)")
+
+
+def _reasoning_of(source: Any) -> dict[str, Any]:
+    """
+    Режим рассуждения из снимка. Мусор отбрасывается молча.
+
+    Молча — потому что снимок читает воркер посреди прогона, и падать здесь
+    значило бы терять оплаченную расшифровку из-за поля, у которого есть
+    осмысленное умолчание.
+    """
+    if not isinstance(source, dict):
+        return {}
+    out: dict[str, Any] = {}
+    if isinstance(source.get("thinking"), bool):
+        out["thinking"] = source["thinking"]
+    effort = source.get("effort")
+    if isinstance(effort, str) and effort in ("low", "medium", "high", "max"):
+        out["effort"] = effort
+    return out
 
 
 @dataclass(frozen=True)
@@ -242,14 +352,158 @@ class StorageConfig:
         )
 
 
+@dataclass(frozen=True)
+class TemperatureConfig:
+    """
+    Температура по стадиям конвейера.
+
+    ─── Почему не одно значение ───────────────────────────────────────────
+    Стадии требуют противоположного. Персона обязана получиться непохожей на
+    соседнюю — это условие метрики `response_diversity`, и низкая температура
+    здесь даёт mode collapse: двадцать почти совпадающих портретов вместо
+    аудитории. Проверяющий и аналитик обязаны быть повторяемыми: вердикт,
+    меняющийся от прогона к прогону, перестаёт быть свойством проверяемого.
+
+    До появления этого класса значения стояли числами прямо в клиентах, и
+    поменять их можно было только правкой кода с пересборкой образа.
+
+    ─── Имена полей ──────────────────────────────────────────────────────
+    Совпадают с ключами `TEMPERATURE_STAGES` в apps/web/lib/settings.ts, и это
+    не косметика: снимок задачи приезжает оттуда как есть. Разойдясь на одну
+    букву, стороны дадут настройку, которая выставляется и не применяется, —
+    обе выглядят исправными, а расхождение видно только по счёту от провайдера
+    и по доле отбраковок. Совпадение держит test_temperature_config.py.
+    """
+
+    #: Обогащение портрета персоны (`persona/enrich.py`).
+    personaCreation: float = 0.9
+    #: Проверка созданной персоны на связность с её же DNA.
+    personaValidation: float = 0.1
+    #: Ответы персон на анкету (`respondent/run.py`).
+    responseSimulation: float = 0.3
+    #: Сборка нарратива отчёта (`analytics/report.py`).
+    aggregation: float = 0.1
+    #: Вердикты QA по ответам (`qa/judge.py`).
+    answerJudge: float = 0.0
+    #: Сводные портреты сегментов (`portraits/distill.py`).
+    segmentPortraits: float = 0.3
+
+    #: Порядок стадий. Отдельной константой, чтобы обход не зависел от
+    #: `dataclasses.fields` — от него зависит проверка стыка с интерфейсом.
+    STAGES = (
+        "personaCreation",
+        "personaValidation",
+        "responseSimulation",
+        "aggregation",
+        "answerJudge",
+        "segmentPortraits",
+    )
+
+    #: Диапазон, который принимает OpenAI-совместимый endpoint.
+    MIN = 0.0
+    MAX = 2.0
+
+    @classmethod
+    def defaults(cls) -> TemperatureConfig:
+        return cls()
+
+    @classmethod
+    def for_task(cls, settings_snapshot: dict[str, Any] | None) -> TemperatureConfig:
+        """
+        Температуры конкретного прогона из снимка настроек.
+
+        Снимок кладётся в задачу при создании и не перечитывается на лету — по
+        той же причине, что модель Whisper и версии промптов: пока задача стоит
+        в очереди, команда может сменить настройку, и тогда персоны созданы под
+        одной температурой, а опрошены под другой. Разница в разбросе ответов
+        выглядела бы свойством материала, а не настройки.
+
+        Пропущенная стадия берёт умолчание, а не ноль. Ноль здесь не «значения
+        нет», а «полная детерминированность»: на создании персон он означал бы
+        mode collapse.
+        """
+        raw = ((settings_snapshot or {}).get("temperatures") or {})
+        values: dict[str, float] = {}
+        for stage in cls.STAGES:
+            if stage not in raw:
+                continue
+            try:
+                value = float(raw[stage])
+            except (TypeError, ValueError) as exc:
+                raise ValueError(
+                    f"температура стадии {stage} не число: {raw[stage]!r}"
+                ) from exc
+            if not cls.MIN <= value <= cls.MAX:
+                # Отвергаем здесь, а не у провайдера: его отказ придёт посреди
+                # оплаченного прогона — после расшифровки и разбора кадров — и
+                # будет выглядеть сбоем сети, а не опечаткой в настройках.
+                raise ValueError(
+                    f"температура стадии {stage} = {value} вне диапазона "
+                    f"{cls.MIN}..{cls.MAX}"
+                )
+            values[stage] = value
+        return cls(**values)
+
+
 #: Модели транскрипции. Список закрыт и продублирован в apps/web/lib/settings.ts —
 #: интерфейс не должен уметь выбрать то, что воркер не умеет загрузить.
-WHISPER_MODELS = ("large-v3", "large-v3-turbo")
+#: Модели транскрипции, которые можно выбрать.
+#:
+#: Ровно то, что предзагружено в образ воркера. `large-v3-turbo` отсюда убран:
+#: его в кэше нет, и выбор уводил прогон качать полтора гигабайта весов посреди
+#: работы — уже после заливки ролика. Выглядело это не как «модель не найдена»,
+#: а как необъяснимо долгая транскрипция в первый раз и нормальная во второй.
+#: Список закреплён тестом tests/test_whisper_catalogue.py вместе со списком в
+#: интерфейсе: два перечня в двух языках расходятся молча.
+#: Модели распознавания, которые можно выбрать.
+#:
+#: Ровно то, что предзагружено в образ воркера. Имя WHISPER_MODELS осталось
+#: историческим: сейчас в перечне две модели и лишь одна из них whisper.
+#: Переименование затронуло бы снимки настроек уже сделанных прогонов, а они
+#: обязаны остаться исполнимыми.
+#:
+#: Замер на боевом железе 18.08.2026, дорожка 161,6 с, четыре потока CPU:
+#:
+#:     faster-whisper large-v3 (int8)      198,1 с
+#:     parakeet-tdt-0.6b-v3 (int8 ONNX)     24,7 с
+#:
+#: Восьмикратная разница. Транскрипция занимала около половины прогона, поэтому
+#: parakeet стоит первым и он же значение по умолчанию.
+#:
+#: 20.08.2026 первым стал GigaAM. Замер на пяти минутах диалога из прогона 0051
+#: (docs/ASR_BAKEOFF_2026-08-20.md): 64,8 слов на минуту речи против 40,3 у
+#: parakeet, 21 секунда против 67, 1694 МБ против 3285. У parakeet текст на
+#: русском не восстанавливается до смысла — «Сот мальчишек» вместо «Семьсот
+#: мальчишек», — и на этом тексте работают ответ персоны, проверка судьи и
+#: цитаты в отчёте.
+WHISPER_MODELS = ("gigaam-v3-e2e-rnnt", "large-v3")
+
+#: Модели, снятые с предложения, но остающиеся исполнимыми.
+#:
+#: Снимок настроек прогона пиннит имя модели (Decision Log #10). Убрать модель
+#: из `WHISPER_MODELS` и на этом закончить значило бы, что перезапуск прогона,
+#: сделанного на ней, падает ConfigError — то есть прошлый прогон перестаёт
+#: воспроизводиться из-за решения, принятого позже. Поэтому снятая модель
+#: исчезает из выбора, но продолжает исполняться.
+RETIRED_MODELS = ("parakeet-tdt-0.6b-v3",)
+
+#: Что вообще допустимо исполнить: предлагаемое плюс снятое.
+SUPPORTED_MODELS = WHISPER_MODELS + RETIRED_MODELS
+
+#: Модели, распознавание которыми идёт через ONNX, а не через faster-whisper.
+#: Перечень, а не признак в имени: имя — это то, что видит пользователь, и
+#: завязывать на его подстроку выбор кода значит однажды переименовать модель и
+#: сломать конвейер.
+ONNX_MODELS = ("parakeet-tdt-0.6b-v3",)
+
+#: Модели GigaAM. Свой движок: границы кусков берутся из нашего VAD, а не из
+#: его собственного longform — см. agent_core/asr/gigaam.py.
+GIGAAM_MODELS = tuple(m for m in WHISPER_MODELS if m.startswith("gigaam-"))
 
 
 @dataclass(frozen=True)
 class TranscriptionConfig:
-    """STT и диаризация. large-v3 по умолчанию, turbo — fallback из Настроек (#27)."""
+    """STT и диаризация. large-v3 — единственная модель в образе."""
 
     whisper_model: str
     compute_type: str
@@ -258,7 +512,7 @@ class TranscriptionConfig:
     def from_env(cls) -> TranscriptionConfig:
         return cls(
             whisper_model=_validate_model(
-                _optional("WHISPER_MODEL", "large-v3"), source="WHISPER_MODEL"
+                _optional("WHISPER_MODEL", WHISPER_MODELS[0]), source="WHISPER_MODEL"
             ),
             compute_type=_optional("WHISPER_COMPUTE_TYPE", "int8"),
         )
@@ -339,10 +593,17 @@ class DiarizationConfig:
 
 
 def _validate_model(model: str, *, source: str) -> str:
-    if model not in WHISPER_MODELS:
+    """
+    Имя модели, если её можно исполнить.
+
+    Сверка с `SUPPORTED_MODELS`, а не с `WHISPER_MODELS`: снятая с предложения
+    модель остаётся исполнимой, иначе перезапуск старого прогона падал бы из-за
+    решения, принятого после него.
+    """
+    if model not in SUPPORTED_MODELS:
         raise ConfigError(
             f"{source}={model!r} не поддерживается; допустимо "
-            f"{' или '.join(repr(m) for m in WHISPER_MODELS)} (Decision Log #6)"
+            f"{' или '.join(repr(m) for m in SUPPORTED_MODELS)} (Decision Log #6)"
         )
     return model
 
@@ -362,3 +623,52 @@ def _thinking_roles() -> frozenset[str]:
     if raw == "all":
         return frozenset(ModelConfig.ROLES)
     return frozenset(part.strip() for part in raw.split(",") if part.strip())
+
+
+@dataclass(frozen=True)
+class RequestionConfig:
+    """
+    Потолок переспроса забракованных ответов.
+
+    ─── Почему настройка, а не константа ──────────────────────────────────
+    До 19.08 переспрос включался порогом: только при отбраковке выше трети.
+    Порог защищал бюджет не с той стороны — он отказывал там, где переспрос
+    дёшев (восемь вызовов на прогоне № 0050) и разрешал там, где дорог. Порог
+    убран, вместо него потолок: сколько ответов разрешено переспросить за
+    прогон.
+
+    Значение принадлежит команде: у одной каждый вызов на счету, у другой на
+    счету достоверность отчёта. Ноль — законное значение «не переспрашивать»;
+    без него тот, кто считает вызовы, выключал бы QA целиком.
+
+    ─── Почему из снимка ──────────────────────────────────────────────────
+    По той же причине, что температуры и версии промптов: пока задача стоит в
+    очереди, настройку можно сменить, и тогда часть ответов переспрошена, часть
+    нет — внутри одного прогона, который потом читают как целое.
+    """
+
+    cap: int = 15
+
+    #: Верхняя граница настройки. Не про здравый смысл, а про гейт #22: каждый
+    #: переспрос — вызов модели с полным пакетом материала, и сотня таких не
+    #: укладывается в отведённое прогону время ни при каком провайдере.
+    MAX: ClassVar[int] = 100
+
+    @classmethod
+    def defaults(cls) -> RequestionConfig:
+        return cls()
+
+    @classmethod
+    def for_task(cls, settings_snapshot: dict[str, Any] | None) -> RequestionConfig:
+        raw = (settings_snapshot or {}).get("requestionCap")
+        if raw is None:
+            return cls()
+        try:
+            cap = int(raw)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"потолок переспроса не число: {raw!r}") from exc
+        if not 0 <= cap <= cls.MAX:
+            # Отвергаем здесь, а не молча обрезаем: обрезка означала бы, что
+            # человек видит в настройках одно, а прогон исполняет другое.
+            raise ValueError(f"потолок переспроса {cap} вне диапазона 0..{cls.MAX}")
+        return cls(cap=cap)

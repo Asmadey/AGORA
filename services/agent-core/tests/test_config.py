@@ -10,6 +10,7 @@ import pytest
 from agent_core import __version__
 from agent_core.config import (
     DIARIZATION_PIPELINES,
+    WHISPER_MODELS,
     ConfigError,
     DiarizationConfig,
     ModelConfig,
@@ -23,22 +24,35 @@ def test_package_importable():
 
 
 def test_model_config_requires_api_key(monkeypatch):
+    # Соседние обязательные переменные заданы намеренно: без них отказ придёт
+    # раньше и на другое имя, и тест перестанет проверять то, ради чего написан.
+    monkeypatch.setenv("OPENAI_BASE_URL", "https://foundation-models.api.cloud.ru/v1")
+    monkeypatch.setenv("AI_MODEL", "m")
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     with pytest.raises(ConfigError, match="OPENAI_API_KEY"):
         ModelConfig.from_env()
 
 
-def test_model_config_defaults_to_timeweb(monkeypatch):
+def test_model_config_has_no_default_provider(monkeypatch):
+    """
+    Забытый адрес провайдера — отказ конфигурации, а не звонок в пустоту.
+
+    Здесь стояло умолчание `https://api.timeweb.cloud/v1` и модель `qwen3.6` —
+    обе величины пережили переход на Cloud.ru и указывали туда, где ничего нет.
+    Умолчание не спасает от забытой переменной: оно превращает внятный отказ
+    старта в загадочную ошибку авторизации посреди оплаченного прогона, уже
+    после расшифровки и разбора кадров.
+    """
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")
     monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
     monkeypatch.delenv("AI_MODEL", raising=False)
-    monkeypatch.delenv("VLM_MODEL", raising=False)
 
-    cfg = ModelConfig.from_env()
+    with pytest.raises(ConfigError, match="OPENAI_BASE_URL"):
+        ModelConfig.from_env()
 
-    assert cfg.base_url == "https://api.timeweb.cloud/v1"
-    assert cfg.text_model == "qwen3.6"
-    assert cfg.vlm_model == "qwen3.6"
+    monkeypatch.setenv("OPENAI_BASE_URL", "https://foundation-models.api.cloud.ru/v1")
+    with pytest.raises(ConfigError, match="AI_MODEL"):
+        ModelConfig.from_env()
 
 
 def test_storage_config_requires_all_three_stores(monkeypatch):
@@ -54,25 +68,35 @@ def test_transcription_rejects_unsupported_model(monkeypatch):
         TranscriptionConfig.from_env()
 
 
-@pytest.mark.parametrize("model", ["large-v3", "large-v3-turbo"])
-def test_transcription_accepts_both_supported_models(monkeypatch, model):
+@pytest.mark.parametrize("model", WHISPER_MODELS)
+def test_transcription_accepts_every_model_in_the_catalogue(monkeypatch, model):
+    """
+    Каталог перечисляет то, что можно выбрать, и всё перечисленное обязано
+    приниматься. Параметризация по самому каталогу, а не по списку имён: имена
+    менялись вместе с содержимым образа, и второй список отставал бы от первого.
+    """
     monkeypatch.setenv("WHISPER_MODEL", model)
     assert TranscriptionConfig.from_env().whisper_model == model
 
 
-@pytest.mark.parametrize("model", ["large-v3", "large-v3-turbo"])
+@pytest.mark.parametrize("model", WHISPER_MODELS)
 def test_transcription_for_task_uses_snapshot_over_env(monkeypatch, model):
-    """Снимок настроек в задаче важнее окружения: прогон исполняется тем, что выбрал
-    пользователь на момент запуска, а не тем, что стоит в compose сегодня."""
-    other = "large-v3-turbo" if model == "large-v3" else "large-v3"
-    monkeypatch.setenv("WHISPER_MODEL", other)
+    """
+    Снимок настроек в задаче важнее окружения: прогон исполняется тем, что выбрал
+    пользователь на момент запуска, а не тем, что стоит в compose сегодня.
+
+    В окружении намеренно лежит невалидное значение. Проверка выходит острее,
+    чем со вторым валидным именем: если бы окружение всё-таки читалось, вызов не
+    вернул бы другую модель, а упал бы с ConfigError — и разница была бы видна.
+    """
+    monkeypatch.setenv("WHISPER_MODEL", "tiny")
     assert TranscriptionConfig.for_task(model).whisper_model == model
 
 
 def test_transcription_for_task_falls_back_to_env_when_snapshot_empty(monkeypatch):
     """Задачи, поставленные до появления настроек, обязаны остаться исполнимыми."""
-    monkeypatch.setenv("WHISPER_MODEL", "large-v3-turbo")
-    assert TranscriptionConfig.for_task(None).whisper_model == "large-v3-turbo"
+    monkeypatch.setenv("WHISPER_MODEL", WHISPER_MODELS[0])
+    assert TranscriptionConfig.for_task(None).whisper_model == WHISPER_MODELS[0]
 
 
 def test_transcription_for_task_rejects_unsupported_model(monkeypatch):
@@ -89,6 +113,8 @@ def test_model_config_sends_required_proxy_header(monkeypatch):
     """x-proxy-source помечен required в OpenAPI провайдера; SDK его не шлёт.
     Без заголовка запрос отклоняется до модели, поэтому он часть конфигурации."""
     monkeypatch.setenv("OPENAI_API_KEY", "k")
+    monkeypatch.setenv("OPENAI_BASE_URL", "https://foundation-models.api.cloud.ru/v1")
+    monkeypatch.setenv("AI_MODEL", "m")
     assert ModelConfig.from_env().default_headers == {"x-proxy-source": "agora"}
 
 
@@ -97,6 +123,7 @@ def test_vlm_falls_back_to_same_agent(monkeypatch):
     и это должно быть видно в конфигурации, а не выясняться по счёту."""
     monkeypatch.setenv("OPENAI_API_KEY", "k")
     monkeypatch.setenv("OPENAI_BASE_URL", "https://agent.timeweb.cloud/api/v1/cloud-ai/agents/abc/v1")
+    monkeypatch.setenv("AI_MODEL", "m")
     monkeypatch.delenv("VLM_BASE_URL", raising=False)
     cfg = ModelConfig.from_env()
     assert cfg.vlm_base_url == cfg.base_url
@@ -106,6 +133,7 @@ def test_vlm_falls_back_to_same_agent(monkeypatch):
 def test_separate_vlm_agent_is_detected(monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", "k")
     monkeypatch.setenv("OPENAI_BASE_URL", "https://agent.timeweb.cloud/api/v1/cloud-ai/agents/text/v1")
+    monkeypatch.setenv("AI_MODEL", "m")
     monkeypatch.setenv("VLM_BASE_URL", "https://agent.timeweb.cloud/api/v1/cloud-ai/agents/vision/v1")
     assert ModelConfig.from_env().vlm_shares_agent is False
 

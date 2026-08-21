@@ -1,6 +1,16 @@
-import { DEFAULT_SETTINGS, parseSettings, type TenantSettings } from "@/lib/settings";
+import {
+  DEFAULT_MODELS,
+  DEFAULT_REASONING,
+  DEFAULT_SETTINGS,
+  DEFAULT_TEMPERATURES,
+  parseSettings,
+  REASONING_EFFORTS,
+  TEMPERATURE_STAGES,
+  type TenantSettings,
+} from "@/lib/settings";
 import { withTenant } from "@/lib/server/db";
 import { requireOwner, requireSession, toResponse } from "@/lib/server/guard";
+import { encryptSecret, maskSecret, secretsAvailable } from "@/lib/server/secrets";
 
 /**
  * Настройки арендатора (задача #27), этап 2 из 2.
@@ -32,15 +42,80 @@ interface SettingsRow {
   cost_cap_calls: number | null;
   whisper_model: TenantSettings["whisperModel"];
   default_replication_count: number;
+  provider_config: Record<string, unknown> | null;
+  provider_api_key_hint: string | null;
 }
 
+/**
+ * Температуры лежат в `provider_config`, а не в собственных колонках.
+ *
+ * Колонка заведена схемой с самого начала и до сих пор не использовалась ничем.
+ * Шесть новых колонок под шесть стадий означали бы миграцию на каждую будущую
+ * стадию конвейера — а стадии добавляются: этим же планом добавляется валидация
+ * персон. Разбор всё равно идёт через `parseSettings`, поэтому мусор в jsonb
+ * отсекается там же, где мусор из HTTP.
+ */
 function rowToSettings(row: SettingsRow): TenantSettings {
+  const stored = (row.provider_config ?? {}) as Record<string, unknown>;
+
+  const temperatures = { ...DEFAULT_TEMPERATURES };
+  const raw = stored.temperatures;
+  if (raw && typeof raw === "object") {
+    for (const stage of TEMPERATURE_STAGES) {
+      const value = (raw as Record<string, unknown>)[stage.key];
+      if (typeof value === "number" && Number.isFinite(value)) {
+        temperatures[stage.key] = value;
+      }
+    }
+  }
+
+  const models = { ...DEFAULT_MODELS };
+  const rawModels = stored.models;
+  if (rawModels && typeof rawModels === "object") {
+    for (const role of ["text", "vision", "judge"] as const) {
+      const value = (rawModels as Record<string, unknown>)[role];
+      if (typeof value === "string") models[role] = value;
+    }
+  }
+
+  function reasoningOf(key: string): TenantSettings["reasoning"] {
+    const source = stored[key];
+    const out = { ...DEFAULT_REASONING };
+    if (!source || typeof source !== "object") return out;
+    const r = source as Record<string, unknown>;
+    if (typeof r.thinking === "boolean") out.thinking = r.thinking;
+    if (REASONING_EFFORTS.includes(r.effort as never)) {
+      out.effort = r.effort as TenantSettings["reasoning"]["effort"];
+    }
+    return out;
+  }
+
   return {
     costCap: row.cost_cap_calls === null ? "auto" : "hard",
     costCapValue: row.cost_cap_calls ?? DEFAULT_SETTINGS.costCapValue,
     whisperModel: row.whisper_model,
     defaultReplication: row.default_replication_count as TenantSettings["defaultReplication"],
+    temperatures,
+    models,
+    reasoning: reasoningOf("reasoning"),
+    judgeReasoning: reasoningOf("judgeReasoning"),
+    // Целое и неотрицательное — иначе умолчание. Мусор в jsonb отсекается здесь
+    // по той же причине, что мусор из HTTP: до экрана он доезжает одинаково.
+    requestionCap:
+      typeof stored.requestionCap === "number" && Number.isInteger(stored.requestionCap)
+        ? stored.requestionCap
+        : DEFAULT_SETTINGS.requestionCap,
+    endpoint: typeof stored.endpoint === "string" ? stored.endpoint : "",
+    // Только маска. Сам ключ не покидает сервер ни в одном ответе: даже
+    // владельцу — потому что ответ уезжает в браузер, в его историю и в любой
+    // прокси по дороге, а отозвать его оттуда нечем.
+    apiKeyMask: row.provider_api_key_hint ?? envKeyMask(),
   };
+}
+
+/** Маска ключа из окружения — он действует, пока свой не задан. */
+function envKeyMask(): string {
+  return maskSecret(process.env.OPENAI_API_KEY ?? "");
 }
 
 export async function GET() {
@@ -49,7 +124,7 @@ export async function GET() {
 
     const settings = await withTenant(tenantId, async (client) => {
       const { rows } = await client.query<SettingsRow>(
-        "SELECT cost_cap_calls, whisper_model, default_replication_count FROM settings WHERE tenant_id = $1",
+        "SELECT cost_cap_calls, whisper_model, default_replication_count, provider_config, provider_api_key_hint FROM settings WHERE tenant_id = $1",
         [tenantId],
       );
       // Строки может не быть: команда заведена, настройки ни разу не сохранялись.
@@ -85,17 +160,71 @@ export async function PUT(request: Request) {
     const value = parsed.value;
     const costCapCalls = value.costCap === "auto" ? null : value.costCapValue;
 
+    // ─── Ключ провайдера ──────────────────────────────────────────────────
+    //
+    // Приходит отдельным полем и только на запись: в ответе его нет никогда.
+    // Пустое или отсутствующее поле означает «не менять» — иначе сохранение
+    // любой соседней настройки стирало бы ключ, и заметили бы это на первом же
+    // прогоне, уже потратив расшифровку.
+    const rawKey = (body as { apiKey?: unknown })?.apiKey;
+    let encryptedKey: Buffer | null = null;
+    let keyHint: string | null = null;
+    if (typeof rawKey === "string" && rawKey.trim()) {
+      if (!secretsAvailable()) {
+        return Response.json(
+          {
+            error:
+              "SETTINGS_SECRET не задан в окружении: ключ негде зашифровать. " +
+              "Задайте переменную одинаковой для web и worker — иначе воркер не " +
+              "расшифрует то, что сохранит интерфейс",
+          },
+          { status: 400 },
+        );
+      }
+      const plain = rawKey.trim();
+      encryptedKey = encryptSecret(plain);
+      keyHint = maskSecret(plain);
+    }
+
     const settings = await withTenant(tenantId, async (client) => {
       const { rows } = await client.query<SettingsRow>(
-        `INSERT INTO settings (tenant_id, cost_cap_calls, whisper_model, default_replication_count)
-         VALUES ($1, $2, $3, $4)
+        `INSERT INTO settings (tenant_id, cost_cap_calls, whisper_model,
+                               default_replication_count, provider_config,
+                               provider_api_key, provider_api_key_hint)
+         -- При вставке сливать не с чем: строки ещё нет, и ссылка на
+         -- settings.provider_config здесь была бы неразрешимой.
+         VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7)
          ON CONFLICT (tenant_id) DO UPDATE SET
            cost_cap_calls            = EXCLUDED.cost_cap_calls,
            whisper_model             = EXCLUDED.whisper_model,
            default_replication_count = EXCLUDED.default_replication_count,
+           -- Слияние, а не замена: в provider_config со временем лягут и другие
+           -- настройки провайдера, и запись температур не должна стирать соседей.
+           provider_config           = COALESCE(settings.provider_config, '{}'::jsonb) || $5::jsonb,
+           -- COALESCE: пустое поле означает «не менять ключ». Иначе сохранение
+           -- любой соседней настройки стирало бы его, и заметили бы это на
+           -- первом же прогоне, уже потратив расшифровку.
+           provider_api_key          = COALESCE($6, settings.provider_api_key),
+           provider_api_key_hint     = COALESCE($7, settings.provider_api_key_hint),
            updated_at                = now()
-         RETURNING cost_cap_calls, whisper_model, default_replication_count`,
-        [tenantId, costCapCalls, value.whisperModel, value.defaultReplication],
+         RETURNING cost_cap_calls, whisper_model, default_replication_count, provider_config,
+                   provider_api_key_hint`,
+        [
+          tenantId,
+          costCapCalls,
+          value.whisperModel,
+          value.defaultReplication,
+          JSON.stringify({
+            temperatures: value.temperatures,
+            models: value.models,
+            reasoning: value.reasoning,
+            judgeReasoning: value.judgeReasoning,
+            requestionCap: value.requestionCap,
+            endpoint: value.endpoint,
+          }),
+          encryptedKey,
+          keyHint,
+        ],
       );
       return rowToSettings(rows[0]);
     });

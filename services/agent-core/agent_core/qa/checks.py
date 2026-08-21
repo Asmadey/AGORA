@@ -27,7 +27,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from ..survey import survey_questions
+from ..survey import question_label, survey_questions
 
 #: Допуск к длительности ролика. Секунда, а не ноль: таймкод последней сцены
 #: округляется при склейке, и ссылка на 01:40 при длительности 99.6 с — это
@@ -113,6 +113,52 @@ def _watched_share_reasons(perception: dict[str, Any], stance: str) -> list[str]
             f"({perception.get('retention_intent')!r})"
         ]
     return []
+
+
+#: Строка вопроса в том виде, в каком её печатает промпт респондента:
+#: ``- [q-77] (open) Что запомнилось больше всего`` (`respondent/run.py:228`).
+#: Модель видит именно её и охотно берёт ключом ответа целиком.
+_PROMPT_LINE = re.compile(r"^\[(?P<id>[^\]]+)\]\s*(?:\((?P<type>[^)]*)\)\s*)?(?P<label>.*)$")
+
+
+def _norm(text: str) -> str:
+    """Ключ в сравнимом виде: без краевых пробелов и без разницы в регистре."""
+    return str(text or "").strip().casefold()
+
+
+def _answer_keys(given: Any) -> set[str]:
+    """
+    Всё, чем персона могла назвать вопрос, — одним множеством.
+
+    Промпт разрешает ключ «id или текст вопроса», а сам вопрос печатает строкой
+    ``[id] (тип) формулировка``. Три вида ключа на один вопрос — и правило,
+    знающее только про два, бракует исправные ответы.
+
+    Такая отбраковка не выглядит дефектом правила: доля выживших падает, и
+    объяснение «модель плохо заполняет анкету» звучит правдоподобно. Так уже
+    было дважды — с базовыми баллами в `scores` и с типовыми вопросами в
+    `perception`. Поэтому здесь разбирается форма ключа, а не заводится третья
+    проверка по месту.
+
+    Из строки промпта берутся и `id`, и формулировка: персона могла обрезать
+    строку с любой стороны, а нам нужно узнать вопрос, а не форму записи.
+    """
+    if not isinstance(given, dict):
+        return set()
+
+    keys: set[str] = set()
+    for raw in given:
+        text = str(raw).strip()
+        keys.add(_norm(text))
+        match = _PROMPT_LINE.match(text)
+        if match:
+            keys.add(_norm(match.group("id")))
+            keys.add(_norm(match.group("label")))
+    # Пустая строка попадает сюда от ключа вида «[q-77] (open)» без текста и
+    # совпала бы с вопросом, у которого нет формулировки, — то есть закрыла бы
+    # ответом чужой пропуск.
+    keys.discard("")
+    return keys
 
 
 def timecodes(text: str) -> list[float]:
@@ -219,20 +265,53 @@ def consistency_reasons(answer: dict[str, Any], survey: dict[str, Any] | None = 
     # До починки формы анкеты правило было мёртвым (список вопросов получался
     # пустым), поэтому расхождение и дожило до продакшена.
     given = answer.get("survey_answers")
-    given_keys = set(map(str, given)) if isinstance(given, dict) else set()
+    given_keys = _answer_keys(given)
     scored = {k for k, v in scores.items() if v is not None}
+    perception = answer.get("perception")
+    perception = perception if isinstance(perception, dict) else {}
+
+    #: Вопросы, ответ на которые промпт требует класть не в `survey_answers`, а
+    #: в структурный блок `perception`. Правило искало их в `survey_answers` и
+    #: не находило никогда — то есть браковало каждого респондента, чья анкета
+    #: содержит вопрос о доле просмотра.
+    #:
+    #: Это тот же дефект, что был с пятью базовыми баллами в `scores`: его
+    #: починили, а соседний случай остался. Заплатка не уменьшает число таких
+    #: мест, поэтому здесь заведено соответствие, а не ещё одна проверка по
+    #: месту.
+    TYPED_IN_PERCEPTION = {
+        "watched_share": "watched_share_pct",
+        "recommendation": "recommendation_nps_1_to_10",
+        "retention": "retention_intent",
+    }
 
     missing: list[str] = []
     for question in survey_questions(survey):
         qid = str(question.get("id") or "")
+        label = question_label(question)
         base_key = question.get("baseKey")
+        qtype = str(question.get("type") or "")
+
+        # Ключом ответа промпт разрешает и идентификатор, и текст вопроса:
+        # «survey_answers: { "<id или текст вопроса>": … }». Персона, написавшая
+        # текст, выполнила инструкцию буквально, и требовать от неё строже, чем
+        # сказано в промпте, значит браковать исправные ответы — а выглядеть это
+        # будет как плохое качество модели.
+        answered_directly = (qid and _norm(qid) in given_keys) or (
+            label and _norm(label) in given_keys
+        )
+
         if base_key:
-            # Базовый критерий засчитан баллом. `id` тоже принимается: анкеты
-            # старых прогонов могли класть его в survey_answers.
-            if str(base_key) not in scored and qid not in given_keys:
+            if str(base_key) not in scored and not answered_directly:
                 missing.append(f"{qid or base_key} ({base_key})")
-        elif qid and qid not in given_keys:
-            missing.append(qid)
+            continue
+
+        field = TYPED_IN_PERCEPTION.get(qtype)
+        if field and perception.get(field) is not None:
+            continue
+
+        if not answered_directly:
+            missing.append(qid or label or qtype or "вопрос без идентификатора")
 
     if missing:
         reasons.append(f"анкета покрыта не полностью, нет ответов: {', '.join(sorted(missing))}")

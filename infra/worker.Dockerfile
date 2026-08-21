@@ -75,9 +75,68 @@ sys.stderr.write('opencv: стоит ' + ('opencv-python (GUI)' if gui else 'Н�
   'экстру opencv-headless убрали и pip тихо ставит GUI-сборку.\n') if not ok else None; \
 sys.exit(0 if ok else 1)"
 
+# ─── Веса GigaAM в образ ────────────────────────────────────────────────────
+#
+# Сам пакет объявлен в pyproject и приезжает шагом выше вместе с остальными:
+# ставить его здесь руками значило бы развести образ с окружением, из которого
+# собирается CI, — и разошлись бы они молча.
+#
+# А вот веса pip не тянет: их качает `load_model` при первом обращении. Делать
+# это посреди прогона нельзя по той же причине, что и с whisper (пункт 29 списка
+# владельца): выглядит это не нехваткой модели, а случайно долгой транскрипцией
+# в первый раз и нормальной во второй.
+#
+# GIGAAM_HOME читает agent_core/asr/gigaam.py и передаёт в load_model как
+# download_root. Каталог внутри образа, а не на томе: образ обязан быть
+# самодостаточным.
+ENV GIGAAM_HOME=/opt/models/gigaam
+RUN mkdir -p /opt/models/gigaam \
+ && python -c "\
+import gigaam; \
+gigaam.load_model('v3_e2e_rnnt', device='cpu', download_root='/opt/models/gigaam')" \
+ && python -c "\
+import pathlib, sys; \
+files = list(pathlib.Path('/opt/models/gigaam').rglob('*')); \
+weight = sum(f.stat().st_size for f in files if f.is_file()); \
+sys.exit(0 if weight > 100 * 1024 * 1024 else sys.stderr.write( \
+  'веса GigaAM не скачались: ' + str(weight) + ' байт' + chr(10)) or 1)"
+
+# Оба движка распознавания обязаны импортироваться — на сборке, а не на первом
+# прогоне. gigaam понижает onnxruntime до 1.23; faster-whisper объявляет
+# `<2,>=1.14` и с ним работает, но проверить это надо здесь, а не надеяться.
+RUN python -c "\
+import faster_whisper, gigaam, importlib.metadata as md; \
+print('onnxruntime', md.version('onnxruntime'), '| оба движка импортируются')"
+
+# ─── Веса parakeet в образ ──────────────────────────────────────────────────
+#
+# 671 МБ int8-весов пекутся сюда намеренно. Скачивание модели посреди прогона —
+# ровно тот дефект, который чинился для whisper (пункт 29 списка владельца): он
+# не выглядит нехваткой модели, он выглядит случайно долгой транскрипцией в
+# первый раз и нормальной во второй, то есть чинит себя сам и не воспроизводится,
+# когда за него берутся.
+#
+# Каталог /opt/models, а не кэш HuggingFace на томе: том общий и переживает
+# пересборку, и модель, оказавшаяся там, продолжала бы работать даже после того,
+# как её убрали из образа. Образ обязан быть самодостаточным.
+RUN python -c "\
+from huggingface_hub import snapshot_download; \
+snapshot_download('csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8', \
+                  local_dir='/opt/models/parakeet-tdt-0.6b-v3')" \
+ && rm -rf /opt/models/parakeet-tdt-0.6b-v3/.cache \
+ && python -c "\
+import pathlib, sys; \
+d = pathlib.Path('/opt/models/parakeet-tdt-0.6b-v3'); \
+need = ['encoder.int8.onnx', 'decoder.int8.onnx', 'joiner.int8.onnx', 'tokens.txt']; \
+missing = [n for n in need if not (d / n).exists()]; \
+sys.exit(0 if not missing else sys.stderr.write('нет весов parakeet: ' + str(missing) + chr(10)) or 1)"
+
 COPY services/agent-core/ ./
 COPY packages/shared/ /app/shared/
 COPY prompts/ /app/prompts/
+# Корпус заземления. Без него генерация аудитории в воркере падает с
+# FileNotFoundError: раньше её запускал веб, и в образ она не попадала.
+COPY data/ /app/data/
 
 RUN pip install -e .
 
@@ -89,7 +148,7 @@ RUN pip install -e .
 # посреди прогона, уже после загрузки видео.
 RUN useradd --create-home --uid 1001 celeryuser \
     && mkdir -p /home/celeryuser/.cache/huggingface \
-    && chown -R celeryuser:celeryuser /app /home/celeryuser
+    && chown -R celeryuser:celeryuser /app /home/celeryuser /opt/models
 USER celeryuser
 
 CMD ["celery", "-A", "agent_core.celery_app", "worker", "--loglevel=info"]

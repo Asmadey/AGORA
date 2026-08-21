@@ -79,16 +79,29 @@ def test_slice_contains_only_own_dna():
 
 
 def test_no_leak_across_many_personas_and_replications():
-    """Утечка проявляется не на второй персоне, а на двадцатой во втором повторе."""
+    """
+    Утечка проявляется не на второй персоне, а на двадцатой во втором повторе.
+
+    Считаем ПРОМПТЫ С МАРКЕРОМ, а не сверяем их по порядку с ответами. Прежняя
+    редакция брала `outcome.answers[i]` для i-го отправленного промпта, но опрос
+    идёт в пуле потоков: порядок записи в Recorder не совпадает с порядком
+    ответов, и тест падал примерно раз из трёх — на исправном коде.
+
+    Мигающая проверка хуже отсутствующей: она учит перезапускать вместо того,
+    чтобы читать. Счёт от порядка не зависит: маркер обязан встретиться ровно
+    столько раз, сколько у своей персоны повторов, — ни больше (утечка), ни
+    меньше (персона не опрошена).
+    """
+    replications = 3
     people = [persona(0, "МАРКЕР-XYZ")] + [persona(i) for i in range(1, 20)]
     client = Recorder()
-    outcome = run(personas=people, client=client, replication_count=3)
+    run(personas=people, client=client, replication_count=replications)
 
-    for i, (system, user) in enumerate(client.sent):
-        own = outcome.answers[i]["persona_id"] if i < len(outcome.answers) else None
-        if own == "p0":
-            continue
-        assert "МАРКЕР-XYZ" not in system + user, f"утечка в промпте {i}"
+    seen = sum(1 for system, user in client.sent if "МАРКЕР-XYZ" in system + user)
+    assert seen == replications, (
+        f"маркер в {seen} промптах из {len(client.sent)}, ожидалось {replications}: "
+        f"больше — утечка соседней персоны, меньше — своя персона не опрошена"
+    )
 
 
 def test_input_personas_not_mutated():
@@ -271,3 +284,62 @@ def test_segment_is_a_copy_not_a_reference_into_the_persona():
     out = run(personas=[p])
     out.answers[0]["segment"]["age_group"] = "подменено"
     assert p["dna"]["demographics"]["age_group"] == "25-34"
+
+
+def test_failure_reasons_reach_the_screen():
+    """
+    Отказ персоны объясняется, а не только считается.
+
+    ─── Как это нашлось ─────────────────────────────────────────────────────
+    Владелец увидел на экране прогресса «evaluate_personas: отказов 1» и спросил
+    почему. Ответить было нечем: причины складывались в `failure_reasons`, но
+    наружу уходило только число, а сами объяснения писались в
+    `persona_answers.json` в рабочем каталоге контейнера и умирали вместе с ним.
+    Для прогона № 0050 они уже недоступны.
+
+    Отказ одной персоны из двадцати — законное событие: провайдер отвечает
+    ошибкой, модель возвращает неразбираемый JSON. Ненормально то, что по экрану
+    нельзя отличить «сеть моргнула» от «промпт сломан»: в первом случае прогон
+    перезапускают, во втором чинят.
+    """
+    from agent_core.pipeline import nodes
+
+    class Failing:
+        """Отказывает на каждой второй персоне с узнаваемым текстом."""
+
+        def __init__(self) -> None:
+            self.n = 0
+
+        def complete(self, *, system: str, user: str) -> str:  # noqa: ARG002
+            self.n += 1
+            if self.n % 2 == 0:
+                raise RuntimeError("провайдер вернул 503")
+            return json.dumps(ANSWER, ensure_ascii=False)
+
+    outcome = run(personas=[persona(i) for i in range(4)], client=Failing())
+    lines = nodes._respondent_degraded(outcome)
+
+    assert lines, "отказы обязаны попадать в degraded"
+    joined = " ".join(lines)
+    assert "отказов 2" in joined, f"число отказов потеряно: {lines}"
+    assert "503" in joined, f"причина отказа не названа: {lines}"
+
+
+def test_many_failures_are_summarised_not_dumped():
+    """
+    Полтысячи отказов не превращают экран в лог.
+
+    Показывается несколько причин и счётчик остальных: одинаковых строк там
+    обычно сотни, и человеку нужен вид отказа, а не их перечень.
+    """
+    from agent_core.pipeline import nodes
+
+    class AlwaysFails:
+        def complete(self, *, system: str, user: str) -> str:  # noqa: ARG002
+            raise RuntimeError("провайдер вернул 503")
+
+    outcome = run(personas=[persona(i) for i in range(12)], client=AlwaysFails())
+    lines = nodes._respondent_degraded(outcome)
+
+    assert len(lines) <= 5, f"на экран уехал лог из {len(lines)} строк"
+    assert "отказов 12" in " ".join(lines)

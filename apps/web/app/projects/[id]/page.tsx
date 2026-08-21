@@ -11,6 +11,7 @@ import {
 
 import { PageHeader } from "@/components/AppShell";
 import { Chip } from "@/components/agora/Primitives";
+import { ProjectTitle } from "@/components/agora/ProjectTitle";
 import { EmptyState } from "@/components/agora/States";
 import { withTenant } from "@/lib/server/db";
 import { requireSession } from "@/lib/server/guard";
@@ -62,7 +63,9 @@ export default async function ProjectPage({
   return (
     <>
       <PageHeader
-        title={project.name}
+        title={
+          <ProjectTitle id={project.id} name={project.name} action={renameProjectAction} />
+        }
         subtitle={`Создан ${new Date(project.createdAt).toLocaleDateString("ru-RU")}`}
         actions={
           <Link
@@ -139,27 +142,6 @@ export default async function ProjectPage({
         </section>
 
         <section className="max-w-xl space-y-6 border-t border-hairline pt-8">
-          <div>
-            <h2 className="mb-3 text-sm font-semibold">Переименовать</h2>
-            <form action={renameProjectAction} className="flex flex-wrap gap-2">
-              <input type="hidden" name="id" value={project.id} />
-              <input
-                name="name"
-                defaultValue={project.name}
-                required
-                maxLength={200}
-                aria-label="Название проекта"
-                className="min-w-0 flex-1 rounded-md border border-hairline bg-background px-3 py-2 text-sm outline-none transition-colors focus:border-muted-foreground/60"
-              />
-              <button
-                type="submit"
-                className="rounded-md border border-hairline px-4 py-2 text-sm transition-colors hover:bg-secondary"
-              >
-                Сохранить
-              </button>
-            </form>
-          </div>
-
           <div>
             <h2 className="mb-1 text-sm font-semibold text-danger">Удалить проект</h2>
             <p className="mb-3 text-xs leading-relaxed text-slate">

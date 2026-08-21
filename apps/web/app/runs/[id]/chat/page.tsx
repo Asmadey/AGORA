@@ -2,6 +2,9 @@ import Link from "next/link";
 import { ArrowLeft, BarChart3, MessageCircle, User } from "lucide-react";
 import { PageHeader } from "@/components/AppShell";
 import { EmptyState } from "@/components/agora/States";
+import { notFound } from "next/navigation";
+import { requireSession } from "@/lib/server/guard";
+import { resolveRun } from "@/lib/server/run-ref";
 
 /**
  * Чат по результатам исследования — задача #28, ещё не реализована.
@@ -28,17 +31,25 @@ import { EmptyState } from "@/components/agora/States";
  */
 
 export default async function ChatPage({ params }: { params: Promise<{ id: string }> }) {
-  const { id } = await params;
+  const { id: slug } = await params;
+  const { tenantId } = await requireSession();
+
+  // Разбор адреса тот же, что у отчёта и прогресса. Экран пока заглушка, но
+  // ссылка «К отчёту» с него ведёт настоящая — с непонятым адресом она вела бы
+  // в 404.
+  const run = await resolveRun(slug, tenantId, "/chat");
+  if (!run) notFound();
+  const id = run.id;
 
   return (
     <>
       <PageHeader
         title="Обсудить результаты"
         subtitle="Вопросы к аналитику по всему исследованию и к отдельной персоне по её ответам."
-        actions={
+        back={
           <Link
             href={`/runs/${id}`}
-            className="inline-flex items-center gap-2 rounded-md border border-hairline px-4 py-2 text-sm transition-colors hover:bg-secondary"
+            className="inline-flex items-center gap-1.5 rounded-md border border-hairline px-2.5 py-1.5 text-sm transition-colors hover:bg-secondary"
           >
             <ArrowLeft className="h-4 w-4" />
             К отчёту

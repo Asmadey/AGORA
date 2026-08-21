@@ -5,12 +5,16 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { Check, ChevronLeft, ChevronRight, Upload, FileText, Info } from "lucide-react";
 import { FileChip } from "@/components/agora/FileChip";
+import { UploadProgress } from "@/components/agora/UploadProgress";
+import { putWithProgress, uploadPercent, type UploadState } from "@/lib/upload";
 import { cn } from "@/lib/utils";
 import { Chip } from "@/components/agora/Primitives";
 import { SurveyBuilder, BASE_QUESTIONS } from "@/components/agora/SurveyBuilder";
 import { AudienceStep } from "@/components/agora/AudienceStep";
+import { ProjectPicker, type ProjectOption } from "@/components/agora/ProjectPicker";
 import { DEFAULT_CRITERIA, type AudienceCriteria } from "@/lib/audience";
 import type { SurveyQuestion } from "@/lib/agora-types";
+import type { RerunPrefill } from "@/lib/rerun";
 
 /**
  * Визард запуска исследования (задачи #7–#11).
@@ -37,9 +41,19 @@ export default function NewStudyPage() {
   const [mode, setMode] = useState<"short" | "long">("short");
   const [criteria, setCriteria] = useState<AudienceCriteria>(DEFAULT_CRITERIA);
   const [replication, setReplication] = useState(1);
+  /**
+   * Название исследования. Спрашивается на шаге «Резюме»: к концу визарда
+   * человек знает, что именно собрал, а на шаге загрузки — ещё нет.
+   */
+  const [title, setTitle] = useState("");
   const [launching, setLaunching] = useState(false);
   const [launchError, setLaunchError] = useState<string | null>(null);
+  // Идентификатор созданного исследования. Показывается до перехода в список:
+  // по нему ищут прогон в логах и в поддержке, и увидеть его надо один раз, а
+  // не выкапывать из адреса.
+  const [launchedId, setLaunchedId] = useState<string | null>(null);
   const router = useRouter();
+
 
   // Seed фиксируется ОДИН раз на сессию визарда, а не на каждый клик. Это и есть
   // рабочая идемпотентность (#11): двойное нажатие «Запустить» уходит с тем же
@@ -85,8 +99,20 @@ export default function NewStudyPage() {
         body: JSON.stringify({
           mode,
           videoRef,
+          // Имя файла — для показа в списке. Ключ S3 из него не собирается:
+          // пользовательские имена содержат пробелы, кириллицу и повторяются, а
+          // ключ обязан быть уникальным. Поэтому имя едет отдельным полем.
+          sourceName: videoName,
+          // Название исследования, заданное на шаге «Резюме». Пустое —
+          // законно: заголовком станет имя файла.
+          title: title.trim() || null,
+          projectId,
           personaSetId,
           replicationCount: replication,
+          // Текст файла, а не имя: персонам нужен контекст, а не название.
+          // Прежде наверх уезжали только имя и размер, и содержимое не
+          // покидало браузер вовсе.
+          audienceContext: contextFile?.text ?? undefined,
           seed,
         }),
       });
@@ -101,10 +127,9 @@ export default function NewStudyPage() {
         );
         return;
       }
-      // В общий список прогонов, а не на экран прогресса конкретного прогона.
-      // Прогон идёт десятки минут, всё это время смотреть не на что, а из
-      // списка видно и его, и соседние — включая тот, что запускали до этого.
-      router.push("/");
+      // Сначала показываем идентификатор, потом уводим в список: переход
+      // сразу же прятал бы номер, ради которого его и спрашивали.
+      setLaunchedId(String(data.id));
     } catch (e) {
       setLaunchError((e as Error).message);
     } finally {
@@ -112,36 +137,69 @@ export default function NewStudyPage() {
     }
   }
 
+  // null — «без проекта», законный выбор: у арендатора, запускающего первое
+  // исследование, проектов нет вовсе, и обязательное поле означало бы
+  // «сначала придумай папку, потом работай».
+  const [project, setProject] = useState<ProjectOption | null>(null);
+  const projectId = project?.id ?? null;
   const [personaSetId, setPersonaSetId] = useState<string | null>(null);
   // Размер выбранного набора приходит с шагом «Аудитория»: список наборов
   // загружает он, и только он знает, сколько там персон. Резюме считает по
   // этому числу оценку вызовов модели — приблизительное значение здесь
   // означало бы названную наугад стоимость прогона.
   const [personaSetSize, setPersonaSetSize] = useState<number | null>(null);
-  const [contextFile, setContextFile] = useState<{ name: string; size: number } | null>(null);
+  /**
+   * Критерии, по которым собран ВЫБРАННЫЙ набор.
+   *
+   * Резюме показывало прочерк вместо возраста и географии, как только набор был
+   * выбран: критерии шага «Аудитория» к готовому набору не относятся, а его
+   * собственные наверх не передавались. Прочерк при этом читается как «данных
+   * нет», хотя набор описан полностью — они лежат в
+   * `persona_sets.generation_config`.
+   */
+  const [personaSetConfig, setPersonaSetConfig] = useState<Record<string, unknown> | null>(null);
+  const [contextFile, setContextFile] = useState<{ name: string; size: number; text: string } | null>(null);
   const [videoRef, setVideoRef] = useState<string | null>(null);
   const [videoName, setVideoName] = useState<string | null>(null);
   // Размер держим отдельно от File: сам объект File живёт только до
   // перерисовки, а плашке нужно показывать вес и после неё.
   const [videoSize, setVideoSize] = useState<number | null>(null);
-  const [uploading, setUploading] = useState(false);
+  // Полное состояние загрузки, а не булево «идёт/не идёт». Спиннер не отличим
+  // от повисшего запроса, а ролик грузится минутами.
+  const [upload, setUpload] = useState<UploadState>({ phase: "idle", sent: 0, total: 0 });
+  const uploading = upload.phase === "presigning" || upload.phase === "uploading" ||
+    upload.phase === "checking";
 
   // Сколько персон реально пойдёт в прогон: размер выбранного набора либо
   // заказанный размер генерации. null — набор выбран, а его размер ещё не
   // приехал; оценка в резюме тогда честно показывает прочерк.
   const audienceSize = personaSetId ? personaSetSize : criteria.size;
 
+  /**
+   * Значение из состава выбранного набора либо null, если набор не выбран.
+   *
+   * Пустой список у набора — законный случай: «любой возраст» при генерации.
+   * Так и пишем, а не прочерком: прочерк означает «неизвестно», а здесь
+   * известно, что ограничения не было.
+   */
+  function setList(key: string): string | null {
+    if (!personaSetId || !personaSetConfig) return null;
+    const raw = personaSetConfig[key];
+    if (!Array.isArray(raw)) return null;
+    return raw.length ? raw.map(String).join(", ") : "без ограничения";
+  }
+
   // Загрузка идёт по маршрутам #8, уже подтверждённым на стенде: presign → PUT
   // байтов прямо в S3 → complete с ffprobe-валидацией. Веб файл не проксирует:
   // 700 МБ через Next-роут упёрлись бы в лимит тела запроса.
   async function uploadVideo(file: File) {
-    setUploading(true);
     setLaunchError(null);
-    // Плашка появляется сразу, до первого запроса: заливка 700 МБ идёт
-    // минуты, и всё это время экран не должен выглядеть так, будто файл
-    // не приняли.
+    // Плашка появляется до первого запроса: заливка 700 МБ идёт минуты, и всё
+    // это время экран не должен выглядеть так, будто файл не приняли.
     setVideoName(file.name);
     setVideoSize(file.size);
+    setUpload({ phase: "presigning", sent: 0, total: file.size });
+
     try {
       const pres = await fetch("/api/upload/presign", {
         method: "POST",
@@ -151,13 +209,16 @@ export default function NewStudyPage() {
       const p = await pres.json();
       if (!pres.ok) throw new Error(p?.error ?? `presign вернул ${pres.status}`);
 
-      const put = await fetch(p.uploadUrl, {
-        method: "PUT",
-        headers: { "Content-Type": file.type },
-        body: file,
-      });
-      if (!put.ok) throw new Error(`заливка в S3 вернула ${put.status}`);
+      // XMLHttpRequest, а не fetch: у fetch нет события на выгруженные байты,
+      // то есть прогресс отправки недоступен принципиально. См. lib/upload.ts.
+      setUpload({ phase: "uploading", sent: 0, total: file.size });
+      await putWithProgress(p.uploadUrl, file, (sent, total) =>
+        setUpload({ phase: "uploading", sent, total: total || file.size }),
+      );
 
+      // Последний байт ушёл — но материал ещё не принят: ffprobe проверяет
+      // контейнер, кодеки и длительность и может файл отвергнуть.
+      setUpload({ phase: "checking", sent: file.size, total: file.size });
       const done = await fetch("/api/upload/complete", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -167,16 +228,26 @@ export default function NewStudyPage() {
       if (!done.ok) throw new Error(d?.error ?? `complete вернул ${done.status}`);
 
       setVideoRef(d.key);
-      setVideoName(file.name);
-      setVideoSize(file.size);
+      setUpload({ phase: "done", sent: file.size, total: file.size });
     } catch (e) {
-      setLaunchError(`загрузка не удалась: ${(e as Error).message}`);
-    } finally {
-      setUploading(false);
+      setUpload({
+        phase: "failed",
+        sent: 0,
+        total: file.size,
+        error: (e as Error).message,
+      });
     }
   }
 
   const [questions, setQuestions] = useState<SurveyQuestion[]>(BASE_QUESTIONS);
+
+  const clearVideo = () => {
+    setVideoRef(null);
+    setVideoName(null);
+    setVideoSize(null);
+    setUpload({ phase: "idle", sent: 0, total: 0 });
+    setLaunchError(null);
+  };
 
   /**
    * Чего не хватает для запуска — на языке визарда, а не контракта маршрута.
@@ -184,15 +255,62 @@ export default function NewStudyPage() {
    * Считается на каждом рендере, поэтому список исчезает по мере заполнения:
    * пользователь видит, что действие засчитано, не нажимая «Запустить» ещё раз.
    */
+  /**
+   * Перезапуск исследования (#30): `/studies/new?rerun=<id>`.
+   *
+   * Прежде параметр не разбирался нигде — визард открывался пустым, и нажавший
+   * «Перезапустить» заново грузил тот же файл и заново набирал аудиторию. То
+   * есть получал не повтор, а новое исследование, которое не с чем сравнить.
+   *
+   * Адрес читается из `window.location`, а не через `useSearchParams`: последний
+   * в Next 15 требует обёртки в Suspense на всей странице, и ради одного
+   * необязательного параметра это лишняя перестройка визарда.
+   */
+  const [rerunNote, setRerunNote] = useState<string | null>(null);
+  useEffect(() => {
+    const rerunOf = new URLSearchParams(window.location.search).get("rerun");
+    if (!rerunOf) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`/api/tasks/${rerunOf}/rerun`);
+        const data = (await res.json()) as { prefill?: RerunPrefill; error?: string };
+        if (cancelled) return;
+        if (!res.ok || !data.prefill) {
+          setRerunNote(data.error ?? "исходный прогон не найден — визард открыт пустым");
+          return;
+        }
+        const p = data.prefill;
+        setMode(p.mode);
+        setVideoRef(p.videoRef);
+        setVideoName(p.sourceName);
+        setPersonaSetId(p.personaSetId);
+        setReplication(p.replicationCount);
+        setTitle(p.title);
+        setRerunNote(p.warning);
+      } catch {
+        if (!cancelled) setRerunNote("не удалось прочитать исходный прогон");
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   const missing: { step: number; what: string; how: string }[] = [];
   if (!videoRef) {
     missing.push({
       step: 0,
       what: "Не приложен материал",
       how: uploading
-        ? "Ролик ещё загружается — дождитесь окончания"
-        : videoName
-          ? "Загрузка не завершилась: приложите файл заново"
+        ? (() => {
+            const pct = uploadPercent(upload);
+            return pct === null
+              ? "Ролик ещё загружается — дождитесь окончания"
+              : `Ролик загружается: ${pct}% — дождитесь окончания`;
+          })()
+        : upload.phase === "failed"
+          ? `Загрузка не удалась: ${upload.error ?? "причина неизвестна"}. Приложите файл заново`
           : "Шаг «Контент»: выберите видео",
     });
   }
@@ -216,7 +334,22 @@ export default function NewStudyPage() {
 
   return (
     <div className="mx-auto max-w-3xl p-8">
-      <h1 className="text-2xl font-semibold tracking-tight">Новое исследование</h1>
+      <h1 className="text-2xl font-semibold tracking-tight">
+        {videoRef && rerunNote === null && title.endsWith("— повтор")
+          ? "Повтор исследования"
+          : "Новое исследование"}
+      </h1>
+
+      {/*
+        Что именно перенеслось из исходного прогона — и чего не хватило.
+        Без этой строки повтор неотличим от нового исследования: поля просто
+        оказываются заполненными, и понять, откуда они, нельзя.
+      */}
+      {rerunNote !== null && (
+        <p className="mt-3 rounded-md border border-warning/30 bg-warning-soft/60 p-3 text-xs leading-relaxed text-warning">
+          {rerunNote}
+        </p>
+      )}
 
       {/* Шаги */}
       <ol className="mt-6 flex items-center gap-2">
@@ -256,20 +389,20 @@ export default function NewStudyPage() {
               {/* Пока файла нет — зона выбора. Как только он выбран, на её месте
                   встаёт плашка: две зоны одновременно означали бы, что можно
                   приложить второй ролик, а прогон идёт по одному. */}
-              {videoName ? (
+              {videoName && (uploading || upload.phase === "failed") ? (
+                <UploadProgress
+                  className="mt-3"
+                  name={videoName}
+                  state={upload}
+                  onCancel={clearVideo}
+                />
+              ) : videoName ? (
                 <FileChip
                   className="mt-3"
                   kind="video"
                   name={videoName}
                   size={videoSize}
-                  busy={uploading}
-                  hint={videoRef ? undefined : "загрузка не завершена"}
-                  onRemove={() => {
-                    setVideoRef(null);
-                    setVideoName(null);
-                    setVideoSize(null);
-                    setLaunchError(null);
-                  }}
+                  onRemove={clearVideo}
                 />
               ) : (
                 <label className="mt-3 flex cursor-pointer flex-col items-center justify-center rounded-xl border border-dashed border-hairline-strong py-10 transition-colors hover:border-ink/40 hover:bg-surface">
@@ -288,6 +421,8 @@ export default function NewStudyPage() {
                 </label>
               )}
             </div>
+
+            <ProjectPicker value={projectId} onChange={setProject} />
 
             <div>
               <h2 className="text-sm font-semibold">Режим обработки</h2>
@@ -321,9 +456,10 @@ export default function NewStudyPage() {
             criteria={criteria}
             onCriteriaChange={setCriteria}
             personaSetId={personaSetId}
-            onPersonaSetChange={(id, size) => {
+            onPersonaSetChange={(id, size, config) => {
               setPersonaSetId(id);
               setPersonaSetSize(size ?? null);
+              setPersonaSetConfig(config ?? null);
             }}
             contextFile={contextFile}
             onContextFileChange={setContextFile}
@@ -336,6 +472,38 @@ export default function NewStudyPage() {
         {/* Шаг 4 — резюме */}
         {step === 3 && (
           <div className="space-y-6">
+            {/*
+              Название — первым в резюме, до параметров прогона.
+
+              Без него заголовком исследования становится имя файла, а файлы
+              называют «15 min.mp4» и «final_v3.mp4»: через месяц в списке из
+              двадцати прогонов ни один не опознаётся. Спрашиваем здесь, а не на
+              первом шаге, потому что к концу визарда человек уже знает, что
+              именно он собрал, — на шаге загрузки он этого ещё не знает.
+
+              Поле необязательное: заставлять придумывать название до запуска
+              значит держать прогон ради строки, которую можно дописать потом
+              карандашом в списке.
+            */}
+            <div>
+              <label htmlFor="study-title" className="text-sm font-semibold">
+                Укажите название исследования
+              </label>
+              <p className="mt-1 text-xs leading-relaxed text-slate">
+                Необязательно. Если оставить пустым, в списке будет имя файла
+                {videoName ? ` — «${videoName}»` : ""}. Название можно поменять
+                потом, карандашом рядом с заголовком.
+              </p>
+              <input
+                id="study-title"
+                value={title}
+                onChange={(e) => setTitle(e.target.value)}
+                maxLength={200}
+                placeholder="Например: Промо для ВК, апрельская версия"
+                className="mt-3 w-full max-w-xl rounded-md border border-hairline bg-background px-3 py-2 text-sm outline-none transition-colors focus:border-muted-foreground/60"
+              />
+            </div>
+
             <div>
               <h2 className="text-sm font-semibold">Перекрытие</h2>
               <p className="mt-1 text-xs leading-relaxed text-slate">
@@ -368,6 +536,7 @@ export default function NewStudyPage() {
 
             <dl className="space-y-2 rounded-md border border-hairline p-4 text-sm">
               {[
+                ["Проект", project?.name ?? "без проекта"],
                 ["Режим", mode === "short" ? "Короткое видео" : "Длинное видео"],
                 [
                   "Аудитория",
@@ -377,8 +546,12 @@ export default function NewStudyPage() {
                       : "выбранный набор персон"
                     : `${criteria.size} персон`,
                 ],
-                ["Возраст", personaSetId ? "—" : criteria.ageGroups.join(", ") || "не выбран"],
-                ["География", personaSetId ? "—" : criteria.geos.join(", ") || "не выбрана"],
+                // У выбранного набора показывается ЕГО состав, а не критерии
+                // этого шага: критерии описывают будущую генерацию, а прогон
+                // пойдёт по уже собранному набору. Прочерк, стоявший здесь
+                // раньше, читался как «данных нет», хотя набор описан целиком.
+                ["Возраст", setList("age_groups") ?? (criteria.ageGroups.join(", ") || "не выбран")],
+                ["География", setList("geos") ?? (criteria.geos.join(", ") || "не выбрана")],
                 ["Доп. контекст", contextFile?.name ?? "не приложен"],
                 [
                   "Анкета",
@@ -387,6 +560,7 @@ export default function NewStudyPage() {
                       ? ` (${questions.length - BASE_QUESTIONS.length} своих)`
                       : ""),
                 ],
+                ["Название", title.trim() || videoName || "по имени файла"],
                 ["Перекрытие", `×${replication}`],
                 [
                   "Вызовов модели",
@@ -408,6 +582,13 @@ export default function NewStudyPage() {
               <Chip tone="outline">Оценка времени: 8–12 минут</Chip>
               <Chip tone="outline">Лимит стоимости: авто</Chip>
             </div>
+
+            {/* Ход загрузки виден и на «Резюме»: пользователь дошёл сюда,
+                пока ролик заливается, и уходить на первый шаг ради полосы
+                прогресса ему незачем. */}
+            {videoName && (uploading || upload.phase === "failed") && (
+              <UploadProgress name={videoName} state={upload} />
+            )}
 
             {/* Чего не хватает — до нажатия, а не после. Каждая строка ведёт
                 на свой шаг: сказать «не заполнено» и оставить пользователя
@@ -440,16 +621,45 @@ export default function NewStudyPage() {
               </div>
             )}
 
+            {/* Исследование создано: показываем присвоенный номер и уводим
+                дальше по кнопке, а не автоматически. */}
+            {launchedId && (
+              <div className="rounded-lg border border-success/30 bg-success/10 p-4">
+                <p className="text-sm font-medium">Исследование создано</p>
+                <p className="mt-1 font-mono text-sm break-all">{launchedId}</p>
+                <p className="mt-1 text-xs leading-relaxed text-slate">
+                  Разбор идёт десятки минут. По этому номеру исследование ищется в
+                  списке, в логах воркера и в обращении в поддержку.
+                </p>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <Link
+                    href="/researches"
+                    className="rounded-full bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-ink/90"
+                  >
+                    К списку исследований
+                  </Link>
+                  <Link
+                    href={`/runs/${launchedId}/progress`}
+                    className="rounded-full border border-hairline px-4 py-2 text-sm transition-colors hover:bg-surface"
+                  >
+                    Следить за ходом
+                  </Link>
+                </div>
+              </div>
+            )}
+
             <button
               onClick={launch}
-              disabled={launching}
+              disabled={launching || launchedId !== null}
               className="block w-full rounded-full bg-primary py-3 text-center text-sm font-medium text-primary-foreground transition-colors hover:bg-ink/90 disabled:opacity-50"
             >
               {launching
                 ? "Запускаем…"
-                : missing.length > 0
-                  ? "Показать, чего не хватает"
-                  : "Запустить исследование"}
+                : launchedId
+                  ? "Запущено"
+                  : missing.length > 0
+                    ? "Показать, чего не хватает"
+                    : "Запустить исследование"}
             </button>
           </div>
         )}

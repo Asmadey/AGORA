@@ -62,25 +62,36 @@ class AnalystClient(Protocol):
 class QwenAnalystClient:
     """Боевой клиент аналитика: тот же endpoint, что у респондентов (#18)."""
 
-    def __init__(self, config: Any | None = None, temperature: float = 0.3):
-        from ..config import ModelConfig
+    def __init__(self, config: Any | None = None, temperature: float | None = None):
+        from ..config import ModelConfig, TemperatureConfig
 
         self.config = config or ModelConfig.from_env()
-        # Ниже, чем у персон (0.9), и выше, чем у судьи (0.0). Нарратив должен
-        # читаться как текст, а не как протокол, но два прогона по одному
-        # набору не должны давать разные выводы.
-        self.temperature = temperature
+        # Стадия aggregation, умолчание 0.1: два прогона по одному набору
+        # ответов не должны давать разные выводы. Нарратив здесь пересказывает
+        # уже собранные числа и реплики, и «творческий» пересказ — это ровно
+        # искажение того, что сказали персоны.
+        self.temperature = (
+            TemperatureConfig.defaults().aggregation
+            if temperature is None
+            else temperature
+        )
 
     def complete(self, *, system: str, user: str) -> str:
-        from openai import OpenAI
+        from ..tracing import llm_client
 
-        client = OpenAI(
+        # Клиент выдаётся agent_core.tracing: там он оборачивается для
+        # LangFuse, если трассировка включена, и остаётся обычным, если нет.
+        client = llm_client(
             api_key=self.config.api_key,
             base_url=self.config.base_url,
             default_headers=self.config.default_headers,
             timeout=REQUEST_TIMEOUT_SEC,
         )
         response = client.chat.completions.create(
+            # Имя наблюдения в трассе. Без него интеграция назовёт
+            # генерацию `OpenAI-generation` — одинаково для ответа
+            # персоны, вердикта судьи и разбора кадра.
+            name="build-report",
             model=self.config.text_model,
             messages=[
                 {"role": "system", "content": system},
@@ -91,6 +102,12 @@ class QwenAnalystClient:
             extra_body=self.config.extra_body("analytics"),
         )
         return (response.choices[0].message.content or "").strip()
+
+
+#: Незаполненный плейсхолдер шаблона. Имена — те же, что понимает промпт-студия
+#: (`extractPlaceholderNames` в вебе); две реализации обязаны совпадать, иначе
+#: студия примет шаблон, на который стадия пожалуется.
+_PLACEHOLDER = re.compile(r"\{\{\s*([a-zA-Z0-9_.]+)\s*\}\}")
 
 
 def has_support(statement: str) -> bool:
@@ -110,6 +127,9 @@ def build_report(
     replication_count: int = 1,
     artifact_path: Path | None = None,
     personas: list[dict[str, Any]] | None = None,
+    asked: list[dict[str, Any]] | None = None,
+    qa_summary: dict[str, Any] | None = None,
+    models_used: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """Отчёт: посчитанный агрегат, точки риска и отсеянный по опорам синтез."""
     degraded: list[str] = []
@@ -132,6 +152,32 @@ def build_report(
         ),
         "based_on_answers": len(kept),
         "excluded_by_qa": agg.get("excluded_by_qa", 0),
+        # Вопросы, которые персоны действительно получили в промпте. Список
+        # собран узлом опроса из готовой строки, а не из анкеты: по нему видно
+        # и что анкета доехала, и о чём спрашивали — анкету могли отредактировать
+        # уже после прогона, и тогда экран показывал бы не то.
+        "survey_asked": list(asked or []),
+        # Сводка QA: сколько ответов проверено и сколько исключено, по видам и
+        # по источнику вердикта. Экран называет вещи своими именами — «исключено
+        # из агрегата», а не «пересоздано»: перегенерации в системе нет.
+        "qa_summary": dict(qa_summary or {}),
+        # Какими моделями считался прогон. Без этого отчёт нельзя сравнить с
+        # соседним: доля отбраковок и тон ответов зависят от модели не меньше,
+        # чем от материала, а выбор модели теперь меняется из интерфейса.
+        # Ключа провайдера здесь нет и быть не должно — отчёт живёт долго.
+        "models_used": dict(models_used or {}),
+        # Обоснования под числами: почему NPS такой, почему досмотр такой.
+        #
+        # «NPS −33» — это результат, а не вывод. Решение по нему принимают,
+        # догадываясь о причине, и догадка редко совпадает с тем, что персоны
+        # написали в вербатимах. Число без обоснования выглядит объективнее, чем
+        # оно есть: за ним стоят двенадцать текстов, которых читатель не видит.
+        #
+        # Пустой словарь, а не отсутствие поля: отсутствующее поле экран читает
+        # как «ещё не научились», пустое — как «модель не отвечала». Числовая
+        # часть отчёта от модели не зависит и показывается при любом её
+        # состоянии.
+        "rationales": {},
         "narrative": [],
         "themes": [],
         "disagreements": [],
@@ -156,20 +202,44 @@ def build_report(
         _write(artifact_path, report)
         return report
 
+    user = _render(template, {
+        "aggregate": agg,
+        "retention_risk_points": report["retention_risk_points"],
+        "all_persona_answers": [_body(a) for a in kept],
+        "survey": survey or {},
+        "content_title": pack.get("title", "материал"),
+        "qa_flags": qa_flags or [],
+    })
+
+    # Шаблон просит то, чего стадия не даёт. Молчать здесь нельзя: незаполненный
+    # плейсхолдер уезжает в модель фигурными скобками, а вместо данных модель
+    # получает их описание. Прогон 0051 отправил так 64 токена вместо отчёта.
+    leftovers = sorted(set(_PLACEHOLDER.findall(user)))
+    if leftovers:
+        degraded.append(
+            "шаблон analytics.report просит переменные, которых у стадии нет: "
+            + ", ".join(leftovers)
+        )
+
     try:
-        raw = model.complete(system=ANALYST_ROLE, user=_render(template, {
-            "aggregate": agg,
-            "retention_risk_points": report["retention_risk_points"],
-            "all_persona_answers": [_body(a) for a in kept],
-            "survey": survey or {},
-            "content_title": pack.get("title", "материал"),
-            "qa_flags": qa_flags or [],
-        }))
+        raw = model.complete(system=ANALYST_ROLE, user=user)
         synthesis = _parse(raw)
     except Exception as exc:  # noqa: BLE001
         degraded.append(f"нарратив не собран: {type(exc).__name__}: {exc}")
         _write(artifact_path, report)
         return report
+
+    # Обоснования приходят тем же вызовом, что и синтез: аналитик и так получает
+    # все ответы целиком. Отдельный вызов на метрику утроил бы стоимость ради
+    # трёх абзацев и дал бы три независимых пересказа одних и тех же вербатимов,
+    # которые могут между собой не сойтись.
+    rationales = synthesis.get("rationales")
+    if isinstance(rationales, dict):
+        report["rationales"] = {
+            key: str(rationales[key]).strip()
+            for key in ("nps", "watched_share", "emotional_index")
+            if str(rationales.get(key) or "").strip()
+        }
 
     for field in ("themes", "disagreements", "strengths", "weaknesses"):
         value = synthesis.get(field)
@@ -185,6 +255,22 @@ def build_report(
         )
     report["narrative"] = supported
 
+    # Ответ разобрался, но синтеза в нём нет ни в одном поле.
+    #
+    # Это отдельный случай, а не частный вид «модель недоступна»: вызов прошёл,
+    # деньги потрачены, отчёт собран — и выглядит он как честный отчёт, которому
+    # нечего сказать. Отличить одно от другого читателю не по чему, поэтому
+    # разницу называет `degraded`.
+    if not any(
+        report[field]
+        for field in ("narrative", "themes", "disagreements", "strengths", "weaknesses")
+    ) and not report["rationales"]:
+        degraded.append(
+            "синтез пуст: модель вернула ответ без нарратива, тем и обоснований. "
+            "Проверьте шаблон analytics.report — числовая часть отчёта посчитана "
+            "полностью и от модели не зависит"
+        )
+
     _write(artifact_path, report)
     return report
 
@@ -199,7 +285,9 @@ def _load_template() -> str:
     for parent in here.parents[:6]:
         candidate = parent / "prompts" / "analytics.report.md"
         if candidate.exists():
-            return candidate.read_text("utf-8")
+            from ..prompt_text import body_of
+
+            return body_of(candidate.read_text("utf-8"))
     return ""
 
 

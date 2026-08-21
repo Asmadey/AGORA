@@ -145,6 +145,14 @@ def aggregate(
     result: dict[str, Any] = {
         "core_scores_mean": _core_means(bodies),
         "nps": _nps(bodies),
+        # Среднее по той же шкале, что и NPS, но не NPS.
+        #
+        # NPS лежит в −100…+100 и при почти сплошных критиках честно даёт −86 —
+        # число, которое без подписи шкалы читается как ошибка расчёта. Среднее
+        # 1–10 отвечает на следующий вопрос читателя: «а насколько всё-таки
+        # плохо». Одно другое не заменяет: NPS чувствителен к поляризации,
+        # среднее — нет, и расходятся они как раз на интересных случаях.
+        "recommendation_mean": _recommendation_mean(bodies),
         "retention_rate": _retention_rate(bodies),
         "watched_share_mean": _watched_share(bodies),
         "emotional_index": _emotional_index(bodies),
@@ -316,6 +324,16 @@ def _nps(bodies: list[dict[str, Any]]) -> float | None:
     promoters = sum(1 for v in values if v >= NPS_PROMOTER_MIN)
     detractors = sum(1 for v in values if v <= NPS_DETRACTOR_MAX)
     return round((promoters - detractors) * 100.0 / len(values), 4)
+
+
+def _recommendation_mean(bodies: list[dict[str, Any]]) -> float | None:
+    """Средняя готовность рекомендовать, 1–10. None — никто не ответил."""
+    values = [
+        v for v in (_num((b.get("perception") or {}).get("recommendation_nps_1_to_10"))
+                    for b in bodies)
+        if v is not None
+    ]
+    return round(statistics.fmean(values), 4) if values else None
 
 
 def _retention_rate(bodies: list[dict[str, Any]]) -> float | None:

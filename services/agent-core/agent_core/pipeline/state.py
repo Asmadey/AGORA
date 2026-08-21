@@ -67,6 +67,10 @@ class PipelineState(TypedDict, total=False):
     transcript_raw: list[dict[str, Any]]
     speaker_turns: list[dict[str, Any]]
     transcript_diarized: list[dict[str, Any]]
+    #: Длительность половин узла `transcribe_and_diarize`: {"transcribe": …,
+    #: "diarize": …}. На уровне графа это один узел, а разбивка — ровно то, что
+    #: показало, куда уходит время прогона.
+    stage_timings: dict[str, float]
 
     # ── Кадры и разбор (#16, #17) ───────────────────────────────────────────
     #: Панели на диске: [{"path": …, "timestamp_sec": …}]. В состоянии лежат
@@ -83,9 +87,17 @@ class PipelineState(TypedDict, total=False):
     survey: dict[str, Any] | None
     replication_count: int
     persona_answers: list[dict[str, Any]]
+    #: Вопросы, которые действительно ушли в промпт персоны: [{id, label, type}].
+    #: Не копия анкеты: список собирается из готового промпта, поэтому по нему
+    #: видно и то, что анкета доехала, и то, о чём именно спрашивали — анкету
+    #: могли отредактировать уже после прогона.
+    survey_asked: list[dict[str, Any]]
 
     # ── QA и аналитика (#19, #20) ───────────────────────────────────────────
     qa_flags: list[dict[str, Any]]
+    #: Сводка проверки: сколько проверено, сколько забраковано, по каким видам и
+    #: кем. Полный список вердиктов остаётся в артефакте прогона.
+    qa_summary: dict[str, Any]
     report: dict[str, Any] | None
 
     # ── Служебное ───────────────────────────────────────────────────────────
@@ -94,6 +106,11 @@ class PipelineState(TypedDict, total=False):
     #: Снимок промптов прогона (Decision Log #10): {ключ: {id, version, sha256}}.
     #: Пиннится на запуске (#11); узлы читают шаблон по нему, а не из файлов.
     prompts_snapshot: dict[str, Any]
+    #: Снимок настроек команды на момент запуска: {costCap, costCapValue, …}.
+    #: По той же причине, что и промпты: пока задача стоит в очереди, кап можно
+    #: сменить, и тогда часть панелей разобрана под одним потолком, часть под
+    #: другим. Пустой словарь — «авто», то есть без потолка.
+    settings_snapshot: dict[str, Any]
     #: Этапы, отработавшие не полностью. Пустой список — не то же самое, что
     #: отсутствие поля: отчёт обязан показать, что VLM отвалился, даже если
     #: остальное собралось.
@@ -116,6 +133,7 @@ def new_state(
     survey: dict[str, Any] | None = None,
     replication_count: int = 1,
     prompts_snapshot: dict[str, Any] | None = None,
+    settings_snapshot: dict[str, Any] | None = None,
 ) -> PipelineState:
     """
     Начальное состояние прогона.
@@ -137,6 +155,7 @@ def new_state(
         transcript_raw=[],
         speaker_turns=[],
         transcript_diarized=[],
+        stage_timings={},
         panel_refs=[],
         chunk_analyses_ref=None,
         video_understanding=None,
@@ -146,11 +165,14 @@ def new_state(
         survey=survey,
         replication_count=replication_count,
         persona_answers=[],
+        survey_asked=[],
         qa_flags=[],
+        qa_summary={},
         report=None,
         status=STATUS_QUEUED,
         progress={},
         prompts_snapshot=dict(prompts_snapshot or {}),
+        settings_snapshot=dict(settings_snapshot or {}),
         degraded=[],
         error=None,
     )

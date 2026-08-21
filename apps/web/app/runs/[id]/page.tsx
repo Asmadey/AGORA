@@ -1,18 +1,32 @@
 import Link from "next/link";
-import { MessageCircle, RotateCcw } from "lucide-react";
+import { Activity, MessageCircle, RotateCcw } from "lucide-react";
 import { PageHeader } from "@/components/AppShell";
+import { JsonTree } from "@/components/agora/JsonTree";
 import {
   Chip,
-  HypothesisNotice,
   ScoreBar,
   StatCard,
   TimecodeRef,
 } from "@/components/agora/Primitives";
+import { DeleteRunButton } from "@/components/agora/DeleteRunButton";
 import { PersonaAccordion } from "@/components/agora/PersonaAccordion";
+import { Timeline } from "@/components/agora/Timeline";
 import { ShareDialog } from "@/components/agora/ShareDialog";
+import { withTenant } from "@/lib/server/db";
 import { requireSession } from "@/lib/server/guard";
 import { loadReport, loadReportPersonas } from "@/lib/server/reports";
+import { getTask, taskNumber, loadRunTiming } from "@/lib/server/tasks";
+import { notFound } from "next/navigation";
+import { resolveRun } from "@/lib/server/run-ref";
+import { runSlug } from "@/lib/run-slug";
+import { safePresign } from "@/lib/server/content-pack";
+import { DownloadMenu } from "@/components/agora/DownloadMenu";
+import { audienceNote } from "@/lib/audience-note";
+import { researchTitle } from "@/lib/research-title";
 import { parseAnswer, parseReport } from "@/lib/report-view";
+import { contributions, type MetricKey } from "@/lib/provenance";
+import { humanDuration } from "@/lib/progress-state";
+import { MetricProvenance } from "@/components/agora/MetricProvenance";
 import { CRITERIA, CRITERIA_LABELS } from "@/lib/agora-types";
 
 /**
@@ -35,9 +49,24 @@ import { CRITERIA, CRITERIA_LABELS } from "@/lib/agora-types";
 const FIRST_PAGE = 50;
 
 export default async function ReportPage({ params }: { params: Promise<{ id: string }> }) {
-  const { id } = await params;
+  const { id: slug } = await params;
   const { tenantId, userId } = await requireSession();
   const session = { tenantId, userId };
+
+  // Адрес принимает и номер, и UUID; на UUID отвечает 308 на номер. Наружу
+  // отсюда идёт ТОЛЬКО идентификатор: маршруты API работают по нему, и подмена
+  // номером дала бы 404 из середины уже открытой страницы.
+  const run = await resolveRun(slug, tenantId);
+  if (!run) notFound();
+  const id = run.id;
+  // Свои ссылки страница строит по номеру: иначе переход «Прогресс» → «К
+  // отчёту» гонял бы браузер через перенаправление туда и обратно.
+  //
+  // Объявлено ЗДЕСЬ, а не ниже у прочих производных значений: первая ссылка
+  // стоит в раннем возврате «отчёт ещё не готов», и объявление после него
+  // давало бы ReferenceError ровно на том экране, который показывают, когда
+  // что-то пошло не так.
+  const ref = run.seqNo !== null ? runSlug(run.seqNo) : id;
 
   const envelope = await loadReport(session, id);
 
@@ -49,7 +78,7 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
       <div className="p-8">
         <p className="text-slate">
           Отчёт по этому прогону недоступен: он ещё не готов или принадлежит другой команде.{" "}
-          <Link href={`/runs/${id}/progress`} className="underline underline-offset-4">
+          <Link href={`/runs/${ref}/progress`} className="underline underline-offset-4">
             Смотреть прогресс
           </Link>
         </p>
@@ -60,20 +89,71 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
   const view = parseReport(envelope.report);
   const { items } = await loadReportPersonas(session, id, { limit: FIRST_PAGE });
   const answers = items.map(parseAnswer);
+  const timing = await withTenant(tenantId, (client) => loadRunTiming(client, id));
+  // Номер — для человека, идентификатор — для ссылки. Заголовок «Исследование
+  // e81feb92-97a2-43ad-8112-de7503699c60» нельзя ни произнести, ни запомнить, а
+  // сослаться на прогон в разговоре нужно каждый день.
+  const task = await withTenant(tenantId, (client) => getTask(client, id));
+  const number = taskNumber(run.seqNo);
+  // Подпись живёт час: записанная в базу ссылка протухла бы к первому открытию.
+  const videoUrl = task?.videoRef ? safePresign(task.videoRef) : null;
+  // Считается один раз: подпись нужна и как условие показа, и как содержимое,
+  // а два вызова подряд — это две развилки, которые однажды разойдутся.
+  // Происхождение числа (конструктор связей, вариант 1).
+  //
+  // Считается по тем карточкам, что уже на странице, и сверяется с числом из
+  // шапки: при аудитории больше первой страницы они разойдутся, и раскрытие
+  // скажет об этом само. Молчаливое расхождение читалось бы как ошибка расчёта.
+  const origin = (metric: MetricKey, reported: number | null) => (
+    <MetricProvenance
+      provenance={contributions(metric, answers)}
+      reported={reported}
+      total={envelope.audienceSize}
+    />
+  );
+
+  const qaNote = audienceNote({
+    shown: items.length,
+    surviving: envelope.audienceSize,
+    excludedByQa: view.excludedByQa,
+  });
 
   return (
     <>
       <PageHeader
-        title="Отчёт по прогону"
+        // Заголовок остаётся номером: владелец просил ОДИН порядковый
+        // идентификатор и назвал его сам — «№ 0050». Название исследования
+        // стоит подписью, а не вместо номера: по номеру на прогон ссылаются в
+        // разговоре, а название человек меняет, и меняющийся заголовок сделал
+        // бы ссылку «посмотри 0050» непроверяемой.
+        title={number ? `Исследование ${number}` : `Исследование ${id}`}
         subtitle={
+          `${researchTitle(task ?? {})} · ` +
           `${envelope.audienceSize} ответов` +
           (view.replicationCount > 1 ? ` · перекрытие ×${view.replicationCount}` : "") +
           (view.excludedByQa > 0 ? ` · ${view.excludedByQa} исключено QA` : "")
         }
         actions={
           <>
+            {/*
+              Прогресс доступен и после конца прогона: там видно, сколько занял
+              каждый шаг. Раньше на эту страницу попадали только пока считается,
+              то есть ровно тогда, когда сравнивать не с чем.
+            */}
             <Link
-              href={`/runs/${id}/chat`}
+              href={`/runs/${ref}/progress`}
+              className="inline-flex items-center gap-2 rounded-md border border-hairline px-4 py-2 text-sm transition-colors hover:bg-secondary"
+            >
+              <Activity className="h-4 w-4" />
+              Прогресс
+            </Link>
+            {/* Скачивание — сразу за «Прогрессом». Прежде три ссылки лежали
+                секцией в середине отчёта, между деревом JSON и метриками: тот,
+                кто пришёл забрать расшифровку, искал её в шапке и листал отчёт
+                целиком. */}
+            <DownloadMenu runId={id} videoUrl={videoUrl} />
+            <Link
+              href={`/runs/${ref}/chat`}
               className="inline-flex items-center gap-2 rounded-md border border-hairline px-4 py-2 text-sm transition-colors hover:bg-secondary"
             >
               <MessageCircle className="h-4 w-4" />
@@ -86,14 +166,16 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
               <RotateCcw className="h-4 w-4" />
               Перезапустить
             </Link>
-            <ShareDialog />
+            <ShareDialog runId={id} />
+            {/* Удаление стоит последним и красное: оно уносит отчёт, за который
+                заплачено моделью, и отменить его нечем. Подтверждение — внутри
+                кнопки, диалог здесь тяжелее задачи. */}
+            <DeleteRunButton runId={id} variant="danger" />
           </>
         }
       />
 
       <div className="space-y-8 p-8">
-        <HypothesisNotice replication={view.replicationCount} />
-
         {/* Чего в отчёте не хватает и почему. Молчаливая деградация выглядит
             как полный отчёт, и отличить её можно только по коду. */}
         {view.degraded.length > 0 && (
@@ -107,27 +189,80 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
           </section>
         )}
 
+        {/* Разбор материала: плеер и таймлайн — первым, сразу под шапкой.
+            Прежде он стоял ниже чисел, и порядок чтения был «сколько → что
+            видела персона». На практике читатель начинает с ролика: числа без
+            материала не с чем сопоставить, а ссылку персоны на момент нельзя
+            проверить, не посмотрев этот момент. Теперь сначала «что именно
+            видели», потом «сколько», потом «кто что сказал». */}
+        <section>
+          <h2 className="mb-1 text-sm font-semibold">Материал</h2>
+          <Timeline runId={id} />
+        </section>
+
+        {/*
+          Отчёт в исходном виде (п. 20).
+
+          Экран показывает выжимку — числа, вербатимы, точки риска. Всё
+          остальное лежит в отчёте и до сих пор доставалось только скачиванием
+          файла и открытием его в другом приложении. Дерево отвечает на вопрос
+          «а что там ещё есть» на месте.
+
+          Свёрнуто по умолчанию: это инструмент для разбора, а не часть чтения
+          отчёта, и раскрытый по умолчанию он оттеснял бы выводы вниз.
+        */}
+        <details className="rounded-lg border border-hairline bg-card p-6">
+          <summary className="cursor-pointer text-sm font-semibold">
+            Отчёт в исходном виде
+          </summary>
+          <div className="mt-3">
+            <JsonTree value={envelope.report as never} label="отчёт" />
+          </div>
+        </details>
+
+        {/* Происхождение числа: раскрытие под каждой метрикой ведёт к ответам
+            персон, из которых она посчитана, а оттуда — таймкодом в плеер.
+            Связь одного направления: число → ответы → материал. */}
         {/* Сводные метрики.
             «Досмотрят до конца» и «Досмотрено» — две разные величины, и стоят
             рядом намеренно. Первая считается по retention_intent: он
             категориален, и процента просмотра из него не выводится. Вторая
             приходит из шкального вопроса анкеты, и без него честно пуста. */}
-        <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+        <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
           <StatCard
             label="Общее впечатление"
             value={fmt(view.scores.overall_impression, 1)}
             hint="из 10"
+            provenance={origin("overall_impression", view.scores.overall_impression)}
           />
+          {/* Шкала подписана намеренно. NPS лежит в −100…+100, и «−86» без
+              подписи читается как ошибка расчёта, а не как «почти все критики».
+              Рядом — среднее по той же шкале 1–10: оно отвечает на следующий
+              вопрос читателя, «насколько всё-таки плохо». Одно другое не
+              заменяет: NPS чувствителен к поляризации, среднее — нет. */}
           <StatCard
             label="NPS"
             value={fmt(view.nps, 0)}
-            hint="доля промоутеров минус критиков"
+            hint="промоутеры минус критики"
+            rationale={view.rationales.nps}
+            provenance={origin("nps", view.nps)}
             tone={view.nps === null ? undefined : view.nps < 0 ? "bad" : view.nps > 30 ? "good" : "warn"}
+          />
+          <StatCard
+            label="Готовы рекомендовать"
+            value={fmt(view.recommendation, 1)}
+            hint="среднее по шкале 1–10"
+            provenance={origin("recommendation", view.recommendation)}
+            tone={
+              view.recommendation === null
+                ? undefined
+                : view.recommendation < 5 ? "bad" : view.recommendation >= 8 ? "good" : "warn"
+            }
           />
           <StatCard
             label="Досмотрят до конца"
             value={view.retentionRate === null ? "—" : `${view.retentionRate.toFixed(0)}%`}
-            hint="доля намеренных досмотреть"
+            provenance={origin("retention", view.retentionRate)}
             tone={view.retentionRate === null ? undefined : view.retentionRate < 70 ? "warn" : "good"}
           />
           <StatCard
@@ -138,12 +273,41 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
                 ? "в анкете не было вопроса о доле просмотра"
                 : "средняя доля просмотренного"
             }
+            rationale={view.rationales.watched_share}
+            provenance={origin("watched_share", view.watchedShare)}
             tone={view.watchedShare === null ? undefined : view.watchedShare < 60 ? "warn" : "good"}
           />
           <StatCard
-            label="Эмоциональный индекс"
+            label="Эмоц. индекс"
             value={fmt(view.emotionalIndex, 1)}
             hint="из 10"
+            rationale={view.rationales.emotional_index}
+          />
+          {/* Прочерк, а не ноль: прогоны до появления замеров не знают своей
+              длительности, и «0 с» утверждало бы, что обработка была мгновенной. */}
+          {/* Какими моделями считался прогон. Отдельной карточкой, а не
+              строкой в подвале: доля отбраковок и тон ответов зависят от
+              модели не меньше, чем от материала, и сравнивать два отчёта, не
+              зная модели, значит сравнивать не то. */}
+          {view.modelsUsed && (
+            <StatCard
+              label="Модель зрения"
+              value={view.modelsUsed.vision || "—"}
+              hint={
+                view.modelsUsed.judge && view.modelsUsed.judge !== view.modelsUsed.text
+                  ? `рассуждение ${view.modelsUsed.text} · судья ${view.modelsUsed.judge}`
+                  : `рассуждение и проверка ${view.modelsUsed.text}`
+              }
+            />
+          )}
+          <StatCard
+            label="Время обработки"
+            value={timing.totalSec === null ? "—" : humanDuration(timing.totalSec)}
+            hint={
+              timing.nodes.length > 0
+                ? `${timing.nodes.length} этапов · дольше всего ${longestNode(timing.nodes)}`
+                : "разбивка по этапам не записана"
+            }
           />
         </section>
 
@@ -163,11 +327,11 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
           {/* Критерии */}
           <section className="rounded-lg border border-hairline bg-card p-6">
             <h2 className="text-sm font-semibold">Оценки по критериям</h2>
-            {view.replicationCount > 1 && (
-              <p className="mt-0.5 text-xs text-slate">
-                Затемнённая зона на шкале — разброс между повторами
-              </p>
-            )}
+            <p className="mt-0.5 text-xs text-slate">
+              {view.replicationCount > 1
+                ? "Затемнённая зона на шкале — разброс между повторами"
+                : "Перекрытие равно 1: разброс между повторами не измерялся"}
+            </p>
             <div className="mt-5 space-y-4">
               {CRITERIA.map((c) => (
                 <ScoreBar
@@ -235,21 +399,30 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
             </p>
           ) : (
             <>
-              <p className="mb-4 text-xs text-slate">
-                Показаны группы от {view.minSegmentPersonas} персон: средняя по меньшей
-                группе неотличима на вид от средней по сотне, а держится на нескольких ответах
-              </p>
-              <div className="space-y-6">
+              {/*
+                Все плашки на одном уровне и с ОДИНАКОВЫМ зазором в 15 пикселей —
+                и между значениями внутри измерения, и между самими измерениями.
+
+                Сетка из равных колонок здесь не годится: у «Возраста» одно
+                значение, у «Пола» два, и колонка под одну плашку оставляла
+                пустоту шириной со вторую. Зазор при этом переставал быть
+                зазором — глаз читал его как границу раздела.
+
+                Поэтому ряд, а не сетка: плашки одной ширины идут подряд и
+                переносятся, когда кончается строка. Подпись измерения стоит над
+                своей группой и уезжает вместе с ней.
+              */}
+              <div className="flex flex-wrap gap-[15px]">
                 {view.segments.map((dim) => (
                   <div key={dim.key}>
                     <h3 className="mb-2 text-xs uppercase tracking-wide text-slate">
                       {dim.label}
                     </h3>
-                    <div className="grid gap-3 md:grid-cols-3">
+                    <div className="flex flex-wrap gap-[15px]">
                       {dim.rows.map((row) => (
                         <div
                           key={row.value}
-                          className="rounded-lg border border-hairline bg-card p-5"
+                          className="w-[240px] rounded-lg border border-hairline bg-card p-5"
                         >
                           <div className="flex items-baseline justify-between gap-2">
                             <Chip tone="solid">{row.value}</Chip>
@@ -348,15 +521,125 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
           </section>
         )}
 
+        {/* Проверка ответов.
+            Панель называет вещи своими именами: «исключено из агрегата», а не
+            «пересоздано». Перегенерации в системе нет — забракованный ответ
+            выбывает из расчёта и не переспрашивается, и писать сюда «пересоздано
+            0» значило бы обещать несуществующий механизм. */}
+        {view.qa && (
+          <section className="rounded-lg border border-hairline bg-card p-6">
+            <h2 className="text-sm font-semibold">Проверка ответов</h2>
+            <p className="mt-0.5 text-xs text-slate">
+              Отчёт построен на {view.sampleSize} ответах
+              {view.qa.flagged > 0 && ` · ${view.qa.flagged} исключено из агрегата`}
+            </p>
+            <dl className="mt-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+              <div>
+                <dt className="text-xs text-slate">Проверено вердиктов</dt>
+                <dd className="mt-0.5 text-lg tabular-nums">{view.qa.checked}</dd>
+              </div>
+              <div>
+                <dt className="text-xs text-slate">Исключено из агрегата</dt>
+                <dd className="mt-0.5 text-lg tabular-nums">{view.qa.flagged}</dd>
+              </div>
+              <div>
+                <dt className="text-xs text-slate">Ушло на эскалацию</dt>
+                <dd className="mt-0.5 text-lg tabular-nums">{view.qa.escalated}</dd>
+              </div>
+              <div>
+                <dt className="text-xs text-slate">Судья не ответил</dt>
+                <dd className="mt-0.5 text-lg tabular-nums">{view.qa.judgeFailures}</dd>
+              </div>
+            </dl>
+            {(view.qa.byKind.length > 0 || view.qa.bySource.length > 0) && (
+              <div className="mt-5 grid gap-4 sm:grid-cols-2">
+                {view.qa.byKind.length > 0 && (
+                  <div>
+                    <p className="text-xs text-slate">По видам проверки</p>
+                    <ul className="mt-1 space-y-0.5 text-sm">
+                      {view.qa.byKind.map((row) => (
+                        <li key={row.kind}>
+                          {QA_KINDS[row.kind] ?? row.kind} — {row.count}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+                {view.qa.bySource.length > 0 && (
+                  <div>
+                    <p className="text-xs text-slate">Кто забраковал</p>
+                    <ul className="mt-1 space-y-0.5 text-sm">
+                      {view.qa.bySource.map((row) => (
+                        <li key={row.source}>
+                          {QA_SOURCES[row.source] ?? row.source} — {row.count}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </div>
+            )}
+            <p className="mt-5 text-xs leading-relaxed text-slate">
+              Забракованный ответ исключается из расчёта, а не переспрашивается:
+              перегенерации ответов в системе нет.
+            </p>
+          </section>
+        )}
+
+        {/*
+          Заданные вопросы.
+
+          Секция отвечает на вопрос, который иначе проверяется только чтением
+          кода: получила ли персона анкету. Список собран воркером из готовой
+          строки промпта — то есть из того, что действительно ушло в модель, а
+          не из анкеты в базе, которую после прогона можно отредактировать.
+        */}
+        {view.asked.length > 0 && (
+          <section>
+            <h2 className="mb-1 text-sm font-semibold">Заданные вопросы</h2>
+            <p className="mb-4 text-xs text-slate">
+              {view.asked.length}{" "}
+              {view.asked.length === 1 ? "вопрос" : view.asked.length < 5 ? "вопроса" : "вопросов"}{" "}
+              в том виде, в каком их получила каждая персона
+            </p>
+            <ol className="space-y-2 text-sm">
+              {view.asked.map((q, index) => (
+                <li key={q.id} className="flex gap-3">
+                  <span className="w-6 shrink-0 text-right tabular-nums text-slate">
+                    {index + 1}.
+                  </span>
+                  <span className="flex-1">
+                    {q.label}
+                    <span className="ml-2 text-xs text-slate">{q.type}</span>
+                  </span>
+                </li>
+              ))}
+            </ol>
+          </section>
+        )}
+
         {/* Персоны */}
         <section>
           <h2 className="mb-1 text-sm font-semibold">Ответы по персонам</h2>
+          {/*
+            Подпись про отбраковку стоит здесь, а не только в шапке.
+
+            Владелец запустил двенадцать персон, увидел три и решил, что прогон
+            ненастоящий. Девять забраковал QA — законная работа проверки, — но
+            число исключённых показывалось мелким шрифтом в подписи заголовка,
+            далеко от самого списка. Там, где его ищут, его не было.
+          */}
           <p className="mb-4 text-xs text-slate">
             Разверните строку, чтобы увидеть обоснование с таймкодами
-            {envelope.audienceSize > answers.length &&
+            {view.excludedByQa === 0 && envelope.audienceSize > answers.length &&
               ` · показаны первые ${answers.length} из ${envelope.audienceSize}`}
           </p>
-          <PersonaAccordion answers={answers} runId={id} />
+          {qaNote && (
+            <p className="mb-4 rounded-md border border-warning/30 bg-warning-soft/60 px-4 py-3 text-xs leading-relaxed">
+              {qaNote}
+            </p>
+          )}
+          <PersonaAccordion answers={answers} runId={id} asked={view.asked} />
         </section>
 
         {view.disclaimer && (
@@ -368,6 +651,42 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
     </>
   );
 }
+
+/** Секунды → «4 мин 12 с». Часы появляются только когда они есть. */
+// Прежде здесь жила своя формула, и она теряла секунды при часах: «2 ч 52 мин»
+// вместо «2 часа 52 мин 14 сек». Вторая реализация одного и того же расходится
+// с первой при первой же правке — и молча, потому что оба экрана рядом никто не
+// держит открытыми. Формат один на весь продукт: lib/progress-state.ts.
+
+/** Самый долгий этап — то, чем объясняется длительность прогона. */
+function longestNode(
+  nodes: { node: string; durationSec: number | null }[],
+): string {
+  const worst = nodes.reduce<{ node: string; durationSec: number | null } | null>(
+    (best, n) =>
+      n.durationSec !== null && (best === null || n.durationSec > (best.durationSec ?? 0))
+        ? n
+        : best,
+    null,
+  );
+  return worst && worst.durationSec !== null
+    ? `${worst.node} (${humanDuration(worst.durationSec)})`
+    : "неизвестно";
+}
+
+/** Виды проверки QA в человеческих словах. Ключи — из agent_core/qa/run.py. */
+const QA_KINDS: Record<string, string> = {
+  consistency: "Противоречия внутри ответа",
+  grounding: "Ссылки на материал",
+  diversity: "Однообразие ответов",
+};
+
+/** Источник вердикта: правило считает код, судью спрашивает модель. */
+const QA_SOURCES: Record<string, string> = {
+  rule: "правило",
+  judge: "судья",
+  escalated: "судья после эскалации",
+};
 
 /** Прочерк, а не ноль: «не посчитано» и «посчитано, вышло ноль» — разные факты. */
 function fmt(value: number | null, digits: number): string {

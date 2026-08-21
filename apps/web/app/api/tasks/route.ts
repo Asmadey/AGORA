@@ -1,3 +1,5 @@
+import { CONTEXT_LIMIT_CHARS, normalizeContext } from "@/lib/context-file";
+import { normalizeTitle } from "@/lib/research-title";
 import { DEFAULT_SETTINGS } from "@/lib/settings";
 import { withTenant } from "@/lib/server/db";
 import { HttpError, requireSession, toResponse } from "@/lib/server/guard";
@@ -22,11 +24,14 @@ export const runtime = "nodejs";
 interface LaunchBody {
   mode?: unknown;
   videoRef?: unknown;
+  sourceName?: unknown;
+  title?: unknown;
   personaSetId?: unknown;
   surveyId?: unknown;
   projectId?: unknown;
   replicationCount?: unknown;
   seed?: unknown;
+  audienceContext?: unknown;
 }
 
 const REPLICATION_BOUNDS = { min: 1, max: 10 } as const;
@@ -56,8 +61,38 @@ export async function POST(request: Request) {
       errors.push("mode: ожидается short | long");
     }
 
+    // Контекст персон проверяется ЗДЕСЬ ещё раз, а не только в браузере:
+    // маршрут открыт для любого клиента, а текст уедет в промпт каждой персоны
+    // и будет оплачен на каждом вызове.
+    if (body.audienceContext !== undefined) {
+      if (typeof body.audienceContext !== "string") {
+        errors.push("audienceContext: строка либо отсутствует");
+      } else if (normalizeContext(body.audienceContext).length > CONTEXT_LIMIT_CHARS) {
+        errors.push(
+          `audienceContext: длиннее ${CONTEXT_LIMIT_CHARS} символов — см. lib/context-file.ts`,
+        );
+      }
+    }
     if (body.videoRef !== undefined && typeof body.videoRef !== "string") {
       errors.push("videoRef: строка либо отсутствует");
+    }
+    if (body.sourceName !== undefined && typeof body.sourceName !== "string") {
+      errors.push("sourceName: строка либо отсутствует");
+    }
+    // Название разбирается общей функцией — той же, что и при переименовании.
+    // Своя проверка здесь разошлась бы с ней, и создание принимало бы то, что
+    // потом нельзя сохранить правкой.
+    let title: string | null = null;
+    if (body.title !== undefined && body.title !== null) {
+      if (typeof body.title !== "string") {
+        errors.push("title: строка либо отсутствует");
+      } else {
+        try {
+          title = normalizeTitle(body.title);
+        } catch (e) {
+          errors.push(`title: ${(e as Error).message}`);
+        }
+      }
     }
 
     // seed обязателен: без него идемпотентность бессмысленна — каждый запуск
@@ -110,6 +145,12 @@ export async function POST(request: Request) {
       const params: LaunchParams = {
         mode: mode as "short" | "long",
         videoRef: optionalId(body.videoRef),
+        sourceName: typeof body.sourceName === "string" ? body.sourceName.slice(0, 300) : null,
+        title,
+        audienceContext:
+          typeof body.audienceContext === "string"
+            ? normalizeContext(body.audienceContext)
+            : null,
         personaSetId: optionalId(body.personaSetId),
         surveyId: optionalId(body.surveyId),
         projectId: optionalId(body.projectId),
@@ -180,6 +221,9 @@ export async function POST(request: Request) {
           survey: task.survey,
           replication_count: task.launched.replicationCount,
           prompts_snapshot: task.launched.promptsSnapshot,
+          // Кап вызовов VLM: до этого он оставался в интерфейсе и до воркера
+          // не доезжал вовсе — то есть жёсткий потолок не действовал никогда.
+          settings_snapshot: task.launched.settingsSnapshot,
         });
         queued = true;
       } catch (e) {

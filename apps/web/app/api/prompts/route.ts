@@ -1,6 +1,7 @@
 import { withTenant } from "@/lib/server/db";
 import { requireOwner, requireSession, toResponse } from "@/lib/server/guard";
-import { listActivePromptsByStage, validateVariables, extractPlaceholderNames, type PromptVersion } from "@/lib/server/prompts";
+import { checkTemplateContract, describeViolation } from "@/lib/prompt-contract";
+import { listActivePromptsByStage, extractPlaceholderNames, type PromptVersion } from "@/lib/server/prompts";
 
 /**
  * API промпт-студии (задача #26) — список и создание версии.
@@ -57,12 +58,30 @@ export async function PUT(request: Request) {
 
     // Переменные извлекаем из шаблона — они единственный источник правды.
     const variables = extractPlaceholderNames(raw.template);
-
-    // Валидатор: переменные из шаблона — это и есть массив variables.
-    // Дополнительная проверка: если переданы modelParams, они должны быть объектом.
     const modelParams = raw.modelParams ?? {};
 
     const result = await withTenant(tenantId, async (client) => {
+      // ─── Сверка с контрактом стадии ───────────────────────────────────────
+      //
+      // Раньше здесь звался `validateVariables(template, variables)`, где
+      // `variables` извлекались из этого же шаблона. Такая проверка не может
+      // не пройти, и именно поэтому сюда доехало переопределение
+      // `analytics.report` длиной в шестнадцать символов: `test {{content}}`.
+      // Отчёты после него собирались с пустым нарративом и не жаловались.
+      //
+      // Сверять надо с ДЕФОЛТОМ того же ключа: его переменные — это ровно то,
+      // что стадия подставляет. См. lib/prompt-contract.ts.
+      const { rows: defaults } = await client.query<{ template: string }>(
+        `SELECT template FROM prompts
+          WHERE key = $1 AND tenant_id IS NULL AND is_active = true
+          LIMIT 1`,
+        [raw.key],
+      );
+      const violation = checkTemplateContract(raw.template, defaults[0]?.template);
+      if (violation) {
+        return { violation } as const;
+      }
+
       // version = max + 1 среди версий арендатора + дефолта.
       // Берём max по всем версиям этого ключа (включая дефолт), чтобы
       // гарантировать монотонный рост даже после restore default.
@@ -91,14 +110,22 @@ export async function PUT(request: Request) {
         [tenantId, raw.key, raw.template, JSON.stringify(variables), JSON.stringify(modelParams), nextVersion],
       );
 
-      return rows[0];
+      return { prompt: rows[0] } as const;
     });
 
-    if (!result) {
+    if ("violation" in result && result.violation) {
+      const { missing, unknown } = result.violation;
+      return Response.json(
+        { error: describeViolation(raw.key, result.violation), missing, unknown },
+        { status: 400 },
+      );
+    }
+
+    if (!("prompt" in result) || !result.prompt) {
       return Response.json({ error: "не удалось создать версию" }, { status: 500 });
     }
 
-    return Response.json({ prompt: result });
+    return Response.json({ prompt: result.prompt });
   } catch (error) {
     return toResponse(error);
   }

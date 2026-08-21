@@ -5,7 +5,9 @@ import Link from "next/link";
 import { AlertTriangle, Check, Circle, Loader2 } from "lucide-react";
 
 import { cn } from "@/lib/utils";
+import { mergeDurations, type TimingEntry } from "@/lib/progress-durations";
 import { nodesForMode, type PipelineNode } from "@/lib/pipeline-nodes";
+import { humanDuration, progressStates, type NodeState } from "@/lib/progress-state";
 
 /**
  * Экран прогресса прогона (задача #12).
@@ -39,25 +41,98 @@ export interface ProgressEvent {
   detail?: string;
   error?: string;
   degraded?: string[];
+  /**
+   * Длительности уже завершённых узлов.
+   *
+   * Воркер кладёт их в КАЖДОЕ событие (`progress.py`, `_track`), и поле
+   * приходило сюда с самого начала — просто не было объявлено, и клиент его
+   * выбрасывал. Отсюда жалоба владельца: завершённый шаг терял своё время до
+   * конца всего прогона, потому что серверный проп `durations` заполняется из
+   * Postgres только в `_save_timings`.
+   */
+  timings?: TimingEntry[];
 }
-
-type NodeState = "waiting" | "running" | "done" | "failed";
 
 export function ProgressView({
   taskId,
   mode = "short",
+  startedAt = null,
+  finishedAt = null,
+  durations = {},
+  taskStatus = null,
 }: {
   taskId: string;
   mode?: "short" | "long";
+  /**
+   * Сколько секунд занял каждый шаг: `{ имя узла: секунды }`.
+   *
+   * Приходит из `progress.timings`, которые воркер записывает В КОНЦЕ прогона
+   * (`_save_timings`). Поэтому на идущем прогоне словарь пуст, и длительность
+   * текущего шага считается здесь по времени события — иначе экран, ради
+   * которого всё затевалось, был бы пустым ровно тогда, когда на него смотрят.
+   */
+  durations?: Record<string, number>;
+  /**
+   * Когда воркер взял задачу — `tasks.started_at`, момент первого перехода в
+   * RUNNING, то есть начало шага «Разбор файла». null — задача ещё в очереди.
+   */
+  startedAt?: string | null;
+  /** Когда закончился последний шаг — `tasks.finished_at`. */
+  finishedAt?: string | null;
+  /**
+   * Статус задачи из Postgres.
+   *
+   * Он переживает срок жизни снимка в Valkey, а событие SSE — нет. Без него
+   * завершённый вчера прогон выглядел как не начинавшийся: «Шаг 1 из 13» и ни
+   * одной галочки при полностью заполненных длительностях.
+   */
+  taskStatus?: string | null;
 }) {
   const [event, setEvent] = useState<ProgressEvent | null>(null);
   const [connected, setConnected] = useState(false);
-  const [elapsed, setElapsed] = useState(0);
+  /**
+   * Отсчёт ведётся от начала прогона, а не от открытия страницы.
+   *
+   * Прежний счётчик стартовал с нуля на каждом монтировании компонента, и это
+   * ломало его в обе стороны: обновив вкладку на десятой минуте, читатель видел
+   * «0:03», а вкладка, открытая со вчера, показывала сутки прогона, который
+   * давно закончился. Число выглядело осмысленным в обоих случаях — тем оно и
+   * было плохо.
+   *
+   * `null` означает «считать не от чего»: задача стоит в очереди, воркер её ещё
+   * не взял, и любое число здесь было бы выдуманным.
+   */
+  const [elapsed, setElapsed] = useState<number | null>(null);
+  /**
+   * Запасное начало отсчёта для страницы, открытой ДО того, как воркер взял
+   * задачу. `startedAt` отрисован на сервере один раз и в такой вкладке
+   * навсегда останется null — а прогон тем временем идёт. Первое событие
+   * прогресса несёт `at` (epoch-секунды `time.time()` воркера) и годится
+   * началом: расхождение с настоящим `started_at` — доли секунды, которые в
+   * счётчике минут не видны.
+   */
+  const [firstEventAt, setFirstEventAt] = useState<number | null>(null);
   // useMemo, а не useRef: инициализатор ref вычисляется один раз за жизнь
   // компонента и на смену mode не реагирует — на длинном прогоне шкала осталась
   // бы со списком этапов короткого режима. Вдобавок чтение ref во время
   // отрисовки React не отслеживает, поэтому перерисовки от него не будет.
   const nodes = useMemo<PipelineNode[]>(() => nodesForMode(mode), [mode]);
+
+  // Живые длительности поверх серверных. Серверные приходят из Postgres в
+  // конце прогона и нужны вкладке, открытой после его завершения; живые — всё
+  // остальное время.
+  const knownDurations = mergeDurations(durations, event?.timings);
+
+  // Состояние шагов — общим модулем, а не по месту: правило «шаг с записанной
+  // длительностью пройден» иначе жило бы только здесь и проверялось глазами.
+  const progress = progressStates({
+    nodes: nodes.map((n) => n.name),
+    currentNode: event?.node ?? null,
+    eventStatus: event?.status ?? null,
+    taskStatus,
+    durations: knownDurations,
+  });
+  const { finished, failed, currentIndex } = progress;
 
   useEffect(() => {
     const source = new EventSource(`/api/tasks/${taskId}/progress`);
@@ -67,7 +142,11 @@ export function ProgressView({
     source.addEventListener("progress", (e) => {
       setConnected(true);
       try {
-        setEvent(JSON.parse((e as MessageEvent).data) as ProgressEvent);
+        const parsed = JSON.parse((e as MessageEvent).data) as ProgressEvent;
+        setEvent(parsed);
+        setFirstEventAt((seen) =>
+          seen ?? (typeof parsed.at === "number" ? parsed.at * 1000 : null),
+        );
       } catch {
         // Битое событие пропускаем: следующее придёт целым, а рушить экран
         // идущего исследования из-за одной строки нельзя.
@@ -77,28 +156,68 @@ export function ProgressView({
     return () => source.close();
   }, [taskId]);
 
-  const failed = event?.status === "FAILED";
-  const finished = event?.status === "REPORT_READY";
+  // Живые длительности поверх серверных объявлены ниже, поэтому состояние
+  // считается там же — сразу после них.
 
   useEffect(() => {
-    if (finished || failed) return;
-    const timer = setInterval(() => setElapsed((e) => e + 1), 1000);
-    return () => clearInterval(timer);
-  }, [finished, failed]);
+    const fromServer = startedAt ? Date.parse(startedAt) : NaN;
+    const start = Number.isNaN(fromServer) ? (firstEventAt ?? NaN) : fromServer;
+    if (Number.isNaN(start)) {
+      setElapsed(null);
+      return;
+    }
 
-  const currentIndex = nodes.findIndex((n) => n.name === event?.node);
-  const doneCount = finished
-    ? nodes.length
-    : Math.max(currentIndex, 0) + (event?.status === "DONE" ? 1 : 0);
+    // Прогон уже закончился к моменту открытия страницы — показываем итоговую
+    // длительность и не тикаем: она больше не меняется.
+    const end = finishedAt ? Date.parse(finishedAt) : NaN;
+    if (!Number.isNaN(end)) {
+      setElapsed(Math.max(0, Math.round((end - start) / 1000)));
+      return;
+    }
+
+    const tick = () => setElapsed(Math.max(0, Math.round((Date.now() - start) / 1000)));
+    tick(); // сразу, чтобы первая секунда не была пустой
+    if (finished || failed) return;
+    const timer = setInterval(tick, 1000);
+    return () => clearInterval(timer);
+  }, [startedAt, finishedAt, firstEventAt, finished, failed]);
+
+  // Когда начался текущий шаг: по времени события, которое о нём сообщило.
+  // Событие приходит на КАЖДУЮ смену узла, поэтому отсчёт начинается заново
+  // вместе с шагом, а не тянется от старта прогона.
+  const [stepStartedAt, setStepStartedAt] = useState<number | null>(null);
+  const [stepElapsed, setStepElapsed] = useState<number | null>(null);
+  const currentNode = event?.node ?? null;
+
+  useEffect(() => {
+    setStepStartedAt(event?.at ? event.at * 1000 : Date.now());
+  }, [currentNode]);
+
+  useEffect(() => {
+    if (stepStartedAt === null || finished || failed) {
+      setStepElapsed(null);
+      return;
+    }
+    const tick = () => setStepElapsed(Math.max(0, Math.round((Date.now() - stepStartedAt) / 1000)));
+    tick();
+    const timer = setInterval(tick, 1000);
+    return () => clearInterval(timer);
+  }, [stepStartedAt, finished, failed]);
+
+
+  /** «(1 час 28 мин 30 сек)» рядом с названием шага. Пусто — длительности нет. */
+  function stepTime(node: PipelineNode, state: NodeState): string {
+    const known = knownDurations[node.name];
+    if (typeof known === "number") return ` (${humanDuration(known)})`;
+    if (state === "running" && stepElapsed !== null) return ` (${humanDuration(stepElapsed)})`;
+    return "";
+  }
+
+  const doneCount = progress.doneCount;
   const pct = Math.round((doneCount / nodes.length) * 100);
 
   function stateOf(index: number): NodeState {
-    if (finished) return "done";
-    if (currentIndex < 0) return "waiting";
-    if (index < currentIndex) return "done";
-    if (index > currentIndex) return "waiting";
-    if (failed) return "failed";
-    return event?.status === "DONE" ? "done" : "running";
+    return progress.states[index] ?? "waiting";
   }
 
   return (
@@ -115,7 +234,9 @@ export function ProgressView({
           <span className="text-sm tabular-nums text-slate">
             {!connected && !finished && !failed
               ? "переподключение…"
-              : `${Math.floor(elapsed / 60)}:${String(elapsed % 60).padStart(2, "0")}`}
+              : elapsed === null
+                ? "в очереди"
+                : humanDuration(elapsed)}
           </span>
         </div>
         <div className="h-1.5 overflow-hidden rounded-full bg-secondary">
@@ -179,6 +300,7 @@ export function ProgressView({
                   className={cn("block text-sm", state === "waiting" && "text-slate")}
                 >
                   {node.label}
+                  <span className="tabular-nums text-slate">{stepTime(node, state)}</span>
                 </span>
                 <span className="mt-0.5 block text-xs text-slate">
                   {state === "running" && event?.detail ? event.detail : node.detail}

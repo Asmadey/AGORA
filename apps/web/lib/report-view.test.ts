@@ -1,7 +1,10 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { avatarHue, initials, parseAnswer, parseReport, segmentLabel } from "./report-view.ts";
+import {
+  answerForQuestion, avatarHue, initials, parseAnswer, parseReport, retentionShort, segmentLabel,
+  type AnswerView, type AskedQuestion,
+} from "./report-view.ts";
 
 /**
  * Тесты разбора отчёта.
@@ -183,4 +186,149 @@ test("подпись сегмента идёт в фиксированном п�
     segmentLabel({ gender: "жен", geo: "столицы", age_group: "60+" }),
     "60+ · столицы · жен",
   );
+});
+
+// ─── Экран исследования (этап Г) ──────────────────────────────────────────
+
+test("сводка QA отсутствует у прогонов, сделанных до её появления", () => {
+  // null, а не нули. «Проверено 0» на экране означало бы, что судья не посмотрел
+  // ни одного ответа, — то есть утверждение о прогоне вместо признания незнания.
+  assert.equal(parseReport({}).qa, null);
+  assert.equal(parseReport({ qa_summary: {} }).qa, null);
+});
+
+test("сводка QA разбирается и сортируется по убыванию", () => {
+  const view = parseReport({
+    qa_summary: {
+      checked: 30,
+      flagged: 7,
+      by_kind: { grounding: 5, consistency: 2, diversity: 0 },
+      by_source: { judge: 6, rule: 1 },
+      escalated: 3,
+      judge_failures: 1,
+    },
+  });
+
+  assert.equal(view.qa?.checked, 30);
+  assert.equal(view.qa?.flagged, 7);
+  assert.equal(view.qa?.escalated, 3);
+  assert.equal(view.qa?.judgeFailures, 1);
+  // Нулевые виды не показываются: строка «однообразие — 0» читается как
+  // результат проверки, а не как её отсутствие.
+  assert.deepEqual(view.qa?.byKind, [
+    { kind: "grounding", count: 5 },
+    { kind: "consistency", count: 2 },
+  ]);
+  assert.deepEqual(view.qa?.bySource, [
+    { source: "judge", count: 6 },
+    { source: "rule", count: 1 },
+  ]);
+});
+
+test("готовность рекомендовать читается отдельно от NPS", () => {
+  // Две разные величины по одной шкале ответов. NPS в −100…+100 чувствителен к
+  // поляризации, среднее 1–10 — нет, и расходятся они как раз на интересных
+  // случаях. Подменить одно другим значит потерять этот сигнал.
+  const view = parseReport({ aggregate: { nps: -86, recommendation_mean: 3.4 } });
+  assert.equal(view.nps, -86);
+  assert.equal(view.recommendation, 3.4);
+
+  // Прогон до появления поля: прочерк, а не ноль.
+  assert.equal(parseReport({ aggregate: { nps: -86 } }).recommendation, null);
+});
+
+test("заданные вопросы берутся из отчёта, а не из анкеты", () => {
+  const view = parseReport({
+    survey_asked: [
+      { id: "base-1", label: "Общее впечатление", type: "scale" },
+      { id: "q-7", label: "", type: "open" },
+      { label: "Без идентификатора", type: "open" },
+    ],
+  });
+
+  // Вопрос без формулировки выбрасывается: строка «q-7 ()» на экране выглядит
+  // как заданный вопрос, которого персона не видела.
+  assert.deepEqual(view.asked, [
+    { id: "base-1", label: "Общее впечатление", type: "scale" },
+    { id: "?", label: "Без идентификатора", type: "open" },
+  ]);
+});
+
+/**
+ * Карточка персоны показывает ответ, откуда бы он ни пришёл.
+ *
+ * ─── Как это нашлось ───────────────────────────────────────────────────────
+ * Владелец открыл отчёт и увидел «не ответила» напротив ВСЕХ шести вопросов —
+ * включая пять базовых, баллы по которым тут же нарисованы рядом. Естественный
+ * вывод из такой карточки: прогон ненастоящий, модель не звали.
+ *
+ * Звали. Ответы есть, и лежат они там, куда их положил промпт:
+ *  · пять базовых баллов — в `scores` под своими ключами, а не в survey_answers;
+ *  · вопрос о доле просмотра — в `perception`;
+ *  · пользовательский вопрос — под ключом «[q-1786…] (scale) как дела?»,
+ *    то есть строкой, которой промпт этот вопрос и напечатал.
+ *
+ * Поиск же шёл точным совпадением с `id` либо с формулировкой — и не находил
+ * ничего. Это четвёртый случай одной семьи: тот же разрыв уже чинили в
+ * `qa/checks.py` дважды и в `content/pack.py` один раз. Здесь он выглядел не
+ * отбраковкой, а обвинением в подделке прогона.
+ */
+test("ответ находится и в scores, и под строкой промпта", () => {
+  const answer = {
+    scores: { overall_impression: 7, plot: 6, acting: 5, music: 4, cinematography: 8 },
+    surveyAnswers: { "[q-77] (scale) как дела?": "7" },
+    watchedShare: 75,
+    retentionIntent: "скорее досмотреть",
+    nps: 6,
+  } as unknown as AnswerView;
+
+  const base: AskedQuestion = {
+    id: "base-1", label: "Общее впечатление", type: "scale", baseKey: "overall_impression",
+  };
+  assert.equal(answerForQuestion(answer, base), "7 из 10");
+
+  const custom: AskedQuestion = { id: "q-77", label: "как дела?", type: "scale" };
+  assert.equal(answerForQuestion(answer, custom), "7");
+
+  const share: AskedQuestion = {
+    id: "base-6", label: "Какую часть ролика вы бы досмотрели", type: "watched_share",
+  };
+  assert.equal(answerForQuestion(answer, share), "75%");
+});
+
+test("вопрос без ответа остаётся без ответа", () => {
+  // Послабление не должно превратить поиск в угадывание: пустая карточка
+  // честнее выдуманного ответа.
+  const answer = { scores: {}, surveyAnswers: {} } as unknown as AnswerView;
+  const q: AskedQuestion = { id: "q-99", label: "чужой вопрос", type: "открытый" };
+
+  assert.equal(answerForQuestion(answer, q), null);
+});
+
+/**
+ * ─── Досмотр: категория и доля — две разные величины ───────────────────────
+ *
+ * В строке персоны они делили одну колонку: процент, если он есть, иначе
+ * категория словами. Владелец увидел разнобой — «часть отвечает в процентах,
+ * часть словами» — и был прав: это два разных вопроса анкеты.
+ *
+ * `retentionShort` даёт короткую подпись категории для узкой колонки. Полная
+ * формулировка корпуса («Скорее хотелось досмотреть до конца») в такую колонку
+ * не влезает и обрезалась бы многоточием на середине слова.
+ */
+test("три значения корпуса получают короткую подпись", () => {
+  assert.equal(retentionShort("Скорее хотелось досмотреть до конца"), "Досмотрит");
+  assert.equal(retentionShort("Скорее хотелось остановить просмотр"), "Выключит");
+  assert.equal(retentionShort("Затрудняюсь ответить"), "Не решил");
+});
+
+test("неприведённая строка показывается как есть, а не прячется", () => {
+  // Если приведение не сработало, это видно на экране. Прочерк означал бы, что
+  // расхождение промпта с моделью заметит только тот, кто полезет в JSON.
+  assert.equal(retentionShort("ну как сказать"), "ну как сказать");
+});
+
+test("пусто — прочерк", () => {
+  assert.equal(retentionShort(null), "—");
+  assert.equal(retentionShort(""), "—");
 });

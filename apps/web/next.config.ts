@@ -23,6 +23,20 @@ const nextConfig: NextConfig = {
       },
     ],
   },
+  /**
+   * Старый адрес раздела не отдаётся в 404.
+   *
+   * `/corpus` разошёлся по закладкам, ссылкам в переписке и по чужим вкладкам,
+   * открытым прямо сейчас. Переименование раздела — наше решение, а платить за
+   * него разорванной ссылкой пришлось бы читателю. Постоянный редирект стоит
+   * трёх строк и снимает вопрос навсегда.
+   */
+  async redirects() {
+    return [
+      {source: '/corpus', destination: '/dataset', permanent: true},
+      {source: '/corpus/:path*', destination: '/dataset/:path*', permanent: true},
+    ];
+  },
   output: 'standalone',
   transpilePackages: ['motion'],
   webpack: (config, {dev}) => {

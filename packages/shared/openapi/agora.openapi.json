@@ -205,6 +205,79 @@
             }
           }
         }
+      },
+      "delete": {
+        "summary": "Удаление наборов аудитории",
+        "description": "Набор, на котором стоит хоть одно исследование, НЕ удаляется: внешний ключ tasks.persona_set_id объявлен ON DELETE SET NULL, и удаление тихо обнулило бы у прогона ссылку на аудиторию. Такие наборы возвращаются в blocked.",
+        "tags": [
+          "Аудитория"
+        ],
+        "operationId": "deletePersonaSets",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "ids"
+                ],
+                "properties": {
+                  "ids": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "description": "Идентификаторы. Чужие не находятся: RLS не покажет строку другого арендатора."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Удалённые и отклонённые наборы",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "deleted": {
+                      "type": "integer"
+                    },
+                    "requested": {
+                      "type": "integer"
+                    },
+                    "blocked": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "format": "uuid"
+                          },
+                          "name": {
+                            "type": "string"
+                          },
+                          "runs": {
+                            "type": "integer",
+                            "description": "Сколько исследований ссылается"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "ids отсутствует, пуст или содержит не-идентификаторы"
+          }
+        }
       }
     },
     "/api/auth/{nextauth}": {
@@ -259,6 +332,72 @@
           }
         ],
         "security": []
+      }
+    },
+    "/api/corpus": {
+      "get": {
+        "summary": "Датасеты корпуса и записи выбранного",
+        "description": "Без `datasetId` — датасеты команды с числом записей. С `datasetId` — ещё и страница записей.\n\nОдин маршрут на два ответа: раздел открывается списком датасетов и сразу показывает записи первого. Два маршрута дали бы два состояния загрузки на одном экране и возможность показать таблицу от датасета, который уже не выбран.\n\nЧужой датасет отвечает 404 наравне с несуществующим: RLS их не различает, и ответ не должен различать тоже.",
+        "tags": [
+          "Корпус"
+        ],
+        "operationId": "corpusList",
+        "responses": {
+          "200": {
+            "description": "Датасеты и (если запрошены) записи"
+          },
+          "401": {
+            "description": "Нет сессии"
+          },
+          "404": {
+            "description": "Датасет не найден"
+          }
+        }
+      }
+    },
+    "/api/corpus/records": {
+      "put": {
+        "summary": "Создать или перезаписать запись корпуса",
+        "description": "Идемпотентно по (датасет, respondentId): повторная отправка той же записи не создаёт вторую. Респондент с тем же идентификатором — тот же респондент, и удвоить его вес в долях значило бы исказить заземление так, что заметно это стало бы только по расхождению метрики.\n\nПравка не трогает прежние исследования: каждая аудитория снимает слепок корпуса в момент создания, и генератор сэмплирует по слепку.",
+        "tags": [
+          "Корпус"
+        ],
+        "operationId": "corpusUpsertRecord",
+        "responses": {
+          "200": {
+            "description": "Запись сохранена"
+          },
+          "400": {
+            "description": "Нет datasetId, respondentId или data не объект"
+          },
+          "401": {
+            "description": "Нет сессии"
+          },
+          "404": {
+            "description": "Датасет не найден"
+          }
+        }
+      },
+      "delete": {
+        "summary": "Удалить запись корпуса",
+        "tags": [
+          "Корпус"
+        ],
+        "operationId": "corpusDeleteRecord",
+        "responses": {
+          "200": {
+            "description": "Запись удалена"
+          },
+          "400": {
+            "description": "Не указан id"
+          },
+          "401": {
+            "description": "Нет сессии"
+          },
+          "404": {
+            "description": "Запись не найдена либо принадлежит другой команде"
+          }
+        }
       }
     },
     "/api/health": {
@@ -458,6 +597,60 @@
                 }
               }
             }
+          }
+        }
+      },
+      "delete": {
+        "summary": "Удаление персон",
+        "description": "Персона удаляется из реестра, но не из отчёта: карточки ответов живут в Mongo и ссылаются на идентификатор, а не на строку.",
+        "tags": [
+          "Персоны"
+        ],
+        "operationId": "deletePersonas",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "ids"
+                ],
+                "properties": {
+                  "ids": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "description": "Идентификаторы. Чужие не находятся: RLS не покажет строку другого арендатора."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Сколько удалено и сколько запрошено",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "deleted": {
+                      "type": "integer"
+                    },
+                    "requested": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "ids отсутствует, пуст или содержит не-идентификаторы"
           }
         }
       }
@@ -2016,6 +2209,121 @@
         ]
       }
     },
+    "/api/tasks/{id}/timeline": {
+      "get": {
+        "summary": "Разбор материала и ссылка на ролик",
+        "description": "Таймлайн прогона: сцены с описанием от VLM, репликами транскрипта и кадром, плюс подписанная ссылка на исходный ролик.\n\nРолик и таймлайн отдаются вместе намеренно: порознь они бесполезны — плеер без таймлайна это просто видео, таймлайн без плеера некуда перематывать.\n\nСсылки подписаны и живут час, поэтому маршрут динамический: отрисованные на сервере, они кешировались бы вместе со страницей и протухали молча.\n\n`timeline: null` — законное состояние, а не отказ: так выглядят прогоны, начатые до того, как пакет материала стал сохраняться, и прогоны, у которых Mongo была недоступна в момент записи (причина тогда в `degraded` отчёта).",
+        "tags": [
+          "Прогон"
+        ],
+        "operationId": "taskTimeline",
+        "responses": {
+          "200": {
+            "description": "Таймлайн и ссылка на ролик",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "video": {
+                      "type": "string",
+                      "nullable": true,
+                      "description": "Подписанная ссылка на ролик. null — S3 не настроен либо ролика нет."
+                    },
+                    "timeline": {
+                      "type": "object",
+                      "nullable": true,
+                      "properties": {
+                        "durationSec": {
+                          "type": "number"
+                        },
+                        "stitched": {
+                          "type": "boolean"
+                        },
+                        "cells": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "start": {
+                                "type": "number"
+                              },
+                              "end": {
+                                "type": "number"
+                              },
+                              "scene": {
+                                "type": "string",
+                                "nullable": true
+                              },
+                              "mood": {
+                                "type": "string",
+                                "nullable": true
+                              },
+                              "isCut": {
+                                "type": "boolean",
+                                "description": "Граница от монтажной склейки, а не от нарезки длинной сцены на блоки."
+                              },
+                              "screenshot": {
+                                "type": "string",
+                                "nullable": true
+                              },
+                              "lines": {
+                                "type": "array",
+                                "items": {
+                                  "type": "object",
+                                  "properties": {
+                                    "start": {
+                                      "type": "number"
+                                    },
+                                    "end": {
+                                      "type": "number"
+                                    },
+                                    "text": {
+                                      "type": "string"
+                                    },
+                                    "speaker": {
+                                      "type": "string",
+                                      "nullable": true
+                                    }
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        },
+                        "stats": {
+                          "type": "object",
+                          "properties": {
+                            "scenesTotal": {
+                              "type": "integer"
+                            },
+                            "speakers": {
+                              "type": "integer"
+                            },
+                            "words": {
+                              "type": "integer"
+                            },
+                            "linesTotal": {
+                              "type": "integer"
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Нет сессии"
+          },
+          "404": {
+            "description": "Прогон не найден либо принадлежит другой команде"
+          }
+        }
+      }
+    },
     "/api/upload/complete": {
       "post": {
         "summary": "Подтвердить загрузку",
@@ -2149,6 +2457,76 @@
         }
       }
     },
+    "/api/users": {
+      "get": {
+        "summary": "Участники команды",
+        "description": "Виден любому участнику: состав команды не секрет для тех, кто в ней состоит.",
+        "tags": [
+          "Команда"
+        ],
+        "operationId": "usersList",
+        "responses": {
+          "200": {
+            "description": "Список участников"
+          },
+          "401": {
+            "description": "Нет сессии"
+          }
+        }
+      },
+      "post": {
+        "summary": "Завести пользователя и добавить в команду",
+        "description": "Только владелец: участник, который может добавить себе второго владельца, обходит разделение ролей целиком.\n\nПароль вводит владелец и он уходит прямо в хеш (argon2id, параметры OWASP). В ответ, в логи и в переписку он не попадает — §6-бис CLAUDE.md.\n\n`created: false` означает, что пользователь с таким адресом уже существовал и получил членство, но пароль ему НЕ менялся: `users` глобальна, и смена пароля при добавлении в команду была бы способом отобрать чужой доступ.",
+        "tags": [
+          "Команда"
+        ],
+        "operationId": "usersCreate",
+        "responses": {
+          "201": {
+            "description": "Пользователь заведён"
+          },
+          "200": {
+            "description": "Пользователь существовал, добавлен в команду"
+          },
+          "400": {
+            "description": "Некорректная почта либо пароль короче 8 символов"
+          },
+          "401": {
+            "description": "Нет сессии"
+          },
+          "403": {
+            "description": "Нужны права владельца"
+          }
+        }
+      }
+    },
+    "/api/users/{id}": {
+      "delete": {
+        "summary": "Убрать участника из команды",
+        "description": "Снимается членство, а не пользователь: `users` глобальна, и удаление записи выкинуло бы человека из всех команд сразу.\n\nПоследний владелец не удаляется — команда без владельца это состояние, из которого нет выхода изнутри продукта.",
+        "tags": [
+          "Команда"
+        ],
+        "operationId": "usersDelete",
+        "responses": {
+          "200": {
+            "description": "Членство снято"
+          },
+          "401": {
+            "description": "Нет сессии"
+          },
+          "403": {
+            "description": "Нужны права владельца"
+          },
+          "404": {
+            "description": "Участник не найден"
+          },
+          "409": {
+            "description": "Последний владелец команды"
+          }
+        }
+      }
+    },
     "/api/wizard/drafts/{projectId}": {
       "get": {
         "summary": "Черновик визарда",
@@ -2233,6 +2611,493 @@
                 "type": "object"
               }
             }
+          }
+        }
+      }
+    },
+    "/api/models": {
+      "get": {
+        "summary": "Модели провайдера",
+        "description": "Живой список от провайдера вместо зашитого перечня: зашитый устаревает молча. Ключ наружу не выходит ни в каком виде — маршрут ходит к провайдеру сам и отдаёт только имена и маску ключа.",
+        "tags": [
+          "Настройки"
+        ],
+        "operationId": "listProviderModels",
+        "responses": {
+          "200": {
+            "description": "Список моделей и то, что действует сейчас",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "current": {
+                      "type": "object",
+                      "properties": {
+                        "endpoint": {
+                          "type": "string"
+                        },
+                        "keyMask": {
+                          "type": "string",
+                          "description": "Маска вида sk-1a…9f. Ключ не восстановим."
+                        },
+                        "text": {
+                          "type": "string"
+                        },
+                        "vision": {
+                          "type": "string"
+                        }
+                      }
+                    },
+                    "models": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "vision": {
+                            "type": "boolean"
+                          }
+                        }
+                      }
+                    },
+                    "guessed": {
+                      "type": "boolean",
+                      "description": "Модальность опознана по имени, а не по паспорту модели"
+                    },
+                    "error": {
+                      "type": "string",
+                      "nullable": true
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/tasks/{id}/transcript": {
+      "get": {
+        "summary": "Расшифровка прогона текстом",
+        "description": "Ровно те реплики, которые видела персона, и с теми же таймкодами, по которым её проверял судья: текст собирается из пакета материала, а не из отдельной копии. Отдельная копия разошлась бы с пакетом при первой правке сборки, и расхождение было бы невидимым — оба текста выглядят правильными.",
+        "tags": [
+          "Отчёт"
+        ],
+        "operationId": "downloadTranscript",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Файл расшифровки",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Прогон не найден либо пакет материала не сохранён"
+          }
+        }
+      }
+    },
+    "/api/tasks/{id}/share": {
+      "post": {
+        "summary": "Выпустить публичную ссылку на отчёт прогона",
+        "description": "Возвращает адрес ОДИН раз: в базе хранится только SHA-256 токена, и восстановить его нельзя. Ссылка открывает отчёт без входа в систему; ограничивают её срок, отзыв и политика RLS для роли agora_share.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "ttl": {
+                    "type": "string",
+                    "enum": [
+                      "24h",
+                      "7d",
+                      "30d",
+                      "never"
+                    ],
+                    "default": "7d"
+                  },
+                  "scope": {
+                    "type": "string",
+                    "enum": [
+                      "full",
+                      "aggregate"
+                    ],
+                    "default": "full"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Ссылка выпущена",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "url": {
+                      "type": "string",
+                      "format": "uri"
+                    },
+                    "expiresAt": {
+                      "type": "string",
+                      "format": "date-time",
+                      "nullable": true
+                    },
+                    "scope": {
+                      "type": "string",
+                      "enum": [
+                        "full",
+                        "aggregate"
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Неизвестный срок жизни"
+          },
+          "401": {
+            "description": "Требуется вход"
+          }
+        }
+      },
+      "delete": {
+        "summary": "Отозвать все действующие ссылки на отчёт прогона",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Сколько ссылок отозвано",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "revoked": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/tasks/{id}/rerun": {
+      "get": {
+        "summary": "Исходные данные для перезапуска исследования",
+        "description": "Материал, набор персон и настройки исходного прогона. Анкету не отдаёт намеренно: ради новых вопросов перезапуск и делают.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Значения для подстановки в визард",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "prefill": {
+                      "type": "object",
+                      "properties": {
+                        "mode": {
+                          "type": "string",
+                          "enum": [
+                            "short",
+                            "long"
+                          ]
+                        },
+                        "videoRef": {
+                          "type": "string",
+                          "nullable": true
+                        },
+                        "sourceName": {
+                          "type": "string",
+                          "nullable": true
+                        },
+                        "personaSetId": {
+                          "type": "string",
+                          "format": "uuid",
+                          "nullable": true
+                        },
+                        "projectId": {
+                          "type": "string",
+                          "format": "uuid",
+                          "nullable": true
+                        },
+                        "replicationCount": {
+                          "type": "integer"
+                        },
+                        "whisperModel": {
+                          "type": "string",
+                          "nullable": true
+                        },
+                        "surveyQuestions": {
+                          "type": "array",
+                          "items": {}
+                        },
+                        "title": {
+                          "type": "string"
+                        },
+                        "warning": {
+                          "type": "string",
+                          "nullable": true
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Прогон не найден"
+          }
+        }
+      }
+    },
+    "/api/consumption": {
+      "get": {
+        "summary": "Потребление токенов и расходы по дням",
+        "description": "Источник — API контроля затрат cloud.ru, то есть тот же, по которому выставляется счёт. Только владелец: это деньги договора целиком. 501 означает, что ключи биллинга не заданы в окружении.",
+        "parameters": [
+          {
+            "name": "from",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "date"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Строки по дням и суммы по колонкам",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "from": {
+                      "type": "string",
+                      "format": "date"
+                    },
+                    "to": {
+                      "type": "string",
+                      "format": "date"
+                    },
+                    "rows": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "date": {
+                            "type": "string",
+                            "format": "date"
+                          },
+                          "vision": {
+                            "type": "object",
+                            "properties": {
+                              "tokens": {
+                                "type": "number",
+                                "description": "миллионы токенов"
+                              },
+                              "rub": {
+                                "type": "number",
+                                "description": "рубли с НДС"
+                              },
+                              "rubNoVat": {
+                                "type": "number",
+                                "description": "рубли без НДС"
+                              }
+                            }
+                          },
+                          "text": {
+                            "type": "object",
+                            "properties": {
+                              "tokens": {
+                                "type": "number",
+                                "description": "миллионы токенов"
+                              },
+                              "rub": {
+                                "type": "number",
+                                "description": "рубли с НДС"
+                              },
+                              "rubNoVat": {
+                                "type": "number",
+                                "description": "рубли без НДС"
+                              }
+                            }
+                          },
+                          "other": {
+                            "type": "object",
+                            "properties": {
+                              "tokens": {
+                                "type": "number",
+                                "description": "миллионы токенов"
+                              },
+                              "rub": {
+                                "type": "number",
+                                "description": "рубли с НДС"
+                              },
+                              "rubNoVat": {
+                                "type": "number",
+                                "description": "рубли без НДС"
+                              }
+                            }
+                          },
+                          "totalRub": {
+                            "type": "number"
+                          },
+                          "totalRubNoVat": {
+                            "type": "number"
+                          }
+                        }
+                      }
+                    },
+                    "totals": {
+                      "type": "object",
+                      "properties": {
+                        "vision": {
+                          "type": "object",
+                          "properties": {
+                            "tokens": {
+                              "type": "number",
+                              "description": "миллионы токенов"
+                            },
+                            "rub": {
+                              "type": "number",
+                              "description": "рубли с НДС"
+                            },
+                            "rubNoVat": {
+                              "type": "number",
+                              "description": "рубли без НДС"
+                            }
+                          }
+                        },
+                        "text": {
+                          "type": "object",
+                          "properties": {
+                            "tokens": {
+                              "type": "number",
+                              "description": "миллионы токенов"
+                            },
+                            "rub": {
+                              "type": "number",
+                              "description": "рубли с НДС"
+                            },
+                            "rubNoVat": {
+                              "type": "number",
+                              "description": "рубли без НДС"
+                            }
+                          }
+                        },
+                        "other": {
+                          "type": "object",
+                          "properties": {
+                            "tokens": {
+                              "type": "number",
+                              "description": "миллионы токенов"
+                            },
+                            "rub": {
+                              "type": "number",
+                              "description": "рубли с НДС"
+                            },
+                            "rubNoVat": {
+                              "type": "number",
+                              "description": "рубли без НДС"
+                            }
+                          }
+                        },
+                        "totalRub": {
+                          "type": "number"
+                        },
+                        "totalRubNoVat": {
+                          "type": "number"
+                        },
+                        "days": {
+                          "type": "integer"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Период задан неверно"
+          },
+          "403": {
+            "description": "Нужны права владельца"
+          },
+          "501": {
+            "description": "Ключи биллинга не заданы"
           }
         }
       }
@@ -2450,6 +3315,21 @@
             "type": "integer",
             "minimum": 0,
             "description": "Обязателен: без него идемпотентность бессмысленна — каждый запуск давал бы новый ключ. Подставить случайный молча нельзя: это выглядело бы как рабочая защита, которая никогда не срабатывает"
+          },
+          "sourceName": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Имя файла, как его назвал пользователь. Для показа, не для доступа"
+          },
+          "title": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 200,
+            "description": "Название исследования. Отдельно от sourceName: имя файла — факт о загрузке, название — то, зачем работа делалась"
           }
         }
       },
@@ -2486,7 +3366,8 @@
               "QUEUED",
               "RUNNING",
               "REPORT_READY",
-              "FAILED"
+              "FAILED",
+              "CANCELLED"
             ]
           },
           "createdAt": {
@@ -2507,6 +3388,32 @@
               "null"
             ],
             "description": "Прогон создан, но воркер о нём не знает"
+          },
+          "seqNo": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "description": "Человеческий номер в пределах команды: № 0050. null — прогон старше нумерации"
+          },
+          "sourceName": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "title": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "posterRef": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Ключ S3 кадра-заставки. null — кадров нет"
           }
         }
       },
@@ -2557,17 +3464,136 @@
       },
       "Settings": {
         "type": "object",
+        "description": "Настройки арендатора. Форма поля в поле совпадает с apps/web/lib/settings.ts и с тем, что читает воркер: расхождение здесь даёт настройку, которая выставляется и не применяется.",
         "properties": {
-          "defaultReplication": {
+          "costCap": {
+            "type": "string",
+            "enum": [
+              "auto",
+              "hard"
+            ],
+            "description": "«auto» — без жёсткого потолка вызовов модели"
+          },
+          "costCapValue": {
             "type": "integer",
-            "minimum": 1,
-            "maximum": 10
+            "minimum": 100,
+            "maximum": 5000,
+            "description": "Потолок вызовов. Осмыслен только при costCap = hard"
           },
           "whisperModel": {
-            "type": "string"
+            "type": "string",
+            "enum": [
+              "gigaam-v3-e2e-rnnt",
+              "large-v3"
+            ],
+            "description": "Ровно те модели, что лежат в образе воркера. Выбор модели вне списка увёл бы прогон качать веса после заливки ролика"
           },
-          "aiModel": {
-            "type": "string"
+          "defaultReplication": {
+            "type": "integer",
+            "enum": [
+              1,
+              3,
+              5
+            ]
+          },
+          "temperatures": {
+            "type": "object",
+            "description": "Температура по стадиям конвейера: стадии требуют противоположного",
+            "additionalProperties": false,
+            "properties": {
+              "personaCreation": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 2
+              },
+              "personaValidation": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 2
+              },
+              "responseSimulation": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 2
+              },
+              "aggregation": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 2
+              },
+              "answerJudge": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 2
+              },
+              "segmentPortraits": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 2
+              }
+            }
+          },
+          "models": {
+            "type": "object",
+            "description": "Три роли, а не одна: текст, зрение, судья. Пустая строка — как в окружении сервера",
+            "additionalProperties": false,
+            "properties": {
+              "text": {
+                "type": "string"
+              },
+              "vision": {
+                "type": "string"
+              },
+              "judge": {
+                "type": "string",
+                "description": "\"\" — судить той же моделью, что отвечает"
+              }
+            }
+          },
+          "reasoning": {
+            "$ref": "#/components/schemas/Reasoning"
+          },
+          "judgeReasoning": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/Reasoning"
+              }
+            ],
+            "description": "Рассуждение судьи — отдельно: у проверки другая цена ошибки"
+          },
+          "requestionCap": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 100,
+            "description": "Сколько забракованных ответов разрешено переспросить за прогон. 0 — не переспрашивать"
+          },
+          "endpoint": {
+            "type": "string",
+            "description": "Адрес провайдера. Пустая строка — брать из окружения сервера"
+          },
+          "apiKeyMask": {
+            "type": "string",
+            "readOnly": true,
+            "description": "Маска действующего ключа. Сам ключ наружу не отдаётся никогда: ответ уезжает в браузер, в историю и в любой прокси по дороге"
+          }
+        }
+      },
+      "Reasoning": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "thinking": {
+            "type": "boolean",
+            "description": "Уезжает ключом enable_thinking: ключ thinking шлюз игнорирует"
+          },
+          "effort": {
+            "type": "string",
+            "enum": [
+              "low",
+              "medium",
+              "high",
+              "max"
+            ]
           }
         }
       }

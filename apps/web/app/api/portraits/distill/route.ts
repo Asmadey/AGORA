@@ -95,6 +95,10 @@ export async function POST(request: Request) {
           result.body_md,
           "distilled",
           userId,
+          // Сегмент — то единственное, по чему воркер найдёт этот портрет при
+          // сборке персоны. Без него дистилляция даёт красивый текст, который
+          // никогда никем не прочитается.
+          result.segment,
         );
         created.push(p);
       }

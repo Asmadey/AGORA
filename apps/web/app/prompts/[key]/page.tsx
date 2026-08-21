@@ -92,7 +92,18 @@ export default async function PromptDetailPage({ params }: { params: Promise<{ k
             <div>
               <dt className="text-xs uppercase tracking-wide text-stone">Кто вызывает</dt>
               <dd className="mt-1 font-mono text-xs">
-                {meta.calledBy || (
+                {/*
+                  Промпт, который не вызывается намеренно, отличается от
+                  забытого: правку первого незачем ждать в результате прогона.
+                  Без этой пометки студия предлагает править инструкцию, которая
+                  ни на что не влияет, а непоявившийся эффект читается как
+                  дефект студии.
+                */}
+                {meta.unused ? (
+                  <span className="font-sans text-warning">
+                    не вызывается — {meta.unused}
+                  </span>
+                ) : meta.calledBy || (
                   // Пустая строка — не недосмотр реестра, а факт: промпт готов,
                   // но ни один модуль воркера его пока не зовёт. Молчание здесь
                   // читалось бы как «вызывается откуда-то».

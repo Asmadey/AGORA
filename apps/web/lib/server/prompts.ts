@@ -74,31 +74,6 @@ export async function resolvePrompt(
   return rows[0] ?? null;
 }
 
-/**
- * Валидатор переменных (задача #26, кейс 11–12).
- *
- * Множество {{плейсхолдеров}} в template обязано совпадать с массивом variables.
- * Расхождение в любую сторону — отказ с перечислением:
- *   - необъявленная переменная → в модель уйдёт литеральная строка {{foo}};
- *   - объявленная, но неиспользуемая → вызывающий код передаёт данные в никуда.
- *
- * Возвращает null при совпадении, иначе объект с двумя списками расхождений.
- */
-export function validateVariables(
-  template: string,
-  variables: string[],
-): { undeclared: string[]; unused: string[] } | null {
-  const inTemplate = extractPlaceholderNames(template);
-  const declared = new Set(variables);
-  const inTemplateSet = new Set(inTemplate);
-
-  const undeclared = [...inTemplateSet].filter((v) => !declared.has(v));
-  const unused = [...declared].filter((v) => !inTemplateSet.has(v));
-
-  if (undeclared.length === 0 && unused.length === 0) return null;
-  return { undeclared, unused };
-}
-
 /** Извлекает {{имена}} без повторов — та же логика, что в prompt-registry.ts. */
 export function extractPlaceholderNames(text: string): string[] {
   const found = text.matchAll(/\{\{\s*([a-zA-Z0-9_.]+)\s*\}\}/g);

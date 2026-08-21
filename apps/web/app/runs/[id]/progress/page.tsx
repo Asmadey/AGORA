@@ -4,6 +4,8 @@ import { PageHeader } from "@/components/AppShell";
 import { ProgressView } from "@/components/agora/ProgressView";
 import { withTenant } from "@/lib/server/db";
 import { requireSession } from "@/lib/server/guard";
+import { resolveRun } from "@/lib/server/run-ref";
+import { loadRunTiming } from "@/lib/server/tasks";
 
 /**
  * Страница прогресса прогона (задача #12).
@@ -26,16 +28,38 @@ export default async function ProgressPage({
 }: {
   params: Promise<{ id: string }>;
 }) {
-  const { id } = await params;
+  const { id: slug } = await params;
   const { tenantId } = await requireSession();
 
+  // Тот же разбор, что у отчёта: страницы обязаны понимать одинаковые адреса,
+  // иначе переход между вкладками одного прогона даёт 404.
+  const run = await resolveRun(slug, tenantId, "/progress");
+  if (!run) notFound();
+  const id = run.id;
+
+  // started_at/finished_at нужны таймеру. Без них он считал бы от загрузки
+  // страницы: обновление на десятой минуте показывало бы «0:03», а открытая со
+  // вчера вкладка — сутки прогона, которого давно нет.
   const row = await withTenant(tenantId, async (client) => {
-    const { rows } = await client.query<{ mode: string; status: string }>(
-      "SELECT mode, status FROM tasks WHERE id = $1::uuid",
+    const { rows } = await client.query<{
+      mode: string;
+      status: string;
+      started_at: Date | null;
+      finished_at: Date | null;
+    }>(
+      "SELECT mode, status, started_at, finished_at FROM tasks WHERE id = $1::uuid",
       [id],
     );
     return rows[0] ?? null;
   });
+
+  // Длительности шагов лежат в progress.timings — их пишет воркер в конце
+  // прогона. На идущем прогоне словарь пуст, и ProgressView считает текущий шаг
+  // сам по времени события.
+  const timing = await withTenant(tenantId, (client) => loadRunTiming(client, id));
+  const durations = Object.fromEntries(
+    timing.nodes.flatMap((n) => (n.durationSec === null ? [] : [[n.node, n.durationSec]])),
+  );
 
   // RLS уже отрезал чужих арендаторов: строки просто нет. «Не ваш прогон» и
   // «нет такого» отвечают одинаково намеренно — разные ответы сами по себе
@@ -49,7 +73,14 @@ export default async function ProgressPage({
     <>
       <PageHeader title="Прогресс исследования" subtitle={`Прогон ${id}`} />
       <div className="p-8">
-        <ProgressView taskId={id} mode={row.mode === "long" ? "long" : "short"} />
+        <ProgressView
+          taskId={id}
+          mode={row.mode === "long" ? "long" : "short"}
+          startedAt={row.started_at?.toISOString() ?? null}
+          finishedAt={row.finished_at?.toISOString() ?? null}
+          durations={durations}
+          taskStatus={row.status}
+        />
       </div>
     </>
   );

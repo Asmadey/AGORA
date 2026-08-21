@@ -79,12 +79,17 @@ check(
     "scenedetect" in scenes_src,
 )
 
-# Fallback обязан быть именованной константой, а не числом в глубине функции:
-# интервал определяет, сколько кадров уедет в VLM на ролике без монтажных
-# склеек, то есть напрямую задаёт стоимость прогона.
+# Границы сетки обязаны быть именованными константами, а не числами в глубине
+# функции: они определяют, сколько панелей уедет в VLM, то есть напрямую задают
+# стоимость прогона.
+#
+# Отдельного fallback-интервала больше нет — его заменило одно правило:
+# `build_scenes` режет любой отрезок длиннее MAX_SCENE_SEC на равные блоки, и
+# ролик без монтажа просто оказывается одним таким отрезком. Прежний
+# FALLBACK_INTERVAL_SEC был вторым механизмом для того же случая.
 check(
-    "интервал fallback объявлен константой",
-    "FALLBACK_INTERVAL" in scenes_src,
+    "границы сцены объявлены константами",
+    "MIN_SCENE_SEC" in scenes_src and "MAX_SCENE_SEC" in scenes_src,
 )
 
 # Дедупликация по перцептивному хешу, а не по равенству байтов. Два соседних
@@ -180,7 +185,7 @@ module_ready = (FRAMES_DIR / "__init__.py").exists()
 SCENE_CASES = (
     "PySceneDetect находит сцены на ролике со склейкой",
     "таймкоды сцен монотонны и лежат в пределах длительности",
-    "при нуле сцен срабатывает fallback-интервал",
+    "ролик без склеек режется на блоки по MAX_SCENE_SEC",
 )
 FRAME_CASES = (
     "дедупликация схлопывает повторяющиеся кадры статичной сцены",
@@ -213,7 +218,7 @@ else:
     elif not has_scenedetect:
         skip_all(SCENE_CASES, "PySceneDetect не установлен")
     else:
-        from agent_core.frames import FALLBACK_INTERVAL_SEC, detect_scenes
+        from agent_core.frames import MAX_SCENE_SEC, detect_scenes
 
         with tempfile.TemporaryDirectory() as tmp:
             tmpd = Path(tmp)
@@ -245,8 +250,10 @@ else:
             )
 
             # Ролик без склеек: один цвет на всю длину. Детектор обязан вернуть
-            # ноль сцен, и тогда включается fallback.
-            static_dur = FALLBACK_INTERVAL_SEC * 3
+            # ноль склеек — и ролик всё равно обязан разбиться на сцены, иначе
+            # непрерывная съёмка (интервью, запись экрана, монолог) уехала бы в
+            # разбор одним куском без единого таймкода внутри.
+            static_dur = MAX_SCENE_SEC * 3
             subprocess.run(
                 [ffmpeg, "-y", "-f", "lavfi",
                  "-i", f"color=c=navy:size=320x240:rate=10:duration={static_dur}",
@@ -276,16 +283,18 @@ else:
 
             try:
                 flat = detect_scenes(static)
-                # Ключевое: без fallback список был бы пуст, и ролик без монтажа
-                # уехал бы в разбор нулём кадров — то есть просто не был бы
-                # разобран, без единой ошибки.
-                expected = static_dur / FALLBACK_INTERVAL_SEC
-                check("при нуле сцен срабатывает fallback-интервал",
-                      len(flat) >= expected - 1,
-                      f"сцен: {len(flat)}, ожидалось ≈{expected:.0f} "
-                      f"по интервалу {FALLBACK_INTERVAL_SEC}с")
+                # Ключевое: без нарезки список был бы из одной сцены на весь
+                # ролик, и описание трёх минут материала пришлось бы на один
+                # таймкод — ровно тот дефект, из-за которого QA браковал ответы
+                # по grounding.
+                expected = static_dur / MAX_SCENE_SEC
+                longest = max((s.duration_sec for s in flat), default=0.0)
+                check("ролик без склеек режется на блоки по MAX_SCENE_SEC",
+                      len(flat) >= expected - 1 and longest <= MAX_SCENE_SEC + 0.01,
+                      f"сцен: {len(flat)}, ожидалось ≈{expected:.0f}; "
+                      f"самая длинная {longest:.1f}с при потолке {MAX_SCENE_SEC}с")
             except Exception as e:  # noqa: BLE001
-                check("при нуле сцен срабатывает fallback-интервал", False,
+                check("ролик без склеек режется на блоки по MAX_SCENE_SEC", False,
                       f"{type(e).__name__}: {str(e)[:90]}")
 
     # ─── Кадры: дедупликация и панели ─────────────────────────────────────
@@ -326,7 +335,7 @@ else:
             stamps = [0.5, 1.5, 2.5, 3.5]
             try:
                 still_frames = extract_frames(still, stamps, tmpd / "still_frames")
-                kept = dedupe(still_frames)
+                kept = dedupe([p for _, p in still_frames])
                 check("дедупликация схлопывает повторяющиеся кадры статичной сцены",
                       len(kept) == 1 and len(still_frames) == len(stamps),
                       f"{len(still_frames)} кадров → {len(kept)}")
@@ -336,7 +345,7 @@ else:
 
             try:
                 moving_frames = extract_frames(moving, stamps, tmpd / "moving_frames")
-                kept = dedupe(moving_frames)
+                kept = dedupe([p for _, p in moving_frames])
                 check("дедупликация не выбрасывает различающиеся кадры динамичной сцены",
                       len(kept) == len(moving_frames),
                       f"{len(moving_frames)} кадров → {len(kept)}")
@@ -358,7 +367,7 @@ else:
             # удивляться.
             try:
                 sm_frames = extract_frames(small_motion, stamps, tmpd / "sm_frames")
-                sm_kept = dedupe(sm_frames)
+                sm_kept = dedupe([p for _, p in sm_frames])
                 check("мелкое движение на статичном фоне признаётся повтором "
                       "(замеренный предел)",
                       len(sm_kept) < len(sm_frames),

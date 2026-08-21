@@ -1,13 +1,17 @@
+import { resolveSeed } from "@/lib/seed";
 import { parseAudienceChoice, toGenerationConfig } from "@/lib/audience";
 import { audienceGrounding, warningsFor } from "@/lib/audience-grounding";
+import { createSnapshot, listDatasets } from "@/lib/server/corpus-db";
 import { withTenant } from "@/lib/server/db";
 import { requireSession, toResponse } from "@/lib/server/guard";
 import {
   createPersonaSet,
-  insertPersonas,
+  deletePersonaSets,
   listPersonaSets,
   listPersonas,
 } from "@/lib/server/personas";
+import { enqueueAudience } from "@/lib/server/queue";
+import { buildSettingsSnapshot } from "@/lib/server/tasks";
 
 /**
  * Шаг «Аудитория» визарда (задача #9).
@@ -37,23 +41,14 @@ import {
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
-interface GenerationResult {
-  personas: Record<string, unknown>[];
-  /** Имена персон отдельным списком: DNA описана закрытой схемой (#4). */
-  names?: string[];
-  /** Для каждой персоны: "model" или "template". */
-  sources?: string[];
-  meta?: {
-    enriched: boolean;
-    llm_calls: number;
-    cache_hits: number;
-    degraded_reason?: string | null;
-  };
-}
+// Тип ответа подпроцесса генерации (GenerationResult) убран вместе с самим
+// подпроцессом: маршрут больше не ждёт персон, он ставит задачу в очередь.
+// Оставленный тип описывал бы контракт, которого нет, — и первый же читатель
+// решил бы, что маршрут по-прежнему возвращает персоны.
 
 export async function POST(request: Request) {
   try {
-    const { tenantId } = await requireSession();
+    const { tenantId, userId } = await requireSession();
 
     let body: unknown;
     try {
@@ -110,10 +105,10 @@ export async function POST(request: Request) {
       education: criteria.education,
     });
 
-    const rawSeed = (body as { seed?: unknown }).seed;
-    const seed = typeof rawSeed === "number" && Number.isInteger(rawSeed) && rawSeed >= 0
-      ? rawSeed
-      : 42;
+    // Случайный, если не передан. Зашитое 42 давало одну и ту же аудиторию на
+    // одних критериях — разбор в lib/seed.ts. Явный seed по-прежнему
+    // исполняется как есть, и выбранное значение пишется в persona_sets.seed.
+    const seed = resolveSeed((body as { seed?: unknown }).seed);
     // use_llm — обогащение narrative моделью поверх заземлённого скелета.
     // Включено по умолчанию: продукт обещает живые портреты, а не строки
     // таблицы. Выключается телом запроса — это нужно эталонному прогону
@@ -121,82 +116,126 @@ export async function POST(request: Request) {
     const useLlm = (body as { useLlm?: unknown }).useLlm !== false;
     const config = { ...toGenerationConfig(criteria, seed), use_llm: useLlm };
 
-    const { execFile } = await import("node:child_process");
-    const { promisify } = await import("node:util");
-    const execFileAsync = promisify(execFile);
+    // ── Набор создаётся СРАЗУ, наполняется в фоне ──────────────────────────
+    //
+    // Раньше здесь запускался подпроцесс `generate_cli` и маршрут ждал его с
+    // таймаутом 120 секунд. Обогащение — последовательный цикл с таймаутом 60
+    // секунд на персону: шестьдесят персон в такой бюджет не помещаются никак.
+    // Пользователь видел спиннер, превращавшийся в ошибку, а всё написанное к
+    // этому моменту выбрасывалось.
+    //
+    // Вторая причина переезда в воркер: в образе веба нет `openai`. Обогащение
+    // отсюда всегда падало на ModuleNotFoundError и честно сообщало
+    // `enriched: false` — то есть самая дорогая часть генерации не работала
+    // вовсе, а выглядело это как привычная «деградация».
+    //
+    // Теперь строка набора появляется в списке немедленно, со статусом
+    // `generating` и счётчиком «сделано из заказанного».
+    // ── Слепок корпуса снимается ЗДЕСЬ ─────────────────────────────────────
+    //
+    // Корпус читается ровно один раз — когда генератор сэмплирует персон по его
+    // долям. Слепок в момент запуска исследования опоздал бы: персоны к тому
+    // времени собраны, и слепок описывал бы корпус, по которому их не собирали.
+    //
+    // Датасет выбирается на шаге «Аудитория». Если не выбран — берётся
+    // единственный; если их несколько, выбор обязателен: молча взять первый
+    // значило бы заземлить аудиторию на выборку, которой не просили.
+    const requestedDataset = (body as { datasetId?: unknown }).datasetId;
+    let snapshotId: string | null = null;
+    let snapshotError: string | null = null;
 
-    // AGORA_REPO_ROOT обязателен: у standalone-сервера Next process.cwd() равен
-    // /app/apps/web, а не корню монорепо. Тот же дефект уже ловили в #24.
-    const repoRoot = process.env.AGORA_REPO_ROOT || `${process.cwd()}/../..`;
-    const core = `${repoRoot}/services/agent-core`;
-
-    let result: GenerationResult;
     try {
-      const { stdout } = await execFileAsync(
-        "python3",
-        ["-m", "agent_core.persona.generate_cli", "--config", JSON.stringify(config)],
-        {
-          cwd: core,
-          timeout: 120_000,
-          maxBuffer: 32 * 1024 * 1024,
-          env: { ...process.env, PYTHONPATH: core },
-        },
+      snapshotId = await withTenant(tenantId, async (client) => {
+        const datasets = await listDatasets(client);
+        if (datasets.length === 0) return null;
+
+        const chosen =
+          typeof requestedDataset === "string"
+            ? datasets.find((d) => d.id === requestedDataset)
+            : datasets.length === 1
+              ? datasets[0]
+              : undefined;
+
+        if (!chosen) {
+          throw new Error(
+            typeof requestedDataset === "string"
+              ? "датасет не найден"
+              : `датасетов ${datasets.length}: выберите, на каком заземлять аудиторию`,
+          );
+        }
+        const snapshot = await createSnapshot(client, chosen.id);
+        return snapshot.id;
+      });
+    } catch (e) {
+      snapshotError = (e as Error).message;
+    }
+
+    if (snapshotError) {
+      return Response.json({ error: snapshotError, warnings }, { status: 400 });
+    }
+
+    const set = await withTenant(tenantId, (client) =>
+      createPersonaSet(
+        client,
+        ((body as { name?: unknown }).name as string) ||
+          `Аудитория от ${new Date().toLocaleDateString("ru-RU")}`,
+        criteria.size,
+        config,
+        seed,
+        "generating",
+        snapshotId,
+        userId,
+      ),
+    );
+
+    // Настройки пиннятся на задание генерации так же, как на прогон: пока
+    // набор считается, команда может сменить температуру создания персон, и
+    // тогда часть аудитории получилась бы под одним разбросом формулировок, а
+    // часть под другим — внутри одного набора, который потом сравнивают как
+    // целое.
+    const settings = await withTenant(tenantId, (client) =>
+      buildSettingsSnapshot(client),
+    );
+
+    try {
+      await enqueueAudience({
+        persona_set_id: set.id,
+        tenant_id: tenantId,
+        config: config as Record<string, unknown>,
+        // По слепку воркер сэмплирует персон. null — корпуса в базе нет, и
+        // генератор берёт файл образа: прежнее поведение, честно названное.
+        corpus_snapshot_id: snapshotId,
+        settings_snapshot: settings,
+      });
+    } catch (e) {
+      // Набор создан, но воркер о нём не знает. Молчать нельзя: строка висела
+      // бы в «generating» вечно, и это выглядело бы как медленная генерация,
+      // а не как недоехавшая задача.
+      await withTenant(tenantId, (client) =>
+        client.query(
+          "UPDATE persona_sets SET status='failed', error=$2, finished_at=now() WHERE id=$1",
+          [set.id, `очередь недоступна: ${(e as Error).message}`],
+        ),
       );
-      result = JSON.parse(stdout) as GenerationResult;
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      // Отказ по невозможным критериям — 400, а не 500: виноват выбор
-      // пользователя, и ему надо показать, какой именно критерий пуст.
-      const criteriaError = /отсутствуют в корпусе/.test(msg);
       return Response.json(
-        { error: `генерация не удалась: ${msg.slice(-300)}`, warnings },
-        { status: criteriaError ? 400 : 500 },
+        { error: `не удалось поставить генерацию в очередь: ${(e as Error).message}`, warnings },
+        { status: 503 },
       );
     }
 
-    // ── Сохранение набора ──────────────────────────────────────────────────
-    // Без него результат генерации существует только в теле ответа: запуск
-    // (#11) принимает personaSetId, и передать ему было бы нечего. Раньше здесь
-    // возвращался personaSetId: null — то есть ветка «создать аудиторию»
-    // обрывалась ровно на этом месте, и заметить это по зелёному CDD #9 было
-    // невозможно: тот прогоняет генератор напрямую, минуя маршрут.
-    const names = result.names ?? [];
-    const saved = await withTenant(tenantId, async (client) => {
-      const set = await createPersonaSet(
-        client,
-        (body as { name?: unknown }).name as string ||
-          `Аудитория от ${new Date().toLocaleDateString("ru-RU")}`,
-        result.personas.length,
-        config,
-        seed,
-      );
-      const inserted = await insertPersonas(
-        client,
-        set.id,
-        result.personas.map((dna, i) => ({
-          // Имя приходит списком рядом с DNA. Запасной вариант нужен не для
-          // красоты: колонка NOT NULL, и персона без имени обрушила бы вставку
-          // целиком, потеряв весь набор из-за одного пропуска.
-          name: names[i] || `Персона ${i + 1}`,
-          dna,
-          narrative: (dna.narrative as string) ?? null,
-          seed: (dna.seed as number) ?? seed,
-        })),
-      );
-      return { set, inserted };
-    });
-
-    return Response.json({
-      generated: true,
-      personaSetId: saved.set.id,
-      size: saved.inserted,
-      personas: result.personas,
-      config,
-      warnings,
-      // Видно, поработала ли модель. Без этого «живой портрет» и «шаблон из
-      // полей» различимы только на глаз, а причина деградации не видна вовсе.
-      enrichment: result.meta ?? { enriched: false, llm_calls: 0, cache_hits: 0 },
-    });
+    // 202: набор заведён, персон в нём ещё нет. Отвечать 200 значило бы
+    // сказать «готово» про то, что только началось.
+    return Response.json(
+      {
+        generated: true,
+        personaSetId: set.id,
+        status: "generating",
+        size: criteria.size,
+        generatedCount: 0,
+        warnings,
+      },
+      { status: 202 },
+    );
   } catch (error) {
     return toResponse(error);
   }
@@ -206,6 +245,62 @@ export async function GET() {
   try {
     await requireSession();
     return Response.json(audienceGrounding());
+  } catch (error) {
+    return toResponse(error);
+  }
+}
+
+/** Максимум за один запрос: столько наборов помещается на экране. */
+const MAX_DELETE_SETS = 100;
+
+/**
+ * Удаление наборов аудитории.
+ *
+ * Набор, на котором стоит хоть одно исследование, не удаляется: внешний ключ
+ * объявлен `ON DELETE SET NULL`, и удаление тихо обнулило бы у прогона ссылку
+ * на аудиторию. Отчёт остался бы на месте, а ответ на вопрос «на ком это
+ * проверяли» пропал бы без следа.
+ */
+export async function DELETE(request: Request) {
+  try {
+    const { tenantId } = await requireSession();
+
+    let body: unknown;
+    try {
+      body = await request.json();
+    } catch {
+      return Response.json(
+        { error: "тело запроса не является корректным JSON" },
+        { status: 400 },
+      );
+    }
+
+    const raw = (body as { ids?: unknown })?.ids;
+    if (!Array.isArray(raw) || raw.length === 0) {
+      return Response.json(
+        { error: "требуется поле ids — непустой список идентификаторов" },
+        { status: 400 },
+      );
+    }
+    if (raw.length > MAX_DELETE_SETS) {
+      return Response.json(
+        { error: `за один запрос удаляется не больше ${MAX_DELETE_SETS} наборов` },
+        { status: 400 },
+      );
+    }
+    const ids = raw.filter((v): v is string => typeof v === "string" && v.length > 0);
+    if (ids.length !== raw.length) {
+      return Response.json(
+        { error: "в ids есть значения, не являющиеся идентификаторами" },
+        { status: 400 },
+      );
+    }
+
+    // Чужие идентификаторы просто не находятся: RLS не покажет строку другого
+    // арендатора. Отдельной проверки на владение нет намеренно.
+    const result = await withTenant(tenantId, (client) => deletePersonaSets(client, ids));
+
+    return Response.json({ ...result, requested: ids.length });
   } catch (error) {
     return toResponse(error);
   }

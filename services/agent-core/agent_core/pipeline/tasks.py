@@ -63,6 +63,53 @@ def _set_task_status(task_id: str, tenant_id: str, status: str, error: str | Non
         )
 
 
+def _save_timings(
+    task_id: str,
+    tenant_id: str,
+    timings: list[dict[str, Any]],
+    stages: dict[str, float] | None = None,
+) -> None:
+    """
+    Складывает замеры этапов в `tasks.progress`.
+
+    Колонка заведена в схеме с первого дня и не писалась никем. Снимок прогресса
+    живёт в Valkey с TTL и перезаписывается на каждое событие — то есть разбивка
+    «сколько занял какой этап» существовала только пока прогон идёт, да и то в
+    виде текущего узла. Экран исследования показывает «Время обработки», и на
+    вопрос «за что заплачено» отвечать было нечем.
+
+    Отказ записи не роняет прогон и не меняет статус: замеры — служебная
+    информация, а отчёт к этому моменту уже посчитан и сохранён.
+    """
+    dsn = os.environ.get("DATABASE_URL")
+    if not dsn or not timings:
+        return
+
+    import json as _json
+
+    import psycopg
+
+    from ..db import tenant_scope
+
+    try:
+        with psycopg.connect(dsn) as conn, tenant_scope(conn, tenant_id) as cur:
+            cur.execute(
+                "UPDATE tasks SET progress = %s WHERE id = %s::uuid",
+                (
+                    _json.dumps(
+                        # Половины transcribe_and_diarize кладутся рядом с
+                        # узлами: на уровне графа это один узел, а разбивка —
+                        # то, чем объясняется его длительность.
+                        {"timings": timings, "stages": stages or {}},
+                        ensure_ascii=False,
+                    ),
+                    task_id,
+                ),
+            )
+    except Exception:  # noqa: BLE001 — см. докстринг
+        pass
+
+
 def _cancel_requested(task_id: str, tenant_id: str) -> bool:
     """
     Просили ли отменить этот прогон.
@@ -102,13 +149,14 @@ def run_pipeline(self: Any, payload: dict[str, Any]) -> dict[str, Any]:
     Прогон исследования.
 
     `payload` — параметры запуска из #11: task_id, tenant_id, mode, video_ref,
-    persona_ids, survey, replication_count, prompts_snapshot.
+    persona_ids, survey, replication_count, prompts_snapshot, settings_snapshot.
 
     Повторный вызов с тем же task_id НЕ начинает заново: граф поднимает
     чекпоинт по thread_id и продолжает с места отказа. Ради этого в
     `graph.invoke` передаётся None вместо состояния, когда чекпоинт уже есть, —
     иначе начальное состояние затёрло бы накопленное.
     """
+    from .. import tracing
     from .checkpoint import ValkeyCheckpointSaver
     from .graph import RunCancelled, build_graph
     from .progress import ProgressWriter
@@ -137,13 +185,28 @@ def run_pipeline(self: Any, payload: dict[str, Any]) -> dict[str, Any]:
         survey=payload.get("survey"),
         replication_count=int(payload.get("replication_count") or 1),
         prompts_snapshot=payload.get("prompts_snapshot") or {},
+        settings_snapshot=payload.get("settings_snapshot") or {},
     )
 
     _set_task_status(task_id, tenant_id, STATUS_RUNNING)
     progress.emit("pipeline", STATUS_RUNNING, detail="возобновление" if resuming else "запуск")
 
+    # Корневой спан прогона. Без него тринадцать узлов дали бы тринадцать не
+    # связанных между собой трасс: смотреть их можно, разобрать прогон — нет.
+    #
+    # Внутри `try`, а не снаружи: спан обязан закрыться и на отказе, иначе в
+    # LangFuse узел выглядит вечно идущим — то есть трасса врёт именно там, где
+    # её открывают. Контекст `tracing.run` закрывает его в `finally`.
     try:
-        final = graph.invoke(initial, config)
+        with tracing.run(
+            task_id=task_id,
+            tenant_id=tenant_id,
+            mode=payload.get("mode", "short"),
+            resuming=resuming,
+            replication_count=int(payload.get("replication_count") or 1),
+            personas=len(payload.get("persona_ids") or []),
+        ):
+            final = graph.invoke(initial, config)
     except RunCancelled as e:
         # Отмена — не отказ. Отдельный статус, чтобы в списке было видно, что
         # прогон остановили, а не что он сломался.
@@ -159,7 +222,14 @@ def run_pipeline(self: Any, payload: dict[str, Any]) -> dict[str, Any]:
         raise
 
     _set_task_status(task_id, tenant_id, STATUS_REPORT_READY)
-    progress.emit("pipeline", STATUS_REPORT_READY, degraded=final.get("degraded") or [])
+    snapshot = progress.emit(
+        "pipeline", STATUS_REPORT_READY, degraded=final.get("degraded") or []
+    )
+    _save_timings(
+        task_id, tenant_id,
+        snapshot.get("timings") or [],
+        final.get("stage_timings") or {},
+    )
     return {
         "task_id": task_id,
         "status": STATUS_REPORT_READY,

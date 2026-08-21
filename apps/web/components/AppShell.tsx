@@ -11,10 +11,14 @@ import {
   UsersRound,
   BookUser,
   BookOpen,
+  Database,
+  ShieldCheck,
+  UserCog,
   Plus,
   SlidersHorizontal,
   Settings,
   LogOut,
+  BarChart3,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ThemeToggle } from "@/components/ThemeToggle";
@@ -43,16 +47,25 @@ import { ThemeToggle } from "@/components/ThemeToggle";
  */
 
 const NAV = [
-  { href: "/", label: "Исследования", icon: ListChecks },
+  { href: "/researches", label: "Исследования", icon: ListChecks },
   { href: "/projects", label: "Проекты", icon: FolderKanban },
   { href: "/audience", label: "Аудитории", icon: UsersRound },
   { href: "/surveys", label: "Анкеты", icon: ClipboardList },
   { href: "/personas", label: "Персоны", icon: Users },
   { href: "/portraits", label: "Портреты аудиторий", icon: BookUser },
+  // Датасет — то, на чём стоит заземление: из него считаются доли, по которым
+  // сэмплируются персоны. До этапа Е он лежал файлом в репозитории, то есть
+  // принадлежал разработчику, а не исследователю.
+  { href: "/dataset", label: "Датасет", icon: Database },
   { href: "/prompts", label: "Промпт-студия", icon: SlidersHorizontal },
+  // Судья стоит отдельным разделом, а не блоком в Настройках: настройки
+  // отвечают «как считать», а этот раздел — «кому верить».
+  { href: "/qa-judge", label: "QA судья", icon: ShieldCheck },
+  { href: "/users", label: "Пользователи", icon: UserCog },
   { href: "/settings", label: "Настройки", icon: Settings },
   // Страница /api-docs существовала с задачи #26, но попасть на неё можно
   // было только по прямой ссылке: пункта меню не было.
+  { href: "/stats", label: "Статистика", icon: BarChart3 },
   { href: "/api-docs", label: "API-документация", icon: BookOpen },
 ] as const;
 
@@ -93,7 +106,12 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
           <nav className="flex-1 space-y-0.5 overflow-y-auto p-3">
             {NAV.map(({ href, label, icon: Icon }) => {
-              const active = href === "/" ? pathname === "/" : pathname.startsWith(href);
+              // Отчёт прогона живёт на /runs/<id>, но принадлежит разделу
+              // «Исследования»: без этой связи открытый отчёт гасил подсветку
+              // целиком, и по меню выходило, что пользователь нигде.
+              const active =
+                pathname.startsWith(href) ||
+                (href === "/researches" && pathname.startsWith("/runs"));
               return (
                 <Link
                   key={href}
@@ -147,22 +165,42 @@ export function PageHeader({
   title,
   subtitle,
   actions,
+  back,
 }: {
-  title: string;
+  /**
+   * Заголовок. Узел, а не строка: на странице проекта в него встроена правка
+   * имени на месте, и вынести её рядом означало бы второй заголовок.
+   */
+  title: React.ReactNode;
   subtitle?: string;
   actions?: React.ReactNode;
+  /**
+   * Возврат — слева от заголовка, а не в общей группе действий справа.
+   *
+   * «Назад» и «сделать что-то» — разные жанры. В одном ряду справа возврат
+   * читается как ещё одно действие над содержимым страницы и теряется среди
+   * них тем вернее, чем больше действий рядом. Слева он попадает туда, где
+   * взгляд начинает строку.
+   */
+  back?: React.ReactNode;
 }) {
   return (
     <header className="border-b border-hairline px-8 py-6">
       <div className="flex flex-wrap items-start justify-between gap-4">
-        <div className="min-w-0">
-          {/* heading-3 из DESIGN.md: 28px/1.25, средняя насыщенность.
-              Отрицательный трекинг из спецификации оставлен только крупным
-              размерам — на 28px он уже съедает воздух между буквами. */}
-          <h1 className="text-[28px] font-medium leading-[1.25] tracking-tight">{title}</h1>
-          {subtitle && (
-            <p className="mt-1 max-w-2xl text-sm text-slate">{subtitle}</p>
-          )}
+        <div className="flex min-w-0 items-start gap-3">
+          {/* mt-1 равняет кнопку по первой строке заголовка: у 28px/1.25
+              верхний край буквы ниже верха строки, и без сдвига кнопка
+              выглядит приподнятой. */}
+          {back && <div className="mt-1 shrink-0">{back}</div>}
+          <div className="min-w-0">
+            {/* heading-3 из DESIGN.md: 28px/1.25, средняя насыщенность.
+                Отрицательный трекинг из спецификации оставлен только крупным
+                размерам — на 28px он уже съедает воздух между буквами. */}
+            <h1 className="text-[28px] font-medium leading-[1.25] tracking-tight">{title}</h1>
+            {subtitle && (
+              <p className="mt-1 max-w-2xl text-sm text-slate">{subtitle}</p>
+            )}
+          </div>
         </div>
         {actions && <div className="flex shrink-0 items-center gap-2">{actions}</div>}
       </div>

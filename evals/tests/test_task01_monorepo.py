@@ -212,6 +212,14 @@ if compose.is_file():
                 "MONGODB_URL": "mongodb://ci:ci@localhost:27017/ci",
                 "VALKEY_URL": "redis://localhost:6379",
                 "OPENAI_API_KEY": "ci-placeholder",
+                # Адрес провайдера и имена моделей тоже обязательны: умолчания
+                # (`api.timeweb.cloud/v1`, `qwen3.6`) пережили смену провайдера
+                # и указывали в пустоту, поэтому убраны. Здесь они плейсхолдеры
+                # ровно по той же причине, что и пароли выше — `config`
+                # проверяет форму файла, а не настройку среды.
+                "OPENAI_BASE_URL": "https://ci-placeholder.invalid/v1",
+                "AI_MODEL": "ci-placeholder",
+                "VLM_MODEL": "ci-placeholder",
             }
             r = subprocess.run(
                 ["docker", "compose", "-f", str(compose), "config", "--quiet"],

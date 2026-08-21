@@ -94,11 +94,29 @@ export function StatCard({
   label,
   value,
   hint,
+  rationale,
+  provenance,
   tone = "default",
 }: {
   label: string;
   value: string;
   hint?: string;
+  /**
+   * Откуда взялось число — раскрывающийся список ответов персон.
+   *
+   * Узлом, а не данными: карточка не должна знать, как считается метрика, и
+   * тем более уметь считать её второй раз. Считает `lib/provenance.ts`,
+   * показывает `MetricProvenance`, а карточка отводит место.
+   */
+  provenance?: React.ReactNode;
+  /**
+   * Почему число такое — фразой из вербатимов персон.
+   *
+   * Отдельно от `hint`: подпись объясняет ШКАЛУ («из 10», «−100…+100»), а
+   * обоснование — результат. Слив их в одно поле, мы бы получили карточку, где
+   * не разобрать, что здесь свойство метрики, а что вывод по этому материалу.
+   */
+  rationale?: string;
   tone?: "default" | "good" | "warn" | "bad";
 }) {
   const toneClass = {
@@ -113,6 +131,12 @@ export function StatCard({
       <p className="text-xs uppercase tracking-wide text-slate">{label}</p>
       <p className={cn("mt-1.5 text-2xl font-semibold tabular-nums", toneClass)}>{value}</p>
       {hint && <p className="mt-1 text-xs text-slate">{hint}</p>}
+      {rationale && (
+        <p className="mt-2 border-t border-hairline pt-2 text-xs leading-relaxed text-foreground/80">
+          {rationale}
+        </p>
+      )}
+      {provenance}
     </div>
   );
 }
@@ -213,16 +237,9 @@ export function TimecodeRef({
   );
 }
 
-/** Материал — гипотеза, а не измерение. Это должно быть видно в интерфейсе. */
-export function HypothesisNotice({ replication }: { replication: number }) {
-  return (
-    <p className="rounded-md border border-warning/30 bg-warning-soft/60 px-4 py-3 text-xs leading-relaxed text-warning">
-      Это прогноз на синтетической аудитории, а не результат опроса живых людей.
-      Оценки заземлены на корпус из 165 реальных респондентов и откалиброваны по нему,
-      но требуют экспертной проверки перед решением.
-      {replication > 1
-        ? ` Каждая персона прошла анкету ${replication} раза — на шкалах показан разброс между повторами.`
-        : " Перекрытие равно 1: разброс не измерялся, доверительные границы недоступны."}
-    </p>
-  );
-}
+// HypothesisNotice убран по просьбе владельца: жёлтая плашка на весь экран
+// повторяла дисклеймер, который и так стоит внизу отчёта, и занимала первый
+// экран — то место, ради которого страницу открывают.
+//
+// Один факт из неё сохранён по месту: при перекрытии 1 разброс не измерялся,
+// и об этом сказано рядом со шкалами, где это имеет значение.

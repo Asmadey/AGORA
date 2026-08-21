@@ -154,11 +154,15 @@ if SHARED_NODES.exists():
         "веб читает тот же список",
         "nodes.json" in (view_src + page_src + read(WEB / "lib" / "pipeline-nodes.ts")),
     )
+    # Тринадцать, а не четырнадцать: расшифровка и диаризация стали одним узлом.
+    # По очереди они съедали 473 секунды из восьмисот, и параллельность по
+    # PRD §8 оказалась структурной, а не временной — теперь обе половины идут в
+    # потоках внутри одного узла.
     check(
         "в списке все узлы PRD §8",
-        len(node_names) == 14 and "probe_and_normalize" in node_names
-        and "analytics" in node_names,
-        f"узлов {len(node_names)}",
+        len(node_names) == 13 and "probe_and_normalize" in node_names
+        and "transcribe_and_diarize" in node_names and "analytics" in node_names,
+        f"узлов {len(node_names)}: {node_names}",
     )
 else:
     for name in ("граф воркера читает список узлов из packages/shared",

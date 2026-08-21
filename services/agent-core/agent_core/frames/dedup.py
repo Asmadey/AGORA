@@ -52,12 +52,16 @@ def dhash(image: str | Path) -> int:
          "-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "gray", "-"],
         capture_output=True, timeout=FFMPEG_TIMEOUT,
     )
-    pixels = proc.stdout
+    return _bits(proc.stdout, Path(image).name, proc.stderr)
+
+
+def _bits(pixels: bytes, what: str, stderr: bytes | None = None) -> int:
+    """Сырые пиксели 9×8 → 64 бита сравнений «светлее соседа справа»."""
     expected = HASH_WIDTH * HASH_HEIGHT
     if len(pixels) < expected:
         raise MediaError(
-            f"не удалось прочитать кадр {Path(image).name} для хеширования: "
-            f"{(proc.stderr or b'').decode('utf-8', 'replace').strip()[-160:] or 'пустой вывод'}"
+            f"не удалось прочитать {what} для хеширования: "
+            f"{(stderr or b'').decode('utf-8', 'replace').strip()[-160:] or 'пустой вывод'}"
         )
 
     bits = 0
@@ -66,6 +70,24 @@ def dhash(image: str | Path) -> int:
         for col in range(HASH_WIDTH - 1):
             bits = (bits << 1) | int(pixels[base + col] > pixels[base + col + 1])
     return bits
+
+
+def dhash_bytes(image: bytes) -> int:
+    """
+    То же, что `dhash`, но по байтам JPEG.
+
+    Нужен панелям: они существуют как байты и никогда не лежат на диске
+    отдельным файлом (см. `Panel.image` — так панель попадает в кэш, не завися
+    от временного каталога). Писать её во временный файл ради хеша значило бы
+    заводить файловую операцию там, где нужен только поток.
+    """
+    proc = subprocess.run(
+        [_tool("ffmpeg"), "-v", "error", "-i", "pipe:0",
+         "-vf", f"scale={HASH_WIDTH}:{HASH_HEIGHT}:flags=area,format=gray",
+         "-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "gray", "-"],
+        input=image, capture_output=True, timeout=FFMPEG_TIMEOUT,
+    )
+    return _bits(proc.stdout, "панель")
 
 
 def hamming(a: int, b: int) -> int:

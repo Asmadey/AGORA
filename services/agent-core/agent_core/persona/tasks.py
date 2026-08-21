@@ -1,0 +1,329 @@
+"""
+Генерация аудитории как фоновая задача Celery.
+
+─── Почему это переехало из веба ────────────────────────────────────────────
+Маршрут `/api/audience` запускал `python3 -m agent_core.persona.generate_cli`
+подпроцессом и ждал результата с таймаутом 120 секунд. Обогащение при этом —
+последовательный цикл: один вызов модели на персону, до 60 секунд на каждый.
+Шестьдесят персон в такой бюджет не помещаются никак: пользователь видел
+спиннер, который однажды превращался в ошибку, а всё написанное к этому моменту
+выбрасывалось.
+
+Здесь же решается вторая, менее заметная беда: в образе веба нет `openai`.
+Обогащение оттуда всегда падало на `ModuleNotFoundError`, честно сообщало
+`enriched: false` — и narrative у всех персон оставался скелетным. То есть
+самая дорогая часть генерации не работала вообще, а выглядело это как
+«деградация», которую все привыкли видеть.
+
+─── Транзакции: короткие, а не одна на весь прогон ──────────────────────────
+Первая редакция держала одну транзакцию открытой всю генерацию и писала в неё
+прогресс. Это не работало по двум причинам сразу, и обе тихие:
+
+1. Незакоммиченная строка не видна читателю. Список наборов опрашивается извне
+   и показал бы ноль до самого конца, каким бы ни был счётчик внутри.
+2. `tenant_scope` ставит арендатора транзакционно (`set_config(…, true)`), и
+   `SET LOCAL ROLE` — тоже. Коммит изнутри `conn.transaction()` psycopg
+   отвергает, а обёртка прогресса исключение глотает: прогресс молча не
+   писался, и заметить это можно было только по нулю на экране.
+
+Поэтому здесь: генерация и обогащение идут ВНЕ транзакции, каждое обновление
+прогресса — своя короткая транзакция со своим тенант-контекстом, запись персон —
+одна транзакция в конце. Держать транзакцию открытой минутами вредно и само по
+себе: она держит снимок и мешает автовакууму.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+from typing import Any
+
+from ..celery_app import app
+
+#: Как часто писать прогресс в базу.
+#:
+#: Не после каждой персоны: при пятистах персонах это пятьсот транзакций по
+#: строке, которую в это же время опрашивает список. Каждая пятая — заметно для
+#: глаза (обновление раз в несколько секунд) и незаметно для базы.
+PROGRESS_EVERY = 5
+
+
+def _update(tenant_id: str, sql: str, params: tuple[Any, ...]) -> None:
+    """
+    Короткая транзакция со своим тенант-контекстом.
+
+    Отдельное соединение на операцию — намеренно. Долгоживущее соединение
+    пришлось бы держать открытым всю генерацию, а тенант-контекст в нём живёт
+    ровно транзакцию: продлить его без продления транзакции нельзя.
+    """
+    import psycopg
+
+    from ..db import tenant_scope
+
+    with psycopg.connect(os.environ["DATABASE_URL"]) as conn, tenant_scope(conn, tenant_id) as cur:
+        cur.execute(sql, params)
+
+
+@app.task(name="agora.generate_audience", bind=True)
+def generate_audience(self: Any, payload: dict[str, Any]) -> dict[str, Any]:
+    """
+    Наполняет уже созданный набор персонами.
+
+    `payload`: persona_set_id, tenant_id, config (критерии генерации).
+
+    Отказ помечает набор `failed` с причиной. Пустой набор — заведомо
+    провальный прогон (маршрут запуска его теперь и не примет), поэтому
+    состояние обязано быть видно на экране, а не только в логах воркера.
+    """
+    from .. import tracing
+    from .generator import GenerationConfig, PersonaGenerator
+
+    set_id = str(payload["persona_set_id"])
+    tenant_id = str(payload["tenant_id"])
+    raw_config = payload.get("config") or {}
+    snapshot_id = payload.get("corpus_snapshot_id")
+
+    def fail(reason: str) -> dict[str, Any]:
+        _update(
+            tenant_id,
+            "UPDATE persona_sets SET status='failed', error=%s, finished_at=now() "
+            "WHERE id = %s::uuid",
+            (reason, set_id),
+        )
+        return {"persona_set_id": set_id, "status": "failed", "error": reason}
+
+    # ── Скелеты ──────────────────────────────────────────────────────────────
+    try:
+        config = GenerationConfig(**raw_config)
+        # Слепок корпуса, снятый при создании аудитории, — главнее файла в
+        # образе. Файл остаётся запасным путём для наборов, созданных до того,
+        # как корпус переехал в базу; молча предпочитать его слепку значило бы
+        # собирать персон не по тому корпусу, который выбрал пользователь.
+        gen = (
+            PersonaGenerator.from_snapshot(str(snapshot_id), tenant_id)
+            if snapshot_id
+            else PersonaGenerator.from_corpus()
+        )
+        named = gen.generate_named(config)
+    except Exception as exc:  # noqa: BLE001 — причина обязана дойти до экрана
+        return fail(f"{type(exc).__name__}: {exc}")
+
+    names = [n for n, _ in named]
+    personas = [dna for _, dna in named]
+
+    # Температуры снимаются из снимка настроек, положенного в задание при
+    # постановке в очередь, а не читаются из настроек на лету: пока набор
+    # считается, значение можно сменить, и тогда часть аудитории получилась бы
+    # под одним разбросом формулировок, а часть под другим — внутри набора,
+    # который потом сравнивают как целое.
+    from ..config import TemperatureConfig
+
+    temperatures = TemperatureConfig.for_task(payload.get("settings_snapshot"))
+
+    # ── Обогащение с прогрессом ──────────────────────────────────────────────
+    #
+    # Корневой спан открывается здесь, а не в начале задачи: до этой точки
+    # модель не зовут ни разу — скелеты собираются из корпуса механически.
+    # Спан, открытый раньше, показывал бы в трассе работу, которой в ней нет.
+    trace = tracing.run(
+        task_id=set_id,
+        tenant_id=tenant_id,
+        # Своё имя трассы: сборка аудитории и прогон исследования — разные
+        # операции, и под одним именем их метрики сложились бы в одну кучу.
+        trace_name="аудитория",
+        kind="generate_audience",
+        size=len(personas),
+        tags=["audience"],
+    )
+    # Всё, что ниже, зовёт модель: обогащение, проверка связности и
+    # пересоздание непрошедших персон. Один спан на набор, а не на персону —
+    # иначе набор из двадцати даёт двадцать трасс, и вопрос «почему аудитория
+    # собиралась двенадцать минут» снова остаётся без ответа.
+    with trace:
+            # Один запрос на набор, а не на персону: словарь один и тот же.
+        portraits = _load_portraits(tenant_id)
+
+        meta: dict[str, Any] = {"enriched": False, "llm_calls": 0, "cache_hits": 0}
+        if config.use_llm:
+            from .enrich import enrich_personas
+
+            def report(done: int, total: int) -> None:  # noqa: ARG001
+                if done % PROGRESS_EVERY:
+                    return
+                _update(
+                    tenant_id,
+                    "UPDATE persona_sets SET generated_count = %s WHERE id = %s::uuid",
+                    (done, set_id),
+                )
+
+            try:
+                outcome = enrich_personas(
+                    personas,
+                    on_progress=report,
+                    temperature=temperatures.personaCreation,  # стадия personaCreation
+                    # Портреты сегментов из базы арендатора. До 19.08 раздел
+                    # «Портреты» был отключён от продукта целиком: ни один узел
+                    # конвейера и ни одна строка генератора его не читали, хотя
+                    # реестр промптов утверждал обратное.
+                    portraits=portraits,
+                )
+            except Exception as exc:  # noqa: BLE001
+                return fail(f"обогащение не удалось: {type(exc).__name__}: {exc}")
+
+            personas = outcome.personas
+            meta = {
+                "enriched": outcome.enriched,
+                "llm_calls": outcome.calls_made,
+                "cache_hits": outcome.cache_hits,
+                "degraded_reason": outcome.degraded_reason,
+            }
+
+        # ── Фаза 2: проверка связности ───────────────────────────────────────────
+        # Идёт только после обогащения: проверять нечего, пока narrative скелетный —
+        # он собран из тех же атрибутов механически и разойтись с ними не может.
+        #
+        # Пересоздание берёт ДРУГОЙ seed, а не повторяет вызов модели на тех же
+        # атрибутах: расхождение могло прийти и от самих атрибутов — редкое
+        # сочетание, которое связным текстом не описывается.
+        verdicts: list[Any] = []
+        validation_meta: dict[str, Any] = {"checked": 0, "regenerated": 0, "failed": 0}
+        if config.use_llm and personas:
+            from ..schemas.responses import MAX_TOKENS, PERSONA_VALIDATION
+            from .enrich import QwenTextClient, enrich_personas
+            from .validate import validate_set
+
+            def regenerate(index: int, attempt: int) -> dict[str, Any] | None:
+                """Пересоздаёт одну персону с другим seed и заново обогащает её."""
+                try:
+                    shifted = GenerationConfig(
+                        **{
+                            **raw_config,
+                            "size": 1,
+                            # Сдвиг по попытке И по позиции: без позиции две
+                            # непрошедшие персоны получили бы на одной попытке
+                            # одинаковый seed, то есть одну и ту же замену.
+                            "seed": (config.seed or 0) + 10_000 * attempt + index,
+                        }
+                    )
+                    fresh = gen.generate(shifted)
+                    if not fresh:
+                        return None
+                    return enrich_personas(
+                        fresh,
+                        temperature=temperatures.personaCreation,
+                        portraits=portraits,
+                    ).personas[0]
+                except Exception:  # noqa: BLE001 — не сумели пересоздать, не отказ фазы
+                    return None
+
+            try:
+                validation = validate_set(
+                    personas,
+                    client=QwenTextClient(
+                        temperature=temperatures.personaValidation,
+                        # Схема, а не уговоры: первый же боевой набор потерял один
+                        # вердикт на разборе — модель вернула JSON в ```json и, судя
+                        # по обрыву, не закрыла ограду. Внутри была настоящая
+                        # претензия, и она пропала по дороге.
+                        response_schema=("PersonaValidation", PERSONA_VALIDATION),
+                        # Потолок обязателен при схеме — см. MAX_TOKENS.
+                        max_tokens=MAX_TOKENS["persona_validation"],
+                    ),
+                    regenerate=regenerate,
+                )
+                personas = validation.personas
+                verdicts = validation.verdicts
+                validation_meta = {
+                    "checked": validation.checked,
+                    "regenerated": validation.regenerated,
+                    "failed": validation.failed,
+                    "calls": validation.calls,
+                }
+            except Exception as exc:  # noqa: BLE001
+                # Проверка — улучшение качества, а не условие работоспособности:
+                # сорвать из-за неё оплаченную генерацию значит поменять надёжный
+                # результат на аккуратный.
+                validation_meta = {"checked": 0, "regenerated": 0, "failed": 0,
+                                   "degraded_reason": f"{type(exc).__name__}: {exc}"}
+
+        # ── Запись персон одной транзакцией ──────────────────────────────────────
+        # Все или ни одной: наполовину записанный набор выглядит готовым и даёт
+        # отчёт по случайной части аудитории.
+        import psycopg
+
+        from ..db import tenant_scope
+
+        try:
+            with psycopg.connect(os.environ["DATABASE_URL"]) as conn, tenant_scope(
+                conn, tenant_id
+            ) as cur:
+                for index, (name, dna) in enumerate(zip(names, personas, strict=False)):
+                    # Пустой объект — «не проверялась». Отличать это от «проверена,
+                    # претензий нет» обязательно: иначе набор, созданный без фазы
+                    # валидации, выглядел бы прошедшим проверку, которой не было.
+                    verdict = verdicts[index].to_json() if index < len(verdicts) else {}
+                    # Автор наследуется от набора подзапросом, а не приезжает в
+                    # payload: в очереди он мог бы разойтись со строкой набора, если
+                    # набор пересоздали, — а истина о том, чья это аудитория, живёт
+                    # в базе, не в сообщении.
+                    cur.execute(
+                        "INSERT INTO personas (tenant_id, persona_set_id, name, dna, "
+                        "                      narrative, seed, validation, created_by) "
+                        "VALUES (app.current_tenant(), %s::uuid, %s, %s, %s, %s, %s, "
+                        "        (SELECT created_by FROM persona_sets WHERE id = %s::uuid))",
+                        (
+                            set_id,
+                            name,
+                            json.dumps(dna, ensure_ascii=False),
+                            dna.get("narrative"),
+                            dna.get("seed"),
+                            json.dumps(verdict, ensure_ascii=False),
+                            set_id,
+                        ),
+                    )
+                cur.execute(
+                    "UPDATE persona_sets SET status='ready', generated_count=%s, finished_at=now() "
+                    "WHERE id = %s::uuid",
+                    (len(personas), set_id),
+                )
+        except Exception as exc:  # noqa: BLE001
+            return fail(f"персоны не сохранены: {type(exc).__name__}: {exc}")
+
+        return {
+            "persona_set_id": set_id,
+            "status": "ready",
+            "size": len(personas),
+            "enrichment": meta,
+            "validation": validation_meta,
+        }
+
+
+def _load_portraits(tenant_id: str) -> dict[str, str]:
+    """
+    Портреты сегментов команды: `{ключ сегмента: текст}`.
+
+    Отказ чтения — не отказ сборки аудитории. Портрет улучшает описание
+    персоны, а не делает её возможной; уронить из-за него набор значило бы
+    поменять надёжный результат на красивый.
+
+    Берутся только портреты С сегментом: заведённые вручную его не имеют, и
+    сопоставить их с персоной не по чему. Имя для этого не годится — человек
+    правит его руками, и матчинг по имени сломался бы на первом переименовании
+    молча, оставив персону без портрета.
+    """
+    dsn = os.environ.get("DATABASE_URL")
+    if not dsn:
+        return {}
+    try:
+        import psycopg
+
+        from ..db import tenant_scope
+
+        with psycopg.connect(dsn) as conn, tenant_scope(conn, tenant_id) as cur:
+            cur.execute(
+                "SELECT segment_key, body_md FROM audience_portraits "
+                "WHERE segment_key IS NOT NULL AND body_md <> ''"
+            )
+            return {str(k): str(v) for k, v in cur.fetchall()}
+    except Exception:  # noqa: BLE001
+        return {}

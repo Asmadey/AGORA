@@ -42,12 +42,20 @@ from pathlib import Path
 from typing import Any
 
 # --- пути к репозиторию (относительно этого файла) ---
+from ..paths import find_data_file
 
 _AGENT_CORE = Path(__file__).resolve().parent.parent.parent  # services/agent-core
 _REPO_ROOT = _AGENT_CORE.parent.parent  # AGORA/
 
 SCHEMA_PATH = _REPO_ROOT / "packages" / "shared" / "schemas" / "persona-dna.schema.json"
-CORPUS_PATH = _REPO_ROOT / "data" / "grounding" / "unified_respondent_sessions.json"
+# Путь ищется, а не вычисляется: в образе воркера исходники лежат в
+# /app/agent_core/, и арифметика по parents давала /data/grounding/… — корень
+# файловой системы. Отказ был невидим из репозитория, где та же арифметика
+# верна. См. agent_core/paths.py.
+CORPUS_PATH = (
+    find_data_file("grounding/unified_respondent_sessions.json")
+    or _REPO_ROOT / "data" / "grounding" / "unified_respondent_sessions.json"
+)
 PROMPT_PATH = _REPO_ROOT / "prompts" / "persona.generate.md"
 REFERENCE_PERSONA_PATH = _REPO_ROOT / "evals" / "fixtures" / "persona_reference.json"
 
@@ -333,6 +341,72 @@ class PersonaGenerator:
     def from_corpus(cls, path: Path | None = None) -> PersonaGenerator:
         p = path or CORPUS_PATH
         records = json.loads(p.read_text("utf-8"))
+        dist = CorpusDistribution.from_corpus(records)
+        return cls(dist, records)
+
+    @classmethod
+    def from_snapshot(cls, snapshot_id: str, tenant_id: str) -> PersonaGenerator:
+        """
+        Генератор по слепку корпуса из базы.
+
+        ─── Зачем слепок ───────────────────────────────────────────────────
+        Корпус стал редактируемым (этап Е), и правка меняет доли, по которым
+        сэмплируются персоны. Тот же seed по изменившемуся корпусу даёт другую
+        аудиторию — воспроизводимость ломается молча, а прежние наборы персон
+        перестают воспроизводиться. Заметить это по продукту нельзя: персоны
+        выглядят так же правдоподобно, просто это другие персоны.
+        
+        Поэтому аудитория снимает слепок в момент создания, и генератор читает
+        его, а не живую таблицу.
+
+        ─── Почему сумма считается в SQL ───────────────────────────────────
+        Слепок пишет веб, читает воркер — TypeScript и Python. Каноническое
+        представление, написанное в обоих, разошлось бы на первой мелочи: где-то
+        `7` против `7.0`, где-то экранирование юникода. И разошлось бы молча:
+        сумма перестала бы совпадать у исправного слепка.
+
+        Поэтому сумма — `encode(digest(records::text, 'sha256'), 'hex')`, то есть
+        Postgres по своей нормализованной форме jsonb. Обе стороны читают одно
+        определение и сравнивают готовые строки.
+        """
+        import os
+
+        import psycopg
+
+        from ..db import tenant_scope
+
+        with psycopg.connect(os.environ["DATABASE_URL"]) as conn, tenant_scope(
+            conn, tenant_id
+        ) as cur:
+            cur.execute(
+                "SELECT records, records_count, sha256, "
+                "       encode(digest(records::text, 'sha256'), 'hex') AS actual "
+                "FROM corpus_snapshots WHERE id = %s::uuid",
+                (snapshot_id,),
+            )
+            row = cur.fetchone()
+
+        if row is None:
+            raise ValueError(
+                f"слепок корпуса {snapshot_id} не найден: аудиторию не на чем заземлять"
+            )
+
+        records, expected_count, expected_sha, actual_sha = row
+        if not isinstance(records, list) or not records:
+            raise ValueError(f"слепок корпуса {snapshot_id} пуст")
+
+        if actual_sha != expected_sha:
+            # Не отказ: слепок читается, персоны собираются. Но расхождение
+            # означает, что содержимое правили мимо приложения, и знать об этом
+            # надо до того, как результат объявят невоспроизводимым.
+            import logging
+
+            logging.getLogger(__name__).warning(
+                "слепок корпуса %s: sha256 не совпадает (%s записей, в паспорте %s) — "
+                "содержимое правили в обход приложения",
+                snapshot_id, len(records), expected_count,
+            )
+
         dist = CorpusDistribution.from_corpus(records)
         return cls(dist, records)
 

@@ -92,6 +92,12 @@ services:
     ports:
       - "${WEB_PORT:-3000}:3000"
     environment:
+      # Ключи биллинга для раздела «Статистика». Читает их сервер Next,
+      # воркеру они не нужны. Пустые — раздел честно отвечает «не
+      # настроено», а не показывает нули.
+      CLOUDRU_KEY_ID: ${CLOUDRU_KEY_ID:-}
+      CLOUDRU_KEY_SECRET: ${CLOUDRU_KEY_SECRET:-}
+      CLOUDRU_PROJECT_ID: ${CLOUDRU_PROJECT_ID:-}
       NODE_ENV: production
       APP_URL: ${APP_URL:-http://localhost:3000}
       AUTH_URL: ${AUTH_URL:-http://localhost:3000}
@@ -104,8 +110,17 @@ services:
       MONGODB_URL: ${MONGODB_URL:?MONGODB_URL обязателен (managed или local-db)}
       VALKEY_URL: ${VALKEY_URL:?VALKEY_URL обязателен (managed или local-db)}
       OPENAI_API_KEY: ${OPENAI_API_KEY:?OPENAI_API_KEY обязателен}
-      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.timeweb.cloud/v1}
-      AI_MODEL: ${AI_MODEL:-qwen3.6}
+      # Ключ шифрования секретов арендатора (ключ провайдера, заданный из
+      # интерфейса). Обязан СОВПАДАТЬ у web и worker: веб шифрует, воркер
+      # расшифровывает. Пусто — интерфейс откажется принимать ключ и скажет
+      # почему, вместо того чтобы сохранить его открытым.
+      SETTINGS_SECRET: ${SETTINGS_SECRET:-}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:?OPENAI_BASE_URL обязателен — адреса по умолчанию нет}
+      AI_MODEL: ${AI_MODEL:?AI_MODEL обязателен}
+      # Модель зрения нужна и вебу — не для вызовов, а чтобы Настройки могли
+      # показать, что действует сейчас. Без неё селектор молчит о текущем
+      # значении, и выбор делается вслепую.
+      VLM_MODEL: ${VLM_MODEL:-}
       # Presigned upload выдаёт web, а не worker: маршрут /api/upload/presign
       # подписывает ссылку ключами S3 и кладёт tenant_id из сессии в имя объекта.
       # Раньше эти переменные были только у worker, поэтому на развёрнутом стенде
@@ -159,17 +174,27 @@ services:
       MONGODB_URL: ${MONGODB_URL:?MONGODB_URL обязателен (managed или local-db)}
       VALKEY_URL: ${VALKEY_URL:?VALKEY_URL обязателен (managed или local-db)}
       OPENAI_API_KEY: ${OPENAI_API_KEY:?OPENAI_API_KEY обязателен}
-      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://api.timeweb.cloud/v1}
+      # Ключ шифрования секретов арендатора (ключ провайдера, заданный из
+      # интерфейса). Обязан СОВПАДАТЬ у web и worker: веб шифрует, воркер
+      # расшифровывает. Пусто — интерфейс откажется принимать ключ и скажет
+      # почему, вместо того чтобы сохранить его открытым.
+      SETTINGS_SECRET: ${SETTINGS_SECRET:-}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:?OPENAI_BASE_URL обязателен — адреса по умолчанию нет}
       # Обязательный заголовок агента TimeWeb: помечен required в OpenAPI,
       # но OpenAI SDK его не шлёт — без него запрос отклоняется до модели.
       MODEL_PROXY_SOURCE: ${MODEL_PROXY_SOURCE:-agora}
       # Поле model в запросе агент игнорирует — модель задана в его настройках.
       # Значения ниже нужны как подпись в отчёте и снимке задачи.
-      AI_MODEL: ${AI_MODEL:-qwen3.6}
-      VLM_MODEL: ${VLM_MODEL:-qwen3.6}
+      AI_MODEL: ${AI_MODEL:?AI_MODEL обязателен}
+      VLM_MODEL: ${VLM_MODEL:?VLM_MODEL обязателен — разбор кадров идёт в модель зрения}
       # Второй агент под кадры. Пусто — общий агент, то есть одна модель на всё.
       VLM_BASE_URL: ${VLM_BASE_URL:-}
-      WHISPER_MODEL: ${WHISPER_MODEL:-large-v3}
+      # Запасное умолчание для задач БЕЗ снимка настроек — то есть для тех,
+      # что поставлены до появления настроек. Обязано совпадать с первым
+      # элементом WHISPER_MODELS в agent_core/config.py: иначе прогон без
+      # снимка молча пойдёт другой моделью, чем показывает интерфейс, и
+      # отличить это можно будет только по тексту расшифровки.
+      WHISPER_MODEL: ${WHISPER_MODEL:-gigaam-v3-e2e-rnnt}
       WHISPER_COMPUTE_TYPE: ${WHISPER_COMPUTE_TYPE:-int8}
       # Диаризация локальная. Токен HF нужен и для self-host: веса закрыты
       # принятием условий, без токена загрузка вернёт 401.
@@ -180,6 +205,18 @@ services:
       S3_BUCKET: ${S3_BUCKET:-}
       S3_ACCESS_KEY: ${S3_ACCESS_KEY:-}
       S3_SECRET_KEY: ${S3_SECRET_KEY:-}
+      # ─── Трассировка ────────────────────────────────────────────────────
+      # Все три со значением по умолчанию «пусто», и это не небрежность:
+      # agent_core.tracing включается только при всех трёх заполненных, а
+      # обязательные переменные (`:?`) сделали бы наблюдение условием запуска
+      # продукта. Разработчик без LangFuse не должен получать отказ compose.
+      LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:-}
+      LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY:-}
+      LANGFUSE_BASE_URL: ${LANGFUSE_BASE_URL:-}
+      # Разделяет трассы боевого сервера и локальных прогонов в одном
+      # проекте. Имя переменной — то, что читает сам SDK: своё завести
+      # значило бы иметь два источника правды и разойтись с документацией.
+      LANGFUSE_TRACING_ENVIRONMENT: ${LANGFUSE_TRACING_ENVIRONMENT:-production}
     volumes:
       # Кэш весов Whisper/pyannote между перезапусками — модели тяжёлые,
       # качать их заново на каждый up слишком дорого. Путь в домашнем каталоге

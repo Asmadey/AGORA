@@ -3,6 +3,12 @@
 import { useEffect, useState } from "react";
 import { FileText, Info, Loader2 } from "lucide-react";
 import { FileChip } from "@/components/agora/FileChip";
+import {
+  CONTEXT_ACCEPT,
+  CONTEXT_LIMIT_CHARS,
+  contextFileError,
+  normalizeContext,
+} from "@/lib/context-file";
 
 import {
   AGE_GROUPS,
@@ -45,6 +51,20 @@ interface Grounding {
   ungroundedDimensions: string[];
 }
 
+/**
+ * Датасет корпуса — то, на чём заземляется аудитория.
+ *
+ * Датасетов бывает несколько: исследование про сериалы и исследование про
+ * рекламу опираются на разные выборки респондентов, и считать доли по чужим
+ * значило бы заземлить персон на посторонних людей.
+ */
+interface CorpusDatasetSummary {
+  id: string;
+  name: string;
+  description: string | null;
+  recordsCount: number;
+}
+
 interface PersonaSetSummary {
   id: string;
   name: string;
@@ -52,6 +72,14 @@ interface PersonaSetSummary {
   seed: number | null;
   createdAt: string;
   personaCount: number;
+  status: "generating" | "ready" | "failed";
+  generatedCount: number;
+  error: string | null;
+  /**
+   * Критерии, по которым набор собран. Нужны резюме визарда: без них оно
+   * показывало прочерк вместо возраста и географии выбранного набора.
+   */
+  generationConfig?: Record<string, unknown>;
 }
 
 export interface AudienceStepProps {
@@ -66,10 +94,22 @@ export interface AudienceStepProps {
    * подставить туда что-то приблизительное значило бы назвать пользователю
    * стоимость прогона наугад.
    */
-  onPersonaSetChange: (id: string | null, size?: number) => void;
+  /**
+   * Выбран набор персон.
+   *
+   * Третьим аргументом едут КРИТЕРИИ, по которым набор собран
+   * (`persona_sets.generation_config`). Без них резюме визарда показывало
+   * прочерк вместо возраста и географии: критерии шага «Аудитория» к готовому
+   * набору не относятся, а его собственные никто наверх не передавал.
+   */
+  onPersonaSetChange: (
+    id: string | null,
+    size?: number,
+    config?: Record<string, unknown>,
+  ) => void;
   /** Приложенный файл контекста: имя и размер для плашки. */
-  contextFile: { name: string; size: number } | null;
-  onContextFileChange: (file: { name: string; size: number } | null) => void;
+  contextFile: { name: string; size: number; text: string } | null;
+  onContextFileChange: (file: { name: string; size: number; text: string } | null) => void;
 }
 
 function toggle<T extends string>(list: T[], value: T): T[] {
@@ -114,24 +154,49 @@ export function AudienceStep({
 }: AudienceStepProps) {
   const [isGenerating, setIsGenerating] = useState(false);
   const [genError, setGenError] = useState<string | null>(null);
+  /** Претензия к приложенному файлу. Держится здесь: она про поле, а не про визард. */
+  const [contextError, setContextError] = useState<string | null>(null);
   const [generated, setGenerated] = useState<GenerationOutcome | null>(null);
   const [grounding, setGrounding] = useState<Grounding | null>(null);
   const [sets, setSets] = useState<PersonaSetSummary[] | null>(null);
+  /**
+   * Датасеты корпуса и выбранный. Слепок выбранного снимается при создании
+   * аудитории — именно он потом определяет, по каким долям сэмплируются персоны.
+   */
+  const [datasets, setDatasets] = useState<CorpusDatasetSummary[] | null>(null);
+  const [datasetId, setDatasetId] = useState<string | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
 
   const reuse = personaSetId !== null;
+
+  const refreshSets = async () => {
+    const r = await fetch("/api/persona-sets");
+    if (!r.ok) return;
+    const data = (await r.json()) as { personaSets: PersonaSetSummary[] };
+    setSets(data.personaSets);
+  };
 
   useEffect(() => {
     let alive = true;
     void (async () => {
       try {
-        const [g, s] = await Promise.all([
+        const [g, s, c] = await Promise.all([
           fetch("/api/audience").then((r) => (r.ok ? r.json() : null)),
           fetch("/api/persona-sets").then((r) => (r.ok ? r.json() : null)),
+          fetch("/api/corpus").then((r) => (r.ok ? r.json() : null)),
         ]);
         if (!alive) return;
         if (g) setGrounding(g as Grounding);
         if (s) setSets((s as { personaSets: PersonaSetSummary[] }).personaSets);
+        if (c) {
+          const list = (c as { datasets: CorpusDatasetSummary[] }).datasets ?? [];
+          setDatasets(list);
+          // Единственный датасет выбирается сам: заставлять выбирать из одного
+          // значит просить подтвердить очевидное. Из нескольких — выбор
+          // обязателен, и маршрут это требует: заземлить аудиторию на выборку,
+          // которой не просили, хуже, чем отказать.
+          if (list.length === 1) setDatasetId(list[0].id);
+        }
       } catch (e) {
         // Отказ загрузки не должен ломать шаг: критерии выбираются и без пометок,
         // просто без подсказки о заземлении. Но молчать нельзя — иначе
@@ -143,6 +208,21 @@ export function AudienceStep({
       alive = false;
     };
   }, []);
+
+  /**
+   * Пока хоть один набор наполняется — опрашиваем список.
+   *
+   * Опрос, а не SSE: канал прогресса привязан к строке `tasks` (и проверка
+   * владения там же), а набор персон — не прогон. Заводить второй транспорт
+   * ради одного числа дороже, чем спросить список раз в две секунды: генерация
+   * идёт минуты, и запрос на этом фоне ничего не стоит.
+   */
+  const generating = (sets ?? []).some((s) => s.status === "generating");
+  useEffect(() => {
+    if (!generating) return;
+    const timer = setInterval(() => void refreshSets(), 2000);
+    return () => clearInterval(timer);
+  }, [generating]);
 
   const set = (patch: Partial<AudienceCriteria>) => {
     // Правка критериев обесценивает ранее созданный набор: показывать «готово
@@ -176,20 +256,26 @@ export function AudienceStep({
         // Тело плоское: parseAudienceChoice читает size/ageGroups/geos/genders
         // с верхнего уровня и различает ветки по наличию personaSetId, а не по
         // полю-дискриминатору.
-        body: JSON.stringify(criteria),
+        body: JSON.stringify({ ...criteria, datasetId }),
       });
       const data = (await res.json()) as Record<string, unknown>;
       if (!res.ok) {
         throw new Error((data.error as string) ?? `генерация не удалась (${res.status})`);
       }
-      const outcome: GenerationOutcome = {
-        personaSetId: data.personaSetId as string,
-        size: data.size as number,
-        enrichment: data.enrichment as GenerationOutcome["enrichment"],
-      };
-      setGenerated(outcome);
-      // Набор сохранён — запуск (#11) заберёт его по id.
-      onPersonaSetChange(outcome.personaSetId, outcome.size);
+
+      // Набор заведён, персон в нём ещё нет: их пишет воркер. Переключаемся на
+      // вкладку с существующими наборами — там видно, как он наполняется.
+      // Раньше здесь ждали конца генерации, и на шестидесяти персонах маршрут
+      // просто отваливался по таймауту, теряя всё написанное.
+      const newId = data.personaSetId as string;
+      // Только что созданный набор собран по критериям этого шага — их и
+      // передаём: резюме обязано показать состав, а не прочерк.
+      onPersonaSetChange(newId, 0, {
+        age_groups: criteria.ageGroups,
+        geos: criteria.geos,
+        genders: criteria.genders,
+      });
+      await refreshSets();
     } catch (e) {
       setGenError((e as Error).message);
     } finally {
@@ -210,7 +296,13 @@ export function AudienceStep({
           Создать аудиторию
         </button>
         <button
-          onClick={() => onPersonaSetChange(sets?.[0]?.id ?? null, sets?.[0]?.personaCount)}
+          onClick={() =>
+            onPersonaSetChange(
+              sets?.[0]?.id ?? null,
+              sets?.[0]?.personaCount,
+              sets?.[0]?.generationConfig,
+            )
+          }
           disabled={!sets || sets.length === 0}
           className={cn(
             "flex-1 rounded-md border p-3 text-sm transition-colors disabled:opacity-40",
@@ -246,20 +338,44 @@ export function AudienceStep({
             {(sets ?? []).map((s) => (
               <button
                 key={s.id}
-                onClick={() => onPersonaSetChange(s.id, s.personaCount)}
+                onClick={() => onPersonaSetChange(s.id, s.personaCount, s.generationConfig)}
+                // Набор в работе выбрать нельзя: запуск на неполной аудитории
+                // дал бы отчёт по случайной её части, и понять это было бы
+                // неоткуда — размер в резюме показал бы заказанное число.
+                disabled={s.status === "generating"}
                 className={cn(
-                  "w-full rounded-lg border p-4 text-left transition-colors",
+                  "flex w-full items-center gap-3 rounded-lg border p-4 text-left transition-colors",
                   personaSetId === s.id
                     ? "border-ink bg-secondary"
                     : "border-hairline hover:bg-secondary",
+                  s.status === "generating" && "cursor-wait",
+                  s.status === "failed" && "border-danger/40",
                 )}
               >
-                <p className="text-sm font-medium">{s.name}</p>
-                <p className="mt-1 text-xs text-slate">
-                  {s.personaCount} персон
-                  {s.seed !== null && ` · seed ${s.seed}`} ·{" "}
-                  {new Date(s.createdAt).toLocaleDateString("ru-RU")}
-                </p>
+                <span className="min-w-0 flex-1">
+                  <span className="block text-sm font-medium">{s.name}</span>
+                  <span className="mt-1 block text-xs text-slate">
+                    {s.status === "generating" ? (
+                      // Числами, а не долей: «60%» одинаково выглядит на пяти
+                      // персонах и на пятистах, а ждать их надо по-разному.
+                      <>Создаётся: {s.generatedCount} из {s.size}</>
+                    ) : s.status === "failed" ? (
+                      <span className="text-danger">
+                        Генерация не удалась{s.error ? `: ${s.error}` : ""}
+                      </span>
+                    ) : (
+                      <>
+                        {s.personaCount} персон
+                        {s.seed !== null && ` · seed ${s.seed}`} ·{" "}
+                        {new Date(s.createdAt).toLocaleDateString("ru-RU")}
+                      </>
+                    )}
+                  </span>
+                </span>
+
+                {s.status === "generating" && (
+                  <Loader2 className="h-4 w-4 shrink-0 animate-spin text-slate" />
+                )}
               </button>
             ))}
           </div>
@@ -380,36 +496,108 @@ export function AudienceStep({
               Он не переопределяет распределения и калибровку баллов: заземление на
               корпус остаётся главным.
             </p>
+            <p className="mt-1 text-xs leading-relaxed text-slate">
+              Только <strong>.txt</strong> и <strong>.md</strong>, не длиннее{" "}
+              {CONTEXT_LIMIT_CHARS} символов. Текст попадает в системный промпт каждой
+              персоны и оплачивается на каждом вызове — поэтому это заметка, а не документ.
+            </p>
             {/* Как и у ролика: пока файла нет — зона выбора, после — плашка с
                 именем, весом и крестиком. Прежде здесь менялась только подпись
                 внутри той же рамки, и снять уже приложенный файл было нечем. */}
             {contextFile ? (
-              <FileChip
-                className="mt-3"
-                name={contextFile.name}
-                size={contextFile.size}
-                onRemove={() => onContextFileChange(null)}
-              />
+              <>
+                <FileChip
+                  className="mt-3"
+                  name={contextFile.name}
+                  size={contextFile.size}
+                  onRemove={() => {
+                    setContextError(null);
+                    onContextFileChange(null);
+                  }}
+                />
+                <p className="mt-1.5 text-xs text-slate">
+                  {contextFile.text.length} символов из {CONTEXT_LIMIT_CHARS} — прочитаны и
+                  уйдут в промпт персон.
+                </p>
+              </>
             ) : (
               <label className="mt-3 flex cursor-pointer items-center gap-3 rounded-lg border border-dashed border-hairline-strong px-4 py-3 transition-colors hover:border-ink/40 hover:bg-surface">
                 <FileText className="h-4 w-4 text-slate" />
-                <span className="text-sm">Приложить файл (pdf, docx, md, xlsx)</span>
+                <span className="text-sm">Приложить файл (.txt, .md)</span>
                 <input
                   type="file"
+                  accept={CONTEXT_ACCEPT}
                   className="hidden"
-                  onChange={(e) => {
+                  onChange={async (e) => {
                     const f = e.target.files?.[0];
-                    onContextFileChange(f ? { name: f.name, size: f.size } : null);
+                    // Значение поля сбрасывается сразу: иначе повторный выбор
+                    // того же файла после ошибки не вызывает onChange вовсе.
+                    e.target.value = "";
+                    setContextError(null);
+                    if (!f) return;
+                    const text = await f.text();
+                    const problem = contextFileError(f.name, text);
+                    if (problem) {
+                      setContextError(problem);
+                      return;
+                    }
+                    onContextFileChange({
+                      name: f.name,
+                      size: f.size,
+                      text: normalizeContext(text),
+                    });
                   }}
                 />
               </label>
             )}
+            {contextError && (
+              <p className="mt-2 rounded-md border border-danger/40 bg-danger/5 p-2.5 text-xs text-danger">
+                {contextError}
+              </p>
+            )}
           </div>
+
+          {/* Датасет: на чём заземлять.
+              Стоит вплотную к кнопке, а не в начале формы, потому что отвечает
+              на последний вопрос перед оплатой генерации — «по какому корпусу».
+              Слепок выбранного снимается в момент нажатия и живёт на наборе:
+              правка корпуса после этого прежнюю аудиторию не меняет. */}
+          {datasets !== null && datasets.length > 0 && (
+            <div className="border-t border-hairline pt-6">
+              <label className="block text-sm font-medium">Датасет</label>
+              <p className="mt-0.5 text-xs text-slate">
+                Датасет, по долям которого сэмплируются персоны. Слепок снимается
+                сейчас — правка корпуса позже эту аудиторию не изменит
+              </p>
+              <select
+                value={datasetId ?? ""}
+                onChange={(e) => setDatasetId(e.target.value || null)}
+                className="mt-3 w-full rounded-md border border-hairline bg-background px-3 py-2 text-sm"
+              >
+                {datasets.length > 1 && <option value="">Выберите датасет</option>}
+                {datasets.map((d) => (
+                  <option key={d.id} value={d.id}>
+                    {d.name} — {d.recordsCount} записей
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          {datasets !== null && datasets.length === 0 && (
+            // Пустой раздел корпуса — не повод молчать: генерация в этом случае
+            // пойдёт по файлу из образа воркера, и знать об этом надо заранее.
+            <p className="border-t border-hairline pt-6 text-xs text-slate">
+              Датасет в базе пуст: персоны будут собраны по файлу из образа
+              воркера, и версия корпуса у этой аудитории останется неизвестной.
+              Заполнить — раздел «Датасет».
+            </p>
+          )}
 
           <div className="border-t border-hairline pt-6">
             <button
               onClick={generate}
-              disabled={isGenerating}
+              disabled={isGenerating || (datasets !== null && datasets.length > 1 && !datasetId)}
               className="flex w-full items-center justify-center gap-2 rounded-md bg-foreground px-4 py-3 text-sm font-medium text-background transition-opacity hover:opacity-90 disabled:opacity-40"
             >
               {isGenerating && <Loader2 className="h-4 w-4 animate-spin" />}

@@ -32,6 +32,7 @@ from typing import Any
 
 from langgraph.graph import END, START, StateGraph
 
+from .. import tracing
 from .progress import ProgressWriter
 from .state import PipelineState
 
@@ -132,18 +133,30 @@ def _traced(
 
         if progress is not None:
             progress.emit(name, "RUNNING")
-        try:
-            update = fn(state) or {}
-        except RunCancelled:
-            # Не отказ — наверх без пометки FAILED.
-            if progress is not None:
-                progress.emit(name, "CANCELLED")
-            raise
-        except Exception as e:  # noqa: BLE001 — причина обязана дойти до пользователя
-            reason = f"{type(e).__name__}: {e}"
-            if progress is not None:
-                progress.fail(name, reason)
-            raise
+
+        # Спан узла. Здесь, а не в каждом узле по отдельности: узлов
+        # тринадцать, и обёртка — единственное место, через которое проходят
+        # все. Спан открывается ПОСЛЕ проверки отмены — отменённый узел не
+        # начинался, и показывать его в трассе значило бы показывать работу,
+        # которой не было.
+        with tracing.stage(
+            name,
+            task_id=str(state.get("task_id") or ""),
+            tenant_id=str(state.get("tenant_id") or ""),
+        ):
+            try:
+                update = fn(state) or {}
+            except RunCancelled:
+                # Не отказ — наверх без пометки FAILED.
+                if progress is not None:
+                    progress.emit(name, "CANCELLED")
+                raise
+            except Exception as e:  # noqa: BLE001 — причина обязана дойти до пользователя
+                reason = f"{type(e).__name__}: {e}"
+                if progress is not None:
+                    progress.fail(name, reason)
+                raise
+
         if progress is not None:
             progress.emit(name, "DONE")
         return update
@@ -188,10 +201,19 @@ def build_graph(
     graph.add_edge("extract_audio", "detect_speech")
 
     # Параллельно: распознавание и диаризация по одним и тем же участкам речи.
-    graph.add_edge("detect_speech", "transcribe")
-    graph.add_edge("detect_speech", "diarize")
-    graph.add_edge("transcribe", "merge_transcript")
-    graph.add_edge("diarize", "merge_transcript")
+    # Расшифровка и диаризация — один узел, а не две ветки.
+    #
+    # Ветки были объявлены параллельными по PRD §8 и исполнялись по очереди:
+    # синхронный Pregel проходит суперступень узел за узлом, и замер показал
+    # 245 с + 228 с подряд при гейте в 600 с на весь прогон. Параллелизм был
+    # структурным (разные каналы состояния, чтобы LangGraph не отверг
+    # одновременную запись), но не временным.
+    #
+    # Внутри узла обе работы разведены по потокам явно — см.
+    # nodes.transcribe_and_diarize, там же о том, почему не асинхронный запуск
+    # графа.
+    graph.add_edge("detect_speech", "transcribe_and_diarize")
+    graph.add_edge("transcribe_and_diarize", "merge_transcript")
 
     graph.add_conditional_edges(
         "merge_transcript",

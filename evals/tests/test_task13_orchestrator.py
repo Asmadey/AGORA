@@ -79,10 +79,19 @@ PRD8_FIELDS = (
 )
 
 # Узлы конвейера по графу PRD §8, в объявленном порядке.
+#: Узлы конвейера PRD §8.
+#:
+#: `transcribe` и `diarize` — один узел `transcribe_and_diarize`, а не два.
+#: Ветки были объявлены параллельными по PRD и исполнялись по очереди: замер
+#: показал 245 с + 228 с подряд при гейте в 600 с на весь прогон. Параллелизм
+#: был структурным (разные каналы состояния, чтобы LangGraph не отверг
+#: одновременную запись), но не временным — синхронный Pregel проходит
+#: суперступень узел за узлом. Внутри узла обе работы разведены по потокам.
 PRD8_NODES = (
-    "probe_and_normalize", "extract_audio", "detect_speech", "transcribe",
-    "diarize", "merge_transcript", "segment_video", "sample_frames",
-    "analyze_chunks", "stitch", "pack", "evaluate_personas", "qa", "analytics",
+    "probe_and_normalize", "extract_audio", "detect_speech",
+    "transcribe_and_diarize", "merge_transcript", "segment_video",
+    "sample_frames", "analyze_chunks", "stitch", "pack", "evaluate_personas",
+    "qa", "analytics",
 )
 
 print("\n#13 — Оркестратор LangGraph\n")
