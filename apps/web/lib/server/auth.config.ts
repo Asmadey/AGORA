@@ -19,11 +19,11 @@ import type { NextAuthConfig } from "next-auth";
  * документация обязана отвечать без сессии, а открыть её внутри `/api` значило
  * бы открыть вместе с ней все маршруты арендатора.
  */
-// `/s` — публичная ссылка на отчёт (#29). Она и заведена ради доступа БЕЗ
+// `/share` — публичная ссылка на отчёт (#29). Она и заведена ради доступа БЕЗ
 // входа; ограничивает её не сессия, а токен: политика RLS сверяет
 // app.current_share_token_hash() и срок жизни, а роль agora_share не видит
 // ничего, кроме отчёта, на который ссылка выпущена.
-export const PUBLIC_PATHS = ["/login", "/api/auth", "/api/health", "/api-docs", "/s"] as const;
+export const PUBLIC_PATHS = ["/login", "/api/auth", "/api/health", "/api-docs", "/share"] as const;
 
 export function isPublicPath(pathname: string): boolean {
   return PUBLIC_PATHS.some((p) => pathname === p || pathname.startsWith(`${p}/`));

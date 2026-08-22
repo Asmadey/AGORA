@@ -1,5 +1,6 @@
 import { withTenant } from "@/lib/server/db";
 import { requireSession, toResponse } from "@/lib/server/guard";
+import { publicOrigin } from "@/lib/public-origin";
 import { shareUrl, ttlToExpiry, type Ttl } from "@/lib/share";
 import { hashToken, newToken } from "@/lib/server/share-token";
 
@@ -11,11 +12,12 @@ import { hashToken, newToken } from "@/lib/server/share-token";
  *          «показывают снова», а выпускают заново.
  * DELETE — отозвать все действующие ссылки на отчёт.
  *
- * ─── Почему адрес строится от заголовков запроса ──────────────────────────
- * Прежний диалог показывал `https://agora.studio/s/…` — домен, которого у
- * продукта нет. Продукт живёт на sslip.io по адресу сервера, и любая константа
- * здесь разойдётся с реальностью. `request.url` — то, по чему пользователь
- * пришёл сюда сам.
+ * ─── Откуда берётся адрес ─────────────────────────────────────────────────
+ * Из `AUTH_URL`, а при его отсутствии — из заголовков обратного прокси. НЕ из
+ * `request.url`: Next.js слушает 0.0.0.0:3000 внутри контейнера, и первая
+ * редакция выдавала ссылки вида `https://0.0.0.0:3000/…` — отправить такую
+ * нельзя никому. Заметить это по коду было нельзя: в разработке, где прокси
+ * нет, оба адреса совпадают. См. lib/public-origin.ts.
  */
 
 export const dynamic = "force-dynamic";
@@ -57,8 +59,28 @@ export async function POST(
       );
     });
 
+    const origin = publicOrigin({
+      authUrl: process.env.AUTH_URL,
+      forwardedHost: request.headers.get("x-forwarded-host"),
+      host: request.headers.get("host"),
+      forwardedProto: request.headers.get("x-forwarded-proto"),
+      requestUrl: request.url,
+    });
+    if (!origin) {
+      // Ссылка с недостижимым адресом бесполезна ровно так же, как её
+      // отсутствие, но выглядит рабочей. Отказ честнее.
+      return Response.json(
+        {
+          error:
+            "не удалось определить публичный адрес продукта: задайте AUTH_URL " +
+            "либо настройте заголовки обратного прокси",
+        },
+        { status: 500 },
+      );
+    }
+
     return Response.json({
-      url: shareUrl(new URL(request.url).origin, token),
+      url: shareUrl(origin, token),
       expiresAt: expiresAt?.toISOString() ?? null,
       scope,
     });

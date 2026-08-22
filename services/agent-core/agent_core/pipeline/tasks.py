@@ -30,9 +30,28 @@ from .state import STATUS_CANCELLED, STATUS_FAILED, STATUS_REPORT_READY, STATUS_
 
 
 def _valkey():
-    import redis
+    """
+    Клиент Valkey, переживающий длинный узел.
 
-    return redis.Redis.from_url(os.environ.get("VALKEY_URL", "redis://localhost:6379/0"))
+    Celery и этот код ходят в Valkey по РАЗНЫМ соединениям: настроить брокер и
+    забыть здесь значило бы починить половину отказов, а вторая половина
+    осталась бы и выглядела как «иногда падает».
+
+    Три настройки, и все три нужны — см. BROKER_TRANSPORT_OPTIONS в celery_app:
+    keepalive держит соединение через сетевое оборудование, проверка здоровья
+    переоткрывает мёртвое до записи, повтор закрывает окно между ними.
+    """
+    import redis
+    from redis.backoff import ExponentialBackoff
+    from redis.retry import Retry
+
+    return redis.Redis.from_url(
+        os.environ.get("VALKEY_URL", "redis://localhost:6379/0"),
+        socket_keepalive=True,
+        health_check_interval=30,
+        retry=Retry(ExponentialBackoff(base=0.1, cap=2.0), retries=3),
+        retry_on_error=[redis.exceptions.ConnectionError, redis.exceptions.TimeoutError],
+    )
 
 
 def _set_task_status(task_id: str, tenant_id: str, status: str, error: str | None = None) -> None:
