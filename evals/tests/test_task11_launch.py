@@ -153,7 +153,9 @@ check(
 print("\n== Поведенческий уровень ==")
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from _harness import ApiClient, db_dsn, login, verdict  # noqa: E402
+from _harness import (  # noqa: E402
+    ApiClient, db_dsn, drop_task, login, upload_fixture, verdict,
+)
 
 BEHAVIOURAL = (
     "запуск создаёт задачу с непустым prompts_snapshot",
@@ -174,13 +176,30 @@ else:
         for n in BEHAVIOURAL:
             skip(n, why)
     else:
+        # Ролик заливается настоящим путём: presign → PUT → complete.
+        #
+        # Здесь стояло `videoRef: "s3://fixtures/short_60s.mp4"` — строка,
+        # которую маршрут принимал (проверка была «строка либо отсутствует»),
+        # а воркер отвергал в первом же узле: FileNotFoundError. Тест при этом
+        # был зелёным — он проверял снимок промптов, а не судьбу прогона, — и
+        # оставлял на боевом сервере упавшее исследование, неотличимое в списке
+        # от настоящего.
+        video_ref, why_upload = upload_fixture(
+            client, Path(__file__).resolve().parents[1] / "fixtures" / "short_60s.mp4"
+        )
+        created: list[str] = []
         seed = 20260804
         payload = {
             "mode": "short",
-            "videoRef": "s3://fixtures/short_60s.mp4",
+            "videoRef": video_ref,
             "replicationCount": 3,
             "seed": seed,
         }
+
+        if video_ref is None:
+            for n in BEHAVIOURAL:
+                skip(n, f"ролик не залит: {why_upload}")
+            raise SystemExit(verdict(results, "#11 Шаг Резюме + запуск"))
 
         code, body = client.call("/api/tasks", "POST", json.dumps(payload).encode())
         try:
@@ -222,6 +241,8 @@ else:
                 third = json.loads(body3)
             except Exception:  # noqa: BLE001
                 third = {}
+            if third.get("id"):
+                created.append(str(third["id"]))
             check("другой seed создаёт новую задачу",
                   code3 in (200, 201) and third.get("id") not in (None, first.get("id")),
                   f"код {code3}, новый id: {third.get('id') != first.get('id')}")
@@ -239,7 +260,7 @@ else:
                 skip("дефолт replication_count подставляется из настроек",
                      f"настройки не прочитаны (код {scode})")
             else:
-                no_rc = {"mode": "short", "videoRef": "s3://fixtures/short_60s.mp4",
+                no_rc = {"mode": "short", "videoRef": video_ref,
                          "seed": int(uuid.uuid4().int % 10**8)}
                 code4, body4 = client.call("/api/tasks", "POST", json.dumps(no_rc).encode())
                 try:
@@ -273,5 +294,17 @@ else:
         check("колонка idempotency_key существует в базе", False,
               f"{type(e).__name__}: {str(e)[:90]}")
 
+
+# ── Уборка ───────────────────────────────────────────────────────────────────
+#
+# Поведенческие проверки создают НАСТОЯЩИЕ прогоны в среде пользователя: в
+# списке исследований они стоят рядом с рабочими, и отличить их можно только по
+# автору. К 28.08.2026 их накопилось десять, шесть упавших, и владелец принял
+# их за свои — дважды.
+#
+# Уборка идёт после вердикта по существу и на него не влияет: тест проверяет
+# запуск, а не удаление.
+for _task_id in locals().get("created", []):
+    drop_task(client, _task_id)
 
 sys.exit(verdict(results, "#11"))

@@ -80,7 +80,7 @@ else:
         import urllib.parse
         import http.cookiejar
 
-        from _harness import login  # noqa: E402
+        from _harness import login, upload_fixture  # noqa: E402
 
         # Прежде вход собирался здесь вручную, с адресом и паролем владельца в
         # исходнике. Пароль в репозитории — §7 CLAUDE.md; secret_scan его не
@@ -207,7 +207,22 @@ else:
         # настроек В МОМЕНТ постановки и дальше не меняется. Без этого прогон,
         # простоявший в очереди, пока команда правила настройки, прошёл бы часть
         # персон один раз, а часть — три, и расхождение списали бы на модель.
-        launch = json.dumps({"mode": "short", "seed": 27_000 + int(time.time()) % 1000}).encode()
+        # Ролик заливается настоящим путём. Прежде запуск шёл ВООБЩЕ без
+        # `videoRef`: маршрут это принимал, задача вставала в очередь, и воркер
+        # падал с «ValueError: video_ref пуст». Проверка снимка настроек при
+        # этом проходила — ей хватало ответа маршрута, — а на боевом сервере
+        # оставалось упавшее исследование.
+        video_ref, why_upload = upload_fixture(
+            client, Path(__file__).resolve().parents[1] / "fixtures" / "short_60s.mp4"
+        )
+        if video_ref is None:
+            skip("снимок настроек в задаче при постановке", f"ролик не залит: {why_upload}")
+            skip("снимок настроек не меняется правкой настроек после постановки",
+                 f"ролик не залит: {why_upload}")
+            raise SystemExit(verdict(results, "#27 Настройки"))
+
+        launch = json.dumps({"mode": "short", "videoRef": video_ref,
+                             "seed": 27_000 + int(time.time()) % 1000}).encode()
         req = urllib.request.Request(f"{base_url}/api/tasks", data=launch, method="POST")
         req.add_header("Content-Type", "application/json")
         req.add_header("Cookie", cookies)

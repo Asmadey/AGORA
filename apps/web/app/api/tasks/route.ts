@@ -1,4 +1,5 @@
 import { CONTEXT_LIMIT_CHARS, normalizeContext } from "@/lib/context-file";
+import { checkVideoRef } from "@/lib/launch-contract";
 import { normalizeTitle } from "@/lib/research-title";
 import { DEFAULT_SETTINGS } from "@/lib/settings";
 import { withTenant } from "@/lib/server/db";
@@ -73,9 +74,20 @@ export async function POST(request: Request) {
         );
       }
     }
-    if (body.videoRef !== undefined && typeof body.videoRef !== "string") {
-      errors.push("videoRef: строка либо отсутствует");
-    }
+    // Материал проверяется ЗДЕСЬ, а не только в браузере, и проверяется по
+    // существу, а не «строка либо отсутствует».
+    //
+    // Прежняя формулировка пропускала и пустой ключ, и заведомо негодный:
+    // задача создавалась, вставала в очередь, воркер её забирал и падал в
+    // первом же узле — `ValueError: video_ref пуст` или `FileNotFoundError`.
+    // Пользователь видел появившееся исследование, через полминуты ставшее
+    // FAILED, и причина лежала в логе воркера, а не в ответе на его запрос.
+    //
+    // Это то же рассуждение, что двадцатью строками ниже про пустой набор
+    // персон: поздний дорогой отказ превращается в немедленный 400 с
+    // названной причиной. К материалу его просто не применили.
+    const videoRefError = checkVideoRef(body.videoRef, tenantId);
+    if (videoRefError) errors.push(videoRefError);
     if (body.sourceName !== undefined && typeof body.sourceName !== "string") {
       errors.push("sourceName: строка либо отсутствует");
     }
