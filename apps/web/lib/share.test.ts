@@ -54,9 +54,9 @@ test("хеш совпадает с тем, что считает Postgres", () =
 test("адрес строится от текущего источника", () => {
   assert.equal(
     shareUrl("https://agora.185-154-194-125.sslip.io", "abc"),
-    "https://agora.185-154-194-125.sslip.io/s/abc",
+    "https://agora.185-154-194-125.sslip.io/share/abc",
   );
-  assert.equal(shareUrl("http://localhost:3000/", "abc"), "http://localhost:3000/s/abc");
+  assert.equal(shareUrl("http://localhost:3000/", "abc"), "http://localhost:3000/share/abc");
 });
 
 test("выдуманного домена в коде не осталось", async () => {

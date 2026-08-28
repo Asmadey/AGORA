@@ -170,6 +170,15 @@ class TextClient(Protocol):
     def complete(self, *, prompt: str) -> str: ...
 
 
+#: Как называются вызовы в трассе. Словарём, а не строкой по месту: имена читает
+#: человек, разбирающий счёт за прогон, и «обогащение» вместо «проверки» уводит
+#: его не туда.
+OBSERVATION_NAMES = {
+    "persona_enrich": "enrich-persona",
+    "persona_validation": "validate-persona",
+}
+
+
 class QwenTextClient:
     """
     Боевой клиент: OpenAI-совместимый endpoint TimeWeb (Decision Log #1).
@@ -222,11 +231,20 @@ class QwenTextClient:
         if self.max_tokens is not None:
             extra["max_tokens"] = self.max_tokens
 
+        # Роль клиента задаёт и имя наблюдения, и роль потолка токенов.
+        #
+        # Прежде имя было зашито строкой «enrich-persona» для обоих режимов, и
+        # в трассе набора из 60 персон оказалось 198 «обогащений»: на деле
+        # обогащений там 60, около сотни — проверки связности, сорок —
+        # повторные обогащения пересозданных. По такой трассе нельзя ответить,
+        # на что ушли токены, а стоят эти вызовы по-разному.
+        role = "persona_validation" if self.response_schema else "persona_enrich"
+
         response = client.chat.completions.create(
             # Имя наблюдения в трассе. Без него интеграция назовёт
             # генерацию `OpenAI-generation` — одинаково для ответа
             # персоны, вердикта судьи и разбора кадра.
-            name="enrich-persona",
+            name=OBSERVATION_NAMES[role],
             model=self.model,
             messages=[{"role": "user", "content": prompt}],
             temperature=self.temperature,
@@ -234,13 +252,9 @@ class QwenTextClient:
             extra_body=self.config.extra_body("persona"),
             **extra,
         )
-        # Роль зависит от задачи клиента: со схемой он проверяет персон, без
-        # схемы — переписывает портрет. Обрыв по потолку важен в обоих случаях,
-        # но назвать его надо тем именем, под которым стоит потолок.
-        return content_of(
-            response,
-            role="persona_validation" if self.response_schema else "persona_enrich",
-        )
+        # Обрыв по потолку важен в обоих режимах, но назвать его надо тем
+        # именем, под которым стоит потолок.
+        return content_of(response, role=role)
 
 
 # ─── Результат ───────────────────────────────────────────────────────────────

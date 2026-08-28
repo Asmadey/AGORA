@@ -34,7 +34,7 @@ const TTL_HOURS: Record<Exclude<Ttl, "never">, number> = {
 };
 
 export function shareUrl(origin: string, token: string): string {
-  return `${origin.replace(/\/+$/, "")}/s/${token}`;
+  return `${origin.replace(/\/+$/, "")}/share/${token}`;
 }
 
 /**

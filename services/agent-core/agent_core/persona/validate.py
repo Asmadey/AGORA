@@ -96,15 +96,32 @@ class Verdict:
     #: Это НЕ то же самое, что «связна»: неизвестность обязана быть видна.
     checked: bool = True
     attempts: int = 1
+    #: Вердикт ПЕРВОЙ попытки, если персону пересоздавали. None — прошла сразу.
+    #:
+    #: Финальный вердикт описывает персону, которая лежит в наборе; первый —
+    #: ту, которой в наборе нет. Без него нельзя ответить, ЗА ЧТО бракуют: в
+    #: базу попадал вердикт уже прошедшей замены, а претензия, из-за которой
+    #: предыдущую выбросили, исчезала вместе с ней.
+    first: Verdict | None = None
 
     def to_json(self) -> dict[str, Any]:
-        return {
+        payload: dict[str, Any] = {
             "checked": self.checked,
             "consistent": self.consistent,
             "issues": self.issues,
             "confidence": self.confidence,
             "attempts": self.attempts,
         }
+        if self.first is not None:
+            # Без рекурсии вглубь: у первого вердикта своего «первого» нет и
+            # быть не может, а вложенность без дна раздувает строку в базе.
+            payload["initial"] = {
+                "checked": self.first.checked,
+                "consistent": self.first.consistent,
+                "issues": self.first.issues,
+                "confidence": self.first.confidence,
+            }
+        return payload
 
 
 def _parse(text: str) -> Verdict:
@@ -231,6 +248,10 @@ def validate_set(
             current, client=client, template=template, verbatim_pool=verbatim_pool
         )
         result.calls += 1
+        # Первая попытка запоминается до цикла замен: дальше `verdict`
+        # переприсваивается вердиктом замены, и претензия к исходной персоне
+        # иначе теряется вместе с самой персоной.
+        first = verdict
 
         while not verdict.consistent and attempt < max_attempts:
             replacement = regenerate(index, attempt)
@@ -245,6 +266,11 @@ def validate_set(
             result.regenerated += 1
 
         verdict.attempts = attempt
+        # Прикладываем первый вердикт только если персону действительно
+        # меняли: у прошедшей сразу «первый» и «финальный» — один и тот же, и
+        # дубль в базе отличить от настоящей отбраковки было бы нельзя.
+        if attempt > 1:
+            verdict.first = first
         if not verdict.consistent:
             result.failed += 1
 
