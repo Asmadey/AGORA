@@ -89,13 +89,23 @@ export interface ValidationResult {
  *
  * Проверки:
  * 1. name — непустая строка ≤ 200 символов
- * 2. questions — массив, ≥ 5 элементов
+ * 2. questions — массив, ≥ 1 элемента
  * 3. Каждый вопрос: id, label, type, scaleMin, scaleMax
  * 4. type — один из ALLOWED_QUESTION_TYPES
- * 5. Ровно 5 базовых критериев с уникальными baseKey из BASE_CRITERIA
- * 6. Базовые критерии — type=scale, scaleMin=1, scaleMax=10
+ * 5. baseKey не повторяется (сами базовые критерии — необязательны)
+ * 6. Базовый критерий, ЕСЛИ присутствует, — type=scale, scaleMin=1, scaleMax=10
  * 7. При type=scale: scaleMax > scaleMin
  * 8. baseKey — один из BASE_CRITERIA (если задан)
+ *
+ * ─── Почему базовые критерии перестали быть обязательными ──────────────
+ * Требование всех пяти делало непринимаемой анкету, в которой владелец снял
+ * «Музыку» — то есть запрещало спрашивать своё. Решение владельца: снимать
+ * можно любое их число, вплоть до всех.
+ *
+ * Терять при этом нечего, кроме сравнения с корпусом по снятому критерию, и
+ * это уже показано в конструкторе плашкой. Агрегатор к отсутствию готов:
+ * `_core_means` возвращает `None`, отчёт рисует «—». Ноль там не появится —
+ * а именно ноль был бы опасен, потому что попал бы в средние.
  */
 export function validateSurvey(doc: unknown): ValidationResult {
   const errors: string[] = [];
@@ -120,8 +130,12 @@ export function validateSurvey(doc: unknown): ValidationResult {
   }
 
   const questions = survey.questions;
-  if (questions.length < 5) {
-    errors.push(`questions: минимум 5 элементов, получено ${questions.length}`);
+  // Минимум — один вопрос, а не пять. Пятёрка стояла здесь потому, что пять
+  // базовых критериев считались обязательными; они больше не обязательны.
+  // Ноль остаётся отказом: анкета без вопросов означает прогон, в котором
+  // персону не о чем спрашивать, а стоит он столько же.
+  if (questions.length < 1) {
+    errors.push("questions: нужен хотя бы один вопрос");
   }
 
   // 3+4. Каждый вопрос
@@ -219,12 +233,20 @@ export function validateSurvey(doc: unknown): ValidationResult {
     }
   }
 
-  // 5. Все 5 базовых критериев присутствуют
-  for (const required of BASE_CRITERIA) {
-    if (!baseKeysFound.has(required)) {
-      errors.push(`questions: отсутствует базовый критерий «${required}»`);
-    }
-  }
+  // 5. Базовые критерии НЕОБЯЗАТЕЛЬНЫ — см. заголовок функции.
+  //
+  // Здесь стояло требование всех пяти, и оно делало анкету без «Музыки»
+  // непринимаемой базой. Требование снято по решению владельца: пользователь
+  // вправе спрашивать своё и не обязан спрашивать чужое.
+  //
+  // Что осталось от правила: базовый критерий, если он ЕСТЬ, обязан быть
+  // шкалой 1–10 и не может повторяться (проверки 6 и 8 выше). Иначе ключ
+  // `overall_impression` со шкалой 1–5 попал бы в те же средние, по которым
+  // считается сравнение с корпусом, и сдвинул бы их вдвое — молча.
+  //
+  // Цену снятия называет интерфейс, а не валидатор: конструктор показывает,
+  // сколько критериев снято и что сравнение с корпусом по ним отключено.
+  // Подпись — не запрет, и разница здесь существенная.
 
   return { valid: errors.length === 0, errors };
 }
@@ -235,7 +257,18 @@ let cachedSchema: unknown | null = null;
 
 export function getSurveySchema(): unknown {
   if (cachedSchema) return cachedSchema;
-  const path = resolve(process.cwd(), "packages/shared/schemas/survey.schema.json");
+  // Путь считается от этого модуля, а не от `process.cwd()`.
+  //
+  // От cwd он работал ровно при запуске из корня монорепо. У функции не было
+  // ни одного вызова — она экспортировалась «для CDD-тестов», которых не
+  // написали, — поэтому промах никогда не проявлялся. Первый же вызов из
+  // теста (cwd = apps/web) и из Next (cwd тоже apps/web) даёт ENOENT.
+  const path = resolve(
+    new URL("../..", import.meta.url).pathname,
+    "..",
+    "..",
+    "packages/shared/schemas/survey.schema.json",
+  );
   cachedSchema = JSON.parse(readFileSync(path, "utf-8"));
   return cachedSchema;
 }

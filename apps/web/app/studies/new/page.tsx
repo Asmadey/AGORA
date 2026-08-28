@@ -9,7 +9,9 @@ import { UploadProgress } from "@/components/agora/UploadProgress";
 import { putWithProgress, uploadPercent, type UploadState } from "@/lib/upload";
 import { cn } from "@/lib/utils";
 import { Chip } from "@/components/agora/Primitives";
-import { SurveyBuilder, BASE_QUESTIONS } from "@/components/agora/SurveyBuilder";
+import { BASE_QUESTIONS } from "@/components/agora/SurveyBuilder";
+import { SurveyPicker } from "@/components/agora/SurveyPicker";
+import { DRAFT_SURVEY_ID, draftSurveyName } from "@/lib/survey-sync";
 import { AudienceStep } from "@/components/agora/AudienceStep";
 import { ProjectPicker, type ProjectOption } from "@/components/agora/ProjectPicker";
 import { DEFAULT_CRITERIA, type AudienceCriteria } from "@/lib/audience";
@@ -93,6 +95,41 @@ export default function NewStudyPage() {
     setLaunching(true);
     setLaunchError(null);
     try {
+      // Анкета заводится ДО запуска, если её ещё нет в базе.
+      //
+      // Маршрут запуска берёт вопросы из таблицы `surveys` по идентификатору —
+      // передать сами вопросы телом нельзя. Поэтому первый прогон нового
+      // арендатора, у которого анкет ещё нет, обязан сначала создать её, иначе
+      // он ушёл бы с `surveyId: null`, то есть ровно с тем дефектом, который
+      // здесь чинится, и только в том случае, который никто не проверяет.
+      let launchSurveyId = surveyId;
+      if (!launchSurveyId || launchSurveyId === DRAFT_SURVEY_ID) {
+        const created = await fetch("/api/surveys", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name: draftSurveyName(title), questions }),
+        });
+        const payload = (await created.json().catch(() => ({}))) as {
+          id?: string;
+          error?: string;
+          details?: string[];
+        };
+        if (!created.ok || !payload.id) {
+          // Отказ здесь останавливает запуск, а не пропускает его без анкеты:
+          // молчаливое продолжение дало бы оплаченный прогон по чужим вопросам.
+          const details = Array.isArray(payload.details) ? payload.details : [];
+          setLaunchError(
+            `Не удалось сохранить анкету: ${
+              details.length ? details.join("; ") : (payload.error ?? `сервер ответил ${created.status}`)
+            }`,
+          );
+          setStep(2);
+          return;
+        }
+        launchSurveyId = payload.id;
+        setSurveyId(payload.id);
+      }
+
       const res = await fetch("/api/tasks", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -108,6 +145,9 @@ export default function NewStudyPage() {
           title: title.trim() || null,
           projectId,
           personaSetId,
+          // Анкета. Без этого поля маршрут отправлял воркеру `survey: null`, и
+          // ни один вопрос из конструктора не был задан ни одной персоне.
+          surveyId: launchSurveyId,
           replicationCount: replication,
           // Текст файла, а не имя: персонам нужен контекст, а не название.
           // Прежде наверх уезжали только имя и размер, и содержимое не
@@ -240,6 +280,18 @@ export default function NewStudyPage() {
   }
 
   const [questions, setQuestions] = useState<SurveyQuestion[]>(BASE_QUESTIONS);
+  /**
+   * Какая анкета уедет в прогон.
+   *
+   * Именно это поле и отсутствовало: маршрут запуска читает вопросы из таблицы
+   * `surveys` по `surveyId`, не получал его и отправлял воркеру `survey: null`.
+   * Воркер на `null` идёт по пяти базовым критериям — путь законный и
+   * описанный, — поэтому прогон без анкеты был неотличим от прогона с ней.
+   *
+   * `null` означает «шаг «Опрос» ещё не открывали»; выбор проставляет
+   * `SurveyPicker`, когда узнаёт, есть ли у арендатора анкеты.
+   */
+  const [surveyId, setSurveyId] = useState<string | null>(null);
 
   const clearVideo = () => {
     setVideoRef(null);
@@ -325,7 +377,7 @@ export default function NewStudyPage() {
     missing.push({
       step: 2,
       what: "Пустая анкета",
-      how: "Шаг «Опрос»: нужны хотя бы пять базовых критериев",
+      how: "Шаг «Опрос»: нужен хотя бы один вопрос",
     });
   }
 
@@ -467,7 +519,14 @@ export default function NewStudyPage() {
         )}
 
         {/* Шаг 3 — опрос */}
-        {step === 2 && <SurveyBuilder questions={questions} onChange={setQuestions} />}
+        {step === 2 && (
+          <SurveyPicker
+            surveyId={surveyId}
+            onSurveyIdChange={setSurveyId}
+            questions={questions}
+            onChange={setQuestions}
+          />
+        )}
 
         {/* Шаг 4 — резюме */}
         {step === 3 && (
@@ -555,10 +614,21 @@ export default function NewStudyPage() {
                 ["Доп. контекст", contextFile?.name ?? "не приложен"],
                 [
                   "Анкета",
-                  `${questions.length} вопросов` +
-                    (questions.length > BASE_QUESTIONS.length
-                      ? ` (${questions.length - BASE_QUESTIONS.length} своих)`
-                      : ""),
+                  // Своё считается по отсутствию `baseKey`, а не по разнице с
+                  // длиной базового набора. Пока базовые пять были
+                  // обязательными, разница совпадала со «своими»; теперь любой
+                  // из них можно снять, и вычитание начало врать — три своих
+                  // вопроса при двух снятых базовых давали «5 вопросов» без
+                  // единого упоминания, что три из них свои.
+                  (() => {
+                    const custom = questions.filter((q) => !q.baseKey).length;
+                    const base = questions.length - custom;
+                    const parts = [
+                      base > 0 ? `${base} базовых` : null,
+                      custom > 0 ? `${custom} своих` : null,
+                    ].filter(Boolean);
+                    return `${questions.length} — ${parts.join(", ")}`;
+                  })(),
                 ],
                 ["Название", title.trim() || videoName || "по имени файла"],
                 ["Перекрытие", `×${replication}`],
