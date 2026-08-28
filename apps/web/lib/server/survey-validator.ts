@@ -257,18 +257,26 @@ let cachedSchema: unknown | null = null;
 
 export function getSurveySchema(): unknown {
   if (cachedSchema) return cachedSchema;
-  // Путь считается от этого модуля, а не от `process.cwd()`.
+
+  // Схема лежит в корне монорепо, а `process.cwd()` бывает и корнем, и
+  // `apps/web` — зависит от того, чем запущено. Прежняя редакция знала только
+  // первый случай и падала во втором; вызовов у функции не было ни одного, и
+  // промах не проявлялся.
   //
-  // От cwd он работал ровно при запуске из корня монорепо. У функции не было
-  // ни одного вызова — она экспортировалась «для CDD-тестов», которых не
-  // написали, — поэтому промах никогда не проявлялся. Первый же вызов из
-  // теста (cwd = apps/web) и из Next (cwd тоже apps/web) даёт ENOENT.
-  const path = resolve(
-    new URL("../..", import.meta.url).pathname,
-    "..",
-    "..",
-    "packages/shared/schemas/survey.schema.json",
-  );
-  cachedSchema = JSON.parse(readFileSync(path, "utf-8"));
-  return cachedSchema;
+  // Проверяются оба варианта, а не собирается путь от `import.meta.url`:
+  // webpack разбирает `new URL(…, import.meta.url)` как запрос модуля и
+  // валит сборку с «Can't resolve '../..'».
+  const RELATIVE = "packages/shared/schemas/survey.schema.json";
+  const candidates = [resolve(process.cwd(), RELATIVE), resolve(process.cwd(), "..", "..", RELATIVE)];
+
+  for (const path of candidates) {
+    try {
+      cachedSchema = JSON.parse(readFileSync(path, "utf-8"));
+      return cachedSchema;
+    } catch {
+      // Следующий кандидат. Молчим только про ненайденный файл — разобрать
+      // найденный и битый нельзя, и об этом узнает последний throw.
+    }
+  }
+  throw new Error(`survey.schema.json не найден: искали ${candidates.join(", ")}`);
 }
