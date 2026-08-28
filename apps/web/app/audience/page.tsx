@@ -7,7 +7,6 @@ import { EmptyState } from "@/components/agora/States";
 import { withTenant } from "@/lib/server/db";
 import { requireSession } from "@/lib/server/guard";
 import { listPersonaSets } from "@/lib/server/personas";
-import { AudienceBuilder } from "./AudienceBuilder";
 
 /**
  * Наборы аудитории.
@@ -21,6 +20,16 @@ import { AudienceBuilder } from "./AudienceBuilder";
  * Число персон берётся из `persona_count`, а не из заявленного размера:
  * набор, у которого заказано 50, а сохранено 12, — это отказ генерации на
  * половине, и увидеть его надо здесь, а не в отчёте по прогону.
+ *
+ * ─── Почему здесь нет конструктора ────────────────────────────────────────
+ * Был, и его убрали по решению владельца (26.08.2026). Набор заводится там,
+ * где он нужен, — шагом «Аудитория» в визарде запуска. Два входа в одну
+ * генерацию означали два места, где она настраивается, и расхождение между ними
+ * замечали бы по составу набора, а не по интерфейсу.
+ *
+ * Маршрут `POST /api/audience` при этом остался: его зовёт визард. Убрать его
+ * вместе с кнопкой значило бы сломать запуск исследования — тот самый риск,
+ * который владелец назвал, и который держит lib/audience-callers.test.ts.
  */
 
 export const dynamic = "force-dynamic";
@@ -37,13 +46,11 @@ export default async function AudiencePage() {
       />
 
       <div className="space-y-6 p-8">
-        <AudienceBuilder />
-
         {sets.length === 0 ? (
           <EmptyState
             icon={<UsersRound className="h-5 w-5" />}
             title="Наборов пока нет"
-            description="Набор персон нужен для запуска исследования. Сгенерируйте первый — или создайте его прямо в визарде запуска, шагом «Аудитория»."
+            description="Набор персон нужен для запуска исследования и создаётся вместе с ним — шагом «Аудитория» в визарде запуска."
             action={{ href: "/studies/new", label: "Открыть визард запуска" }}
           />
         ) : (
