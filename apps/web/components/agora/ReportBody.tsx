@@ -489,7 +489,8 @@ export function ReportBody({
             <h2 className="text-sm font-semibold">Проверка ответов</h2>
             <p className="mt-0.5 text-xs text-slate">
               Отчёт построен на {view.sampleSize} ответах
-              {view.qa.requestioned > 0 && ` · ${view.qa.requestioned} переспрошено`}
+              {view.qa.requestioned !== null && view.qa.requestioned > 0 &&
+                ` · ${view.qa.requestioned} переспрошено`}
               {view.qa.flagged > 0 && ` · ${view.qa.flagged} исключено из агрегата`}
             </p>
             <dl className="mt-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
@@ -501,10 +502,12 @@ export function ReportBody({
                 <dt className="text-xs text-slate">Исключено из агрегата</dt>
                 <dd className="mt-0.5 text-lg tabular-nums">{view.qa.flagged}</dd>
               </div>
-              <div>
-                <dt className="text-xs text-slate">Переспрошено</dt>
-                <dd className="mt-0.5 text-lg tabular-nums">{view.qa.requestioned}</dd>
-              </div>
+              {view.qa.requestioned !== null && (
+                <div>
+                  <dt className="text-xs text-slate">Переспрошено</dt>
+                  <dd className="mt-0.5 text-lg tabular-nums">{view.qa.requestioned}</dd>
+                </div>
+              )}
               <div>
                 <dt className="text-xs text-slate">Ушло на эскалацию</dt>
                 <dd className="mt-0.5 text-lg tabular-nums">{view.qa.escalated}</dd>
@@ -548,7 +551,13 @@ export function ReportBody({
                 однажды так и прочитал: увидел три карточки из двенадцати и
                 решил, что прогон ненастоящий. */}
             <p className="mt-5 text-xs leading-relaxed text-slate">
-              {view.qa.requestioned > 0 ? (
+              {view.qa.requestioned === null ? (
+                <>
+                  Этот отчёт собран до того, как счётчик переспроса стал в него попадать,
+                  поэтому сказать, переспрашивались ли забракованные ответы, по нему нельзя.
+                  В прогонах после 28.08.2026 это видно числом.
+                </>
+              ) : view.qa.requestioned > 0 ? (
                 <>
                   Забракованные ответы переспрашиваются один раз:
                   {" "}{view.qa.requestioned} переспрошено, из агрегата в итоге исключено{" "}

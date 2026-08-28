@@ -115,8 +115,16 @@ export interface ReportView {
     bySource: { source: string; count: number }[];
     escalated: number;
     judgeFailures: number;
-    /** Сколько ответов переспрошено. 0 — переспрос не понадобился или выключен. */
-    requestioned: number;
+    /**
+     * Сколько ответов переспрошено. `null` — отчёт собран до 28.08.2026 и поля
+     * не содержит: это «неизвестно», а не «ноль».
+     *
+     * Различать обязательно. Прогон 0051 шёл 20.08, когда переспрос уже
+     * работал; сказать по его отчёту «переспрос был выключен» — это догадка,
+     * выданная за факт, ровно того же рода, что и прежняя подпись «механизма
+     * нет».
+     */
+    requestioned: number | null;
   } | null;
   disclaimer: string | null;
   degraded: string[];
@@ -281,10 +289,9 @@ function qaOf(value: unknown): ReportView["qa"] {
     bySource: counts(raw.by_source, "source") as { source: string; count: number }[],
     escalated: num(raw.escalated) ?? 0,
     judgeFailures: num(raw.judge_failures) ?? 0,
-    // Старые отчёты этого поля не содержат: они собраны до 28.08.2026. Ноль
-    // там означает «неизвестно», и экран не станет утверждать обратное — он
-    // просто не покажет строку про переспрос.
-    requestioned: num(raw.requestioned) ?? 0,
+    // Отсутствие поля и ноль — разные факты, и сводить их нельзя: первое
+    // означает «отчёт старше механизма», второе — «переспрашивать было нечего».
+    requestioned: "requestioned" in raw ? (num(raw.requestioned) ?? 0) : null,
   };
 }
 
