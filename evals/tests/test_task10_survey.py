@@ -263,8 +263,12 @@ def validate_survey_python(doc):
         errors.append("questions: должен быть массивом")
         return errors
 
-    if len(questions) < 5:
-        errors.append(f"questions: минимум 5 элементов, получено {len(questions)}")
+    # Минимум — один вопрос, а не пять. Пятёрка держалась на том, что пять
+    # базовых критериев обязательны; с 26.08.2026 они необязательны (решение
+    # владельца, PRD §18). Ноль остаётся отказом: анкета без вопросов — это
+    # оплаченный прогон, в котором персону не о чем спрашивать.
+    if len(questions) < 1:
+        errors.append("questions: нужен хотя бы один вопрос")
 
     seen_ids = set()
     base_keys_found = set()
@@ -315,9 +319,10 @@ def validate_survey_python(doc):
                 if scale_min != 1 or scale_max != 10:
                     errors.append(f"questions[{i}]: базовый критерий должен иметь шкалу 1–10")
 
-    for required in REQUIRED_BASE_KEYS:
-        if required not in base_keys_found:
-            errors.append(f"questions: отсутствует базовый критерий «{required}»")
+    # Требования «все пять базовых на месте» больше нет. Осталось то, что
+    # защищает данные: базовый критерий, ЕСЛИ он есть, обязан быть шкалой 1–10
+    # и не может повторяться — иначе ключ overall_impression с чужой шкалой
+    # попал бы в те же средние, по которым идёт сравнение с корпусом.
 
     return errors
 
@@ -341,12 +346,37 @@ check(
     f"errors={errors[:3]}",
 )
 
-# B3: Анкета без одного из базовых критериев невалидна
+# B3: Анкета без части базовых критериев ВАЛИДНА (решение владельца 26.08.2026)
+#
+# Здесь стояло обратное утверждение, и оно пережило снятие требования в
+# продукте: тест повторяет валидатор своей реализацией, поэтому остался
+# зелёным, утверждая противоположное тому, что делает код. Зелёная проверка,
+# утверждающая обратное продукту, хуже отсутствующей.
 missing_one = [q for q in BASE_QUESTIONS_VALID if q["baseKey"] != "music"]
 errors = validate_survey_python({"name": "Без music", "questions": missing_one})
 check(
-    "анкета без критерия «music» невалидна",
-    any("music" in e for e in errors),
+    "анкета без критерия «music» валидна",
+    not errors,
+    f"errors={errors[:3]}",
+)
+
+# B3-бис: анкета из одних своих вопросов валидна
+only_custom = [
+    {"id": "c1", "label": "Насколько понятен конфликт героя", "type": "scale",
+     "scaleMin": 1, "scaleMax": 10},
+]
+errors = validate_survey_python({"name": "Только свои", "questions": only_custom})
+check(
+    "анкета из одних пользовательских вопросов валидна",
+    not errors,
+    f"errors={errors[:3]}",
+)
+
+# B3-трижды: пустая анкета по-прежнему отвергается
+errors = validate_survey_python({"name": "Пустая", "questions": []})
+check(
+    "анкета без вопросов отвергается",
+    any("хотя бы один вопрос" in e for e in errors),
     f"errors={errors[:3]}",
 )
 

@@ -13,7 +13,7 @@ import { Chip } from "@/components/agora/Primitives";
  * Реестр персон с выбором и удалением.
  *
  * ─── Почему целиком клиентский, включая шапку ──────────────────────────────
- * Кнопка «Удалить» обязана стоять в шапке, рядом с «Сгенерировать набор», а
+ * Кнопка «Удалить» обязана стоять в шапке, а
  * состояние выбора живёт в карточках. Разведённые по серверному и клиентскому
  * дереву, они потребовали бы поднимать выбор в контекст ради одной кнопки.
  * `PageHeader` — чистая разметка и сам объявлен клиентским, так что перенос
@@ -127,12 +127,6 @@ export function PersonaRegistry({
                 Удалить {count}
               </button>
             )}
-            <Link
-              href="/studies/new"
-              className="rounded-md border border-hairline px-4 py-2 text-sm transition-colors hover:bg-secondary"
-            >
-              Сгенерировать набор
-            </Link>
           </>
         }
       />
@@ -146,7 +140,8 @@ export function PersonaRegistry({
 
         {personas.length === 0 ? (
           <p className="rounded-lg border border-dashed border-hairline p-8 text-center text-sm text-slate">
-            Персон пока нет. Сгенерируйте набор — он появится здесь.
+            Персон пока нет. Набор собирается шагом «Аудитория» в визарде запуска
+            исследования — оттуда персоны и появятся здесь.
           </p>
         ) : (
           <>

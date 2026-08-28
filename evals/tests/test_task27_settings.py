@@ -104,10 +104,21 @@ else:
               f"HTTP {status}")
 
         # 7. PUT valid → GET
+        #
+        # Модель берётся из ДЕЙСТВУЮЩЕГО каталога. Здесь стоял `large-v3-turbo`,
+        # снятый 20.08.2026 вместе с переходом на GigaAM: его нет в образе
+        # воркера, и выбор уводил прогон качать веса уже после заливки ролика.
+        # Маршрут с тех пор отвечал на этот PUT кодом 400 — то есть правильно, —
+        # а тест краснел и утверждал обратное продукту.
+        #
+        # Заметно это стало только сейчас: поведенческий уровень идёт лишь при
+        # заданном BASE_URL, то есть на живом сервере, а статический уровень
+        # каталог не проверяет. Восемь дней проверка была красной и никем не
+        # запускалась.
         put_data = json.dumps({
             "costCap": "hard",
             "costCapValue": 300,
-            "whisperModel": "large-v3-turbo",
+            "whisperModel": "large-v3",
             "defaultReplication": 3,
         }).encode()
         put_req = urllib.request.Request(f"{base_url}/api/settings", data=put_data, method="PUT")
@@ -124,7 +135,7 @@ else:
         body = json.loads(resp.read())
         s = body.get("settings", {})
         check("GET после PUT — значения совпадают",
-              s.get("whisperModel") == "large-v3-turbo" and s.get("defaultReplication") == 3,
+              s.get("whisperModel") == "large-v3" and s.get("defaultReplication") == 3,
               f"got: {s}")
 
         # 8. PUT garbage → 400
@@ -217,7 +228,7 @@ else:
             # Меняем настройки и перечитываем УЖЕ СОЗДАННЫЙ прогон.
             changed = json.dumps({
                 "costCap": "hard", "costCapValue": 300,
-                "whisperModel": "large-v3-turbo", "defaultReplication": 1,
+                "whisperModel": "large-v3", "defaultReplication": 1,
             }).encode()
             req = urllib.request.Request(f"{base_url}/api/settings", data=changed, method="PUT")
             req.add_header("Content-Type", "application/json")

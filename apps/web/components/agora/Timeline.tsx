@@ -28,7 +28,17 @@ interface Payload {
   timeline: TimelineView | null;
 }
 
-export function Timeline({ runId }: { runId: string }) {
+/**
+ * Откуда брать материал.
+ *
+ * `src` появился ради публичной ссылки: внутренняя страница читает маршрут под
+ * сессией, публичная — маршрут под токеном (`/share/<токен>/timeline`).
+ * Умолчание оставлено прежним, чтобы существующие вызовы не менялись, — но
+ * подставляется оно ЯВНО, а не «если пусто, соберём адрес сами»: собранный
+ * внутри компонента адрес однажды уехал бы в публичную страницу и упёрся бы
+ * там в требование сессии.
+ */
+export function Timeline({ runId, src }: { runId: string; src?: string }) {
   const [data, setData] = useState<Payload | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [currentSec, setCurrentSec] = useState(0);
@@ -36,7 +46,7 @@ export function Timeline({ runId }: { runId: string }) {
 
   useEffect(() => {
     let alive = true;
-    fetch(`/api/tasks/${runId}/timeline`)
+    fetch(src ?? `/api/tasks/${runId}/timeline`)
       .then(async (r) => {
         if (!r.ok) throw new Error(`сервер ответил ${r.status}`);
         return (await r.json()) as Payload;
@@ -46,7 +56,7 @@ export function Timeline({ runId }: { runId: string }) {
     return () => {
       alive = false;
     };
-  }, [runId]);
+  }, [runId, src]);
 
   /**
    * Переход по таймкоду из ответа персоны: `#t=961`.
