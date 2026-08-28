@@ -221,6 +221,7 @@ else:
                  f"ролик не залит: {why_upload}")
             raise SystemExit(verdict(results, "#27 Настройки"))
 
+        created_tasks: list[str] = []
         launch = json.dumps({"mode": "short", "videoRef": video_ref,
                              "seed": 27_000 + int(time.time()) % 1000}).encode()
         req = urllib.request.Request(f"{base_url}/api/tasks", data=launch, method="POST")
@@ -233,6 +234,9 @@ else:
             task = {}
             check("снимок настроек в задаче при постановке", False,
                   f"POST /api/tasks → HTTP {e.code}: {e.read()[:120].decode('utf-8', 'replace')}")
+
+        if task.get("id"):
+            created_tasks.append(str(task["id"]))
 
         if task:
             # Настройки выше выставлены на defaultReplication = 3.
@@ -273,6 +277,12 @@ else:
 # было проверить здесь. Прежде GREEN печатался при любом числе SKIP, и по
 # выводу нельзя было отличить «проверено» от «пропущено» — см. _harness.verdict.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from _harness import verdict  # noqa: E402
+from _harness import drop_task, verdict  # noqa: E402
+
+# Уборка: поведенческая проверка создаёт НАСТОЯЩИЙ прогон в среде пользователя.
+# Он виден в списке исследований наравне с рабочими, и отличить его можно только
+# по автору — владелец уже принимал такие за свои.
+for _task_id in globals().get("created_tasks", []):
+    drop_task(globals()["client"], _task_id)
 
 sys.exit(verdict(results, "#27"))

@@ -206,6 +206,8 @@ else:
             first = json.loads(body)
         except Exception:  # noqa: BLE001
             first = {}
+        if first.get("id"):
+            created.append(str(first["id"]))
 
         if code not in (200, 201):
             for n in BEHAVIOURAL:
@@ -267,6 +269,8 @@ else:
                     fourth = json.loads(body4)
                 except Exception:  # noqa: BLE001
                     fourth = {}
+                if fourth.get("id"):
+                    created.append(str(fourth["id"]))
                 got = fourth.get("replicationCount") or fourth.get("replication_count")
                 check("дефолт replication_count подставляется из настроек",
                       got == want,
@@ -304,7 +308,7 @@ else:
 #
 # Уборка идёт после вердикта по существу и на него не влияет: тест проверяет
 # запуск, а не удаление.
-for _task_id in locals().get("created", []):
-    drop_task(client, _task_id)
+for _task_id in globals().get("created", []):
+    drop_task(globals()["client"], _task_id)
 
 sys.exit(verdict(results, "#11"))
