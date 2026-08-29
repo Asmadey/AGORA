@@ -164,7 +164,18 @@ services:
     #
     # Поднимать значение имеет смысл только вместе с памятью: ориентир — 5,5 ГБ
     # на процесс сверх того, что занимают web и postgres.
-    command: ["celery", "-A", "agent_core.celery_app", "worker", "--loglevel=info", "--concurrency=${WORKER_CONCURRENCY:-1}"]
+    # `--beat` поднимает планировщик ВНУТРИ воркера, а не отдельным контейнером.
+    #
+    # Расписание сейчас одно — сборщик осиротевших прогонов (agora.reap_orphans),
+    # раз в 15 минут. Ради одной задачи заводить второй контейнер с тем же
+    # образом на 4 ГБ значит платить памятью за планировщик, который просыпается
+    # четыре раза в час. Встроенный планировщик не годится при НЕСКОЛЬКИХ узлах
+    # воркера — каждый заводил бы свой и задача шла бы кратно, — но узел здесь
+    # один, и это записано в docs/AGORA_PRD_FINAL.md §14.
+    #
+    # Файл расписания уезжает в /tmp: рабочий каталог образа принадлежит root, а
+    # процесс идёт под celeryuser, и планировщик молча не смог бы его создать.
+    command: ["celery", "-A", "agent_core.celery_app", "worker", "--loglevel=info", "--concurrency=${WORKER_CONCURRENCY:-1}", "--beat", "--schedule=/tmp/celerybeat-schedule"]
     environment:
       DATABASE_URL: ${DATABASE_URL:-postgresql://agora_login:${AGORA_APP_PASSWORD}@postgres:5432/${POSTGRES_DB:-agora}}
       # Managed на TimeWeb. Умолчание на контейнерные хосты убрано намеренно:
