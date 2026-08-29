@@ -49,7 +49,7 @@ class ChatRequest(BaseModel):
     prompts_snapshot: dict[str, Any] = Field(default_factory=dict)
 
 
-def _prompt_body(key: str, snapshot: dict[str, Any]) -> str:
+def _prompt_body(key: str, snapshot: dict[str, Any], tenant_id: str) -> str:
     """
     Шаблон промпта: запиннённая версия прогона, иначе файл.
 
@@ -60,13 +60,23 @@ def _prompt_body(key: str, snapshot: dict[str, Any]) -> str:
     from ...paths import find_repo_file
     from ...prompt_text import body_of
 
+    # Значение снимка — объект {id, version, templateSha256}, а не голый
+    # идентификатор: так его кладёт buildPromptsSnapshot в вебе. Передать сюда
+    # словарь целиком значит получить «cannot adapt type dict» уже в запросе.
     pinned = snapshot.get(key)
+    pinned_id = pinned.get("id") if isinstance(pinned, dict) else pinned
     dsn = os.environ.get("DATABASE_URL")
-    if pinned and dsn:
+
+    if pinned_id and dsn:
         import psycopg
 
-        with psycopg.connect(dsn) as conn, conn.cursor() as cur:
-            cur.execute("SELECT template FROM prompts WHERE id = %s::uuid", (pinned,))
+        from ...db import tenant_scope
+
+        # Под арендатором, а не голым соединением: на `prompts` включён FORCE
+        # RLS, и запрос без роли вернул бы ноль строк — то есть молча увёл бы
+        # разговор на файл вместо запиннённой версии.
+        with psycopg.connect(dsn) as conn, tenant_scope(conn, tenant_id) as cur:
+            cur.execute("SELECT template FROM prompts WHERE id = %s", (pinned_id,))
             row = cur.fetchone()
             if row and row[0]:
                 return body_of(str(row[0]))
@@ -154,7 +164,7 @@ def reply(request: ChatRequest) -> StreamingResponse:
         )
         key = "chat.analyst"
 
-    template = _prompt_body(key, request.prompts_snapshot)
+    template = _prompt_body(key, request.prompts_snapshot, request.tenant_id)
     user = _render(template, context, request.question)
 
     def events():
