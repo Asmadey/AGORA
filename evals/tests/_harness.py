@@ -28,6 +28,7 @@ import socket
 import urllib.error
 import urllib.parse
 import urllib.request
+from pathlib import Path
 
 __all__ = [
     "ApiClient", "login", "db_dsn", "creds", "verdict", "verdict_lists", "live_env",
@@ -342,3 +343,114 @@ def login(base_url: str, role: str = "owner") -> tuple[ApiClient | None, str]:
     if not ok:
         return None, why
     return client, ""
+
+
+def upload_fixture(client: "ApiClient", path: Path, mode: str = "short") -> tuple[str | None, str]:
+    """
+    Загружает ролик настоящим путём и возвращает `(videoRef, причина)`.
+
+    ─── Зачем понадобилось ──────────────────────────────────────────────────
+    Поведенческие тесты #11 и #27 отправляли запуск с `videoRef` вида
+    `s3://fixtures/short_60s.mp4` либо вовсе без него. Маршрут это принимал —
+    проверка была «строка либо отсутствует», — задача вставала в очередь, и
+    воркер падал в первом же узле: `FileNotFoundError` и `ValueError:
+    video_ref пуст`.
+
+    То есть тесты проходили через дыру в контракте и оставляли на боевом
+    сервере упавшие прогоны, неотличимые в списке от настоящих. Владелец
+    дважды спрашивал, откуда они взялись.
+
+    Теперь запуск требует ключ объекта своего арендатора, и тест обязан
+    получить его тем же способом, что и браузер: presign → PUT → complete.
+
+    Возвращается пара, а не исключение: отсутствие S3 в среде — законный
+    повод для SKIP, а не для красного теста.
+    """
+    if not path.is_file():
+        return None, f"фикстуры нет: {path}"
+
+    import mimetypes
+
+    content_type = mimetypes.guess_type(path.name)[0] or "video/mp4"
+    size = path.stat().st_size
+
+    code, body = client.call("/api/upload/presign", "POST", json.dumps({
+        "fileName": path.name, "contentType": content_type, "sizeBytes": size,
+    }).encode())
+    if code not in (200, 201):
+        return None, f"presign ответил {code}: {body[:120]}"
+    try:
+        presign = json.loads(body)
+    except Exception:  # noqa: BLE001
+        return None, f"presign вернул не JSON: {body[:120]}"
+
+    url = presign.get("url") or presign.get("uploadUrl")
+    key = presign.get("key")
+    if not url or not key:
+        return None, f"presign без url или key: {body[:120]}"
+
+    request = urllib.request.Request(
+        url, method="PUT", data=path.read_bytes(), headers={"Content-Type": content_type},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=300) as response:
+            if response.status not in (200, 201, 204):
+                return None, f"S3 отказал: {response.status}"
+    except Exception as exc:  # noqa: BLE001
+        return None, f"загрузка в S3 не удалась: {exc}"
+
+    code, body = client.call("/api/upload/complete", "POST", json.dumps({
+        "key": key, "mode": mode, "title": f"CDD {path.name}",
+    }).encode())
+    if code not in (200, 201):
+        return None, f"complete ответил {code}: {body[:120]}"
+    try:
+        done = json.loads(body)
+    except Exception:  # noqa: BLE001
+        done = {}
+    return str(done.get("videoRef") or done.get("ref") or key), ""
+
+
+def drop_task(client: "ApiClient", task_id: str, wait_sec: float = 90.0) -> None:
+    """
+    Убирает прогон, заведённый тестом: сначала отменяет, потом удаляет.
+
+    ─── Почему в два шага ───────────────────────────────────────────────────
+    `DELETE /api/tasks/<id>` по идущему прогону не удаляет, а ОТМЕНЯЕТ и
+    отвечает 202: воркер остановится между этапами. Однократный вызов поэтому
+    оставлял прогон в базе — и это было незаметно, пока уборка молчала об
+    отказах.
+
+    Отмена важна и сама по себе: с тех пор как запуск требует настоящий ключ
+    материала, тест запускает НАСТОЯЩИЙ конвейер. Оставленный доигрывать, он
+    потратит ffmpeg, распознавание и вызовы модели на ролик, который никому не
+    нужен. Отмена между этапами обрывает это на первом же стыке.
+
+    ─── Почему уборка не роняет тест ────────────────────────────────────────
+    Он проверяет запуск, а не удаление. Но и не замалчивает: молчаливая уборка
+    неотличима от сработавшей.
+    """
+    import time as _time
+
+    deadline = _time.monotonic() + wait_sec
+    while True:
+        try:
+            code, body = client.call(f"/api/tasks/{task_id}", "DELETE")
+        except Exception as exc:  # noqa: BLE001
+            print(f"  УБОРКА: прогон {task_id[:8]} не удалён — {type(exc).__name__}: {exc}")
+            return
+
+        if code in (200, 204):
+            return
+        if code != 202:
+            print(f"  УБОРКА: прогон {task_id[:8]} не удалён — HTTP {code}: {body[:100]}")
+            return
+        # 202 — отмена запрошена, воркер остановится между этапами. Ждём и
+        # повторяем: удалить можно только остановленный.
+        if _time.monotonic() >= deadline:
+            print(
+                f"  УБОРКА: прогон {task_id[:8]} отменён, но за {wait_sec:.0f} с "
+                f"не остановился — удалите вручную"
+            )
+            return
+        _time.sleep(3)
