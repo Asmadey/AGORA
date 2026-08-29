@@ -177,6 +177,15 @@ services:
     # процесс идёт под celeryuser, и планировщик молча не смог бы его создать.
     command: ["celery", "-A", "agent_core.celery_app", "worker", "--loglevel=info", "--concurrency=${WORKER_CONCURRENCY:-1}", "--beat", "--schedule=/tmp/celerybeat-schedule"]
     environment: &worker-env
+      # Строка владельца схемы — ТОЛЬКО для сборщика осиротевших прогонов
+      # (agora.reap_orphans). Обход всех арендаторов под ролью приложения
+      # невозможен по замыслу: она тенант-ограничена, и сквозная политика для
+      # неё сломала бы изоляцию. Права владельца при этом сужены миграцией 41
+      # до SELECT/UPDATE по строкам со статусом RUNNING.
+      #
+      # Пусто — законно: сборщик тогда честно откажется работать и скажет об
+      # этом, а конвейер продолжит ходить под DATABASE_URL как прежде.
+      POSTGRES_ADMIN_URL: ${POSTGRES_ADMIN_URL:-}
       DATABASE_URL: ${DATABASE_URL:-postgresql://agora_login:${AGORA_APP_PASSWORD}@postgres:5432/${POSTGRES_DB:-agora}}
       # Managed на TimeWeb. Умолчание на контейнерные хосты убрано намеренно:
       # сервисы mongo/valkey ушли в профиль local-db, и подстановка mongo:27017

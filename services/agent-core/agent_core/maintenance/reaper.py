@@ -138,18 +138,18 @@ def is_orphan(
 
 # ─── Обход базы ──────────────────────────────────────────────────────────────
 #
-# Сканирование идёт ПО АРЕНДАТОРАМ, а не одним запросом по всей таблице.
+# Сборщик ходит ПОД ВЛАДЕЛЬЦЕМ СХЕМЫ и одним запросом по всем арендаторам.
 #
-# Причина в RLS: на `tasks` включён FORCE, и политика `tasks_tenant_isolation`
-# выдана роли `agora_app` с фильтром по `app.current_tenant()`. Владелец схемы
-# политики на `tasks` не имеет вовсе, а «нет политики» при FORCE значит
-# «запретить» — запрос владельца вернул бы ноль строк и выглядел бы как «сирот
-# нет». Заводить владельцу сквозную политику ради уборки значит открыть все
-# прогоны всех арендаторов навсегда, чтобы раз в час прочитать три строки.
+# Первая редакция ходила под `agora_login` и перечисляла арендаторов из `teams`.
+# Она падала с «permission denied for table teams» — и падала правильно:
+# `agora_login` объявлен NOINHERIT именно затем, чтобы запрос без
+# `SET LOCAL ROLE` не имел прав вовсе. Под `agora_app` обход невозможен по
+# существу: роль тенант-ограничена по замыслу, и сквозная политика для неё
+# сломала бы изоляцию.
 #
-# Поэтому перечень арендаторов читается из `teams` (владельцу это разрешено
-# миграцией 06), а сами прогоны — под `tenant_scope`, тем же путём, что ходит
-# конвейер.
+# Права даёт миграция 41: владельцу выдан узкий SELECT/UPDATE на `tasks`,
+# ограниченный `status = 'RUNNING'`. Завершённые и стоящие в очереди прогоны
+# через эту политику не видны вовсе, а FORCE остаётся на всех таблицах.
 
 
 def _snapshot_last_event(client: Any, task_id: str) -> float | None:
@@ -171,24 +171,34 @@ def _snapshot_last_event(client: Any, task_id: str) -> float | None:
     return float(at) if isinstance(at, (int, float)) else None
 
 
+def _admin_dsn() -> str:
+    """
+    Строка подключения владельца схемы.
+
+    Своя переменная не заводится: `POSTGRES_ADMIN_URL` уже существует и уже
+    используется миграциями. Третий секрет ради задачи, которая просыпается
+    четыре раза в час, — лишний.
+    """
+    dsn = os.environ.get("POSTGRES_ADMIN_URL")
+    if not dsn:
+        raise RuntimeError(
+            "POSTGRES_ADMIN_URL не задан — сборщику нужен владелец схемы: "
+            "под ролью приложения обход всех арендаторов невозможен по замыслу "
+            "(см. миграцию 41)"
+        )
+    return dsn
+
+
 def sweep(*, apply: bool = False) -> list[dict[str, Any]]:
     """
     Находит осиротевшие прогоны и — при `apply` — переводит их в FAILED.
 
     Возвращает список найденного, чтобы вызывающий мог его напечатать или
     посчитать. Пустой список означает «сирот нет», и это нормальный исход.
-
-    Отказ на одном арендаторе не прекращает обход: у остальных прогоны тоже
-    зависли, и уборка, падающая на первом же неудобном случае, не уберёт
-    ничего.
     """
-    dsn = os.environ.get("DATABASE_URL")
-    if not dsn:
-        raise RuntimeError("DATABASE_URL не задан — сборщику нечего обходить")
-
     import psycopg
 
-    from ..db import tenant_scope
+    dsn = _admin_dsn()
 
     try:
         from ..pipeline.tasks import _valkey
@@ -201,51 +211,34 @@ def sweep(*, apply: bool = False) -> list[dict[str, Any]]:
     now = time.time()
     found: list[dict[str, Any]] = []
 
-    with psycopg.connect(dsn) as conn:
-        with conn.cursor() as cur:
-            cur.execute("SELECT id FROM teams")
-            tenants = [str(row[0]) for row in cur.fetchall()]
+    with psycopg.connect(dsn) as conn, conn.cursor() as cur:
+        # Политика миграции 41 сама ограничивает выборку идущими прогонами;
+        # условие в запросе повторено намеренно — он должен читаться без неё.
+        cur.execute("SELECT id, seq_no, tenant_id, started_at FROM tasks WHERE status = 'RUNNING'")
+        rows = cur.fetchall()
 
-        for tenant_id in tenants:
-            try:
-                with tenant_scope(conn, tenant_id) as cur:
-                    # `started_at` берётся как есть и переводится в секунды
-                    # питоном. EXTRACT(EPOCH FROM …) здесь был бы короче, но
-                    # `test_schema_contract` разбирает SQL наивно и читает
-                    # `FROM started_at` как обращение к таблице. Спорить с
-                    # проверкой ради одной функции дороже, чем обойтись без неё.
-                    cur.execute(
-                        "SELECT id, seq_no, started_at FROM tasks WHERE status = 'RUNNING'"
-                    )
-                    rows = cur.fetchall()
-            except Exception as exc:  # noqa: BLE001
-                found.append({"tenant_id": tenant_id, "error": f"{type(exc).__name__}: {exc}"})
+        for task_id, seq_no, tenant_id, started in rows:
+            verdict = is_orphan(
+                status="RUNNING",
+                started_at=started.timestamp() if started is not None else None,
+                last_event_at=_snapshot_last_event(valkey, str(task_id)) if valkey else None,
+                now=now,
+            )
+            if not verdict.orphaned:
                 continue
 
-            for task_id, seq_no, started in rows:
-                verdict = is_orphan(
-                    status="RUNNING",
-                    started_at=started.timestamp() if started is not None else None,
-                    last_event_at=_snapshot_last_event(valkey, str(task_id)) if valkey else None,
-                    now=now,
+            found.append({
+                "task_id": str(task_id),
+                "seq_no": seq_no,
+                "tenant_id": str(tenant_id),
+                "reason": verdict.reason,
+            })
+            if apply:
+                cur.execute(
+                    "UPDATE tasks SET status = 'FAILED', error = %s, finished_at = now() "
+                    " WHERE id = %s::uuid AND status = 'RUNNING'",
+                    (verdict.reason, str(task_id)),
                 )
-                if not verdict.orphaned:
-                    continue
-
-                found.append({
-                    "task_id": str(task_id),
-                    "seq_no": seq_no,
-                    "tenant_id": tenant_id,
-                    "reason": verdict.reason,
-                })
-                if apply:
-                    with tenant_scope(conn, tenant_id) as cur:
-                        cur.execute(
-                            "UPDATE tasks SET status = 'FAILED', error = %s, "
-                            "finished_at = now() "
-                            " WHERE id = %s::uuid AND status = 'RUNNING'",
-                            (verdict.reason, str(task_id)),
-                        )
         if apply:
             conn.commit()
 

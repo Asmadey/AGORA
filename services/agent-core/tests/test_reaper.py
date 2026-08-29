@@ -170,17 +170,20 @@ class TestСборщикПодключён:
             "воркер запускается без планировщика — расписание не сработает ни разу"
         )
 
-    def test_обход_требует_подключения(self):
-        # Без DATABASE_URL уборка обязана сказать об этом, а не вернуть пустой
-        # список: пустой список читается как «сирот нет».
+    def test_обход_требует_владельца_схемы(self):
+        # Без строки владельца уборка обязана сказать об этом, а не вернуть
+        # пустой список: пустой список читается как «сирот нет».
+        #
+        # Роль приложения здесь не годится по замыслу: она тенант-ограничена, и
+        # обход всех арендаторов под ней невозможен — см. миграцию 41.
         import os
 
         from agent_core.maintenance.reaper import sweep
 
-        saved = os.environ.pop("DATABASE_URL", None)
+        saved = os.environ.pop("POSTGRES_ADMIN_URL", None)
         try:
-            with pytest.raises(RuntimeError, match="DATABASE_URL"):
+            with pytest.raises(RuntimeError, match="POSTGRES_ADMIN_URL"):
                 sweep(apply=False)
         finally:
             if saved is not None:
-                os.environ["DATABASE_URL"] = saved
+                os.environ["POSTGRES_ADMIN_URL"] = saved
