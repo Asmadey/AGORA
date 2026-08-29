@@ -68,6 +68,10 @@
     {
       "name": "Наследие прототипа",
       "description": "Маршруты, оставшиеся от прототипа"
+    },
+    {
+      "name": "chat",
+      "description": "Чат по результатам исследования (задача #28)."
     }
   ],
   "security": [
@@ -3104,6 +3108,146 @@
           }
         }
       }
+    },
+    "/api/runs/{id}/chat": {
+      "parameters": [
+        {
+          "name": "id",
+          "in": "path",
+          "required": true,
+          "schema": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "description": "Идентификатор завершённого прогона."
+        }
+      ],
+      "get": {
+        "tags": [
+          "chat"
+        ],
+        "summary": "История разговора",
+        "description": "Сообщения треда по этому прогону. Нужна, чтобы вкладка, открытая заново, показала прежние реплики: разговор живёт в Postgres, а не в памяти вкладки.",
+        "parameters": [
+          {
+            "name": "mode",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "analyst",
+                "persona"
+              ],
+              "default": "analyst"
+            },
+            "description": "Собеседник: аналитик по всему исследованию либо конкретная персона."
+          },
+          {
+            "name": "personaId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Обязателен в режиме persona."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Сообщения треда в порядке отправки.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "messages": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/ChatMessage"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Нет сессии."
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "chat"
+        ],
+        "summary": "Задать вопрос по результатам исследования",
+        "description": "Ответ приходит ПОТОКОМ Server-Sent Events: `data: {\"delta\":\"…\"}` на каждый кусок прозы и `data: {\"done\":{…}}` в конце — с флагами и признаком опоры.\n\nКаждая реплика — платный вызов модели и считается в тот же потолок, что и прогон («Кап стоимости» в Настройках). Исчерпанный потолок отвечает 429.\n\nЧат работает только по завершённому прогону: спрашивать про отчёт, которого ещё нет, значит получать ответ по пустому срезу.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "question"
+                ],
+                "properties": {
+                  "mode": {
+                    "type": "string",
+                    "enum": [
+                      "analyst",
+                      "persona"
+                    ],
+                    "default": "analyst"
+                  },
+                  "question": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 4000
+                  },
+                  "personaId": {
+                    "type": "string",
+                    "format": "uuid",
+                    "description": "Обязателен в режиме persona."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Поток SSE.",
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Пустой вопрос либо режим persona без personaId."
+          },
+          "401": {
+            "description": "Нет сессии."
+          },
+          "404": {
+            "description": "Прогон не найден или принадлежит другой команде."
+          },
+          "409": {
+            "description": "Исследование ещё не завершено."
+          },
+          "429": {
+            "description": "Исчерпан потолок вызовов модели."
+          },
+          "502": {
+            "description": "Служба агента недоступна."
+          }
+        }
+      }
     }
   },
   "components": {
@@ -3597,6 +3741,47 @@
               "high",
               "max"
             ]
+          }
+        }
+      },
+      "ChatMessage": {
+        "type": "object",
+        "description": "Реплика разговора. Флаги ставит агент; экран показывает их подписью под ответом.",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "role": {
+            "type": "string",
+            "enum": [
+              "user",
+              "assistant"
+            ]
+          },
+          "content": {
+            "type": "string"
+          },
+          "flags": {
+            "type": "object",
+            "properties": {
+              "grounded": {
+                "type": "boolean",
+                "description": "Есть таймкод или цитата."
+              },
+              "insufficient_data": {
+                "type": "boolean",
+                "description": "В исследовании таких данных нет."
+              },
+              "out_of_profile": {
+                "type": "boolean",
+                "description": "Вопрос за пределами DNA персоны."
+              },
+              "contradicts_previous": {
+                "type": "boolean",
+                "description": "Расходится с прежними ответами персоны."
+              }
+            }
           }
         }
       }

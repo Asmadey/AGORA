@@ -6,6 +6,7 @@
 
 Маршруты:
     POST /api/personas/generate — генерация синтетических персон (задача #5)
+    POST /api/chat/reply        — чат по результатам исследования (задача #28)
     GET  /api/health            — проверка живости
 
 Изоляция по tenant_id — через заголовок X-Tenant-Id (проксируется из сессии
@@ -17,7 +18,7 @@ from __future__ import annotations
 
 from fastapi import FastAPI
 
-from agent_core.api.routers import matching, personas
+from agent_core.api.routers import chat, matching, personas
 
 app = FastAPI(
     title="AGORA Agent-Core",
@@ -30,6 +31,9 @@ app = FastAPI(
 
 app.include_router(personas.router)
 app.include_router(matching.router)
+# Чат по результатам исследования (#28). Наружу служба не публикуется: её
+# зовёт только веб, уже проверивший сессию и принадлежность прогона.
+app.include_router(chat.router)
 
 
 @app.get("/api/health")

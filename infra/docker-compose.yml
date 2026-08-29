@@ -176,7 +176,7 @@ services:
     # Файл расписания уезжает в /tmp: рабочий каталог образа принадлежит root, а
     # процесс идёт под celeryuser, и планировщик молча не смог бы его создать.
     command: ["celery", "-A", "agent_core.celery_app", "worker", "--loglevel=info", "--concurrency=${WORKER_CONCURRENCY:-1}", "--beat", "--schedule=/tmp/celerybeat-schedule"]
-    environment:
+    environment: &worker-env
       DATABASE_URL: ${DATABASE_URL:-postgresql://agora_login:${AGORA_APP_PASSWORD}@postgres:5432/${POSTGRES_DB:-agora}}
       # Managed на TimeWeb. Умолчание на контейнерные хосты убрано намеренно:
       # сервисы mongo/valkey ушли в профиль local-db, и подстановка mongo:27017
@@ -246,6 +246,45 @@ services:
       timeout: 10s
       retries: 5
       start_period: 60s
+
+  # ─── Синхронный агент чата по результатам (#28) ─────────────────────────────
+  #
+  # Тот же образ, что у воркера, другая команда. Не второй образ и не новые
+  # зависимости: `agent_core/api` написан давно и до сих пор не запускался
+  # нигде — контейнер выполнял только celery worker.
+  #
+  # ПОЧЕМУ ОТДЕЛЬНАЯ СЛУЖБА, А НЕ ЗАДАЧА В ОЧЕРЕДИ. Чат синхронен: человек ждёт
+  # ответ секунды. Очередь занята часовыми прогонами, и реплика встала бы за
+  # распознаванием речи. Ставить чат в ту же очередь значит сделать его
+  # неотзывчивым ровно тогда, когда идёт исследование, — то есть когда о нём и
+  # спрашивают.
+  #
+  # ПОЧЕМУ НЕ МАРШРУТ NEXT.JS. В образе веба нет `openai`. Агент на TypeScript
+  # означал бы вторую реализацию разбора промптов, has_support, температур и
+  # трассировки — тот класс дефекта, который в этом проекте повторялся трижды.
+  #
+  # НАРУЖУ НЕ ПУБЛИКУЕТСЯ: ни `ports`, ни маршрута в nginx. Служба видна только
+  # внутри сети compose, и зовёт её только веб — уже проверивший сессию, роль и
+  # принадлежность прогона арендатору.
+  agent-api:
+    build:
+      context: ..
+      dockerfile: infra/worker.Dockerfile
+    restart: unless-stopped
+    command: ["uvicorn", "agent_core.api.app:app", "--host", "0.0.0.0", "--port", "8001"]
+    # Ровно то же окружение, что у воркера: он читает те же промпты, ту же базу
+    # и тот же Mongo. Копия этих сорока строк разошлась бы с оригиналом при
+    # первой правке, и разошлась бы молча.
+    environment: *worker-env
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/api/health', timeout=5)\" || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
 
 volumes:
   postgres_data:

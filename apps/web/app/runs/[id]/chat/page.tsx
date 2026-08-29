@@ -1,51 +1,79 @@
 import Link from "next/link";
-import { ArrowLeft, BarChart3, MessageCircle, User } from "lucide-react";
-import { PageHeader } from "@/components/AppShell";
-import { EmptyState } from "@/components/agora/States";
+import { ArrowLeft } from "lucide-react";
 import { notFound } from "next/navigation";
+
+import { PageHeader } from "@/components/AppShell";
+import { ChatView } from "@/components/agora/ChatView";
+import { EmptyState } from "@/components/agora/States";
 import { requireSession } from "@/lib/server/guard";
 import { resolveRun } from "@/lib/server/run-ref";
+import { withTenant } from "@/lib/server/db";
+import { getTask } from "@/lib/server/tasks";
+import { researchTitle } from "@/lib/research-title";
+import { MessageCircle } from "lucide-react";
 
 /**
- * Чат по результатам исследования — задача #28, ещё не реализована.
+ * Чат по результатам исследования — задача #28.
  *
- * До этого здесь стоял работающий на вид чат: два режима, переписка-затравка с
- * подробным разбором сегмента 45+ и таймкодами. Всё это было написано руками в
- * файле. Функция `send` не обращалась ни к какому маршруту — она добавляла в
- * ленту заранее заготовленную строку, одну на любой вопрос.
+ * ─── Что здесь было раньше ────────────────────────────────────────────────
+ * Сначала чат, работавший НА ВИД: функция отправки возвращала заготовленную
+ * строку, ни к какому маршруту не обращаясь. Потом — честная заглушка,
+ * говорившая, что функции нет. Заглушка была лучше: пользователь, получивший
+ * связный ответ с цитатами по выдуманному прогону, не имел способа отличить
+ * его от настоящего, и дефект проявился бы тогда, когда по ответу примут
+ * решение.
  *
- * Такой экран хуже отсутствующего. Пользователь задаёт вопрос про своё
- * исследование, получает связный ответ с цитатами и таймкодами — и у него нет
- * ни одного способа узнать, что ответ относится к выдуманному прогону. Дефект
- * проявится тогда, когда по этому ответу примут решение.
+ * ─── Два собеседника, а не один с переключателем ──────────────────────────
+ * «Аналитик» видит весь срез и отвечает по агрегату. «Персона» видит только
+ * свой профиль, материал и СВОИ прежние ответы — та же структурная изоляция,
+ * что в конвейере, и та же проверка, что в #18.
  *
- * Поэтому экран честно говорит, чего пока нет. Сам маршрут оставлен: на него
- * ведут ссылки из отчёта и из карточки персоны, и удалять их ради заглушки
- * значило бы прятать запланированную функцию.
- *
- * Что здесь будет по #28 — два разных собеседника, а не одна фича с
- * переключателем: «Аналитик» видит весь срез и отвечает по агрегату, «Персона»
- * видит только свой профиль, видео и свои прежние ответы — та же структурная
- * изоляция, что в основном конвейере. Ответ без таймкода или цитаты ответом не
- * считается.
+ * ─── Почему чат живёт только поверх завершённого прогона ──────────────────
+ * Спрашивать про отчёт, которого ещё нет, значит получать ответ по пустому
+ * срезу — правдоподобный и ни на чём не основанный.
  */
 
-export default async function ChatPage({ params }: { params: Promise<{ id: string }> }) {
-  const { id: slug } = await params;
-  const { tenantId } = await requireSession();
+export const dynamic = "force-dynamic";
 
-  // Разбор адреса тот же, что у отчёта и прогресса. Экран пока заглушка, но
-  // ссылка «К отчёту» с него ведёт настоящая — с непонятым адресом она вела бы
-  // в 404.
+export default async function ChatPage({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ id: string }>;
+  searchParams: Promise<{ persona?: string }>;
+}) {
+  const { id: slug } = await params;
+  const { persona } = await searchParams;
+  const { tenantId, userId } = await requireSession();
+
   const run = await resolveRun(slug, tenantId, "/chat");
   if (!run) notFound();
   const id = run.id;
+
+  const task = await withTenant(tenantId, (client) => getTask(client, id));
+  const ready = task?.status === "REPORT_READY";
+
+  // Имя персоны — чтобы в ленте стояло «Анна», а не «Персона». В режиме
+  // аналитика запрос не делается вовсе.
+  const personaName = persona
+    ? await withTenant(tenantId, async (client) => {
+        const { rows } = await client.query<{ name: string }>(
+          "SELECT name FROM personas WHERE id = $1::uuid",
+          [persona],
+        );
+        return rows[0]?.name ?? null;
+      })
+    : null;
 
   return (
     <>
       <PageHeader
         title="Обсудить результаты"
-        subtitle="Вопросы к аналитику по всему исследованию и к отдельной персоне по её ответам."
+        subtitle={
+          persona
+            ? `Допрос персоны${personaName ? `: ${personaName}` : ""} · ${researchTitle(task ?? {})}`
+            : `Аналитик по всему исследованию · ${researchTitle(task ?? {})}`
+        }
         back={
           <Link
             href={`/runs/${id}`}
@@ -57,39 +85,22 @@ export default async function ChatPage({ params }: { params: Promise<{ id: strin
         }
       />
 
-      <div className="space-y-6 p-8">
-        <EmptyState
-          icon={<MessageCircle className="h-5 w-5" />}
-          title="Чат по результатам ещё не подключён"
-          description="Это задача #28, она идёт после сквозной верификации конвейера. Пока отвечать на вопросы нечем: экран не должен показывать ответы, которых модель не давала."
-          action={{ href: `/runs/${id}`, label: "Вернуться к отчёту" }}
-        />
-
-        <section className="rounded-lg border border-hairline bg-card p-6">
-          <h2 className="text-sm font-semibold">Что здесь появится</h2>
-          <div className="mt-4 grid gap-4 sm:grid-cols-2">
-            <div className="flex gap-3">
-              <BarChart3 className="mt-0.5 h-4 w-4 shrink-0 text-slate" />
-              <div>
-                <p className="text-sm font-medium">Аналитик</p>
-                <p className="mt-1 text-sm leading-relaxed text-slate">
-                  Видит весь срез и отвечает по агрегату. Каждое утверждение — со
-                  ссылкой на таймкод или цитату персоны; без опоры ответ не выдаётся.
-                </p>
-              </div>
-            </div>
-            <div className="flex gap-3">
-              <User className="mt-0.5 h-4 w-4 shrink-0 text-slate" />
-              <div>
-                <p className="text-sm font-medium">Допрос персоны</p>
-                <p className="mt-1 text-sm leading-relaxed text-slate">
-                  Видит только свой профиль, видео и свои прежние ответы — та же
-                  изоляция, что в основном конвейере. Чужих ответов персона не знает.
-                </p>
-              </div>
-            </div>
-          </div>
-        </section>
+      <div className="p-8">
+        {!ready ? (
+          <EmptyState
+            icon={<MessageCircle className="h-5 w-5" />}
+            title="Исследование ещё не завершено"
+            description="Чат работает поверх готового отчёта: пока прогон идёт, обсуждать нечего — ответ собрался бы по пустому срезу и выглядел бы настоящим."
+            action={{ href: `/runs/${id}/progress`, label: "Смотреть прогресс" }}
+          />
+        ) : (
+          <ChatView
+            runId={id}
+            mode={persona ? "persona" : "analyst"}
+            personaId={persona}
+            personaName={personaName ?? undefined}
+          />
+        )}
       </div>
     </>
   );
