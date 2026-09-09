@@ -192,6 +192,10 @@ def generate_audience(self: Any, payload: dict[str, Any]) -> dict[str, Any]:
             from .enrich import QwenTextClient, enrich_personas
             from .validate import validate_set
 
+            # Commit names together with validation.personas only after the
+            # whole phase returns. On failure both must keep the original set.
+            validated_names = list(names)
+
             def regenerate(index: int, attempt: int) -> dict[str, Any] | None:
                 """Пересоздаёт одну персону с другим seed и заново обогащает её."""
                 try:
@@ -205,14 +209,17 @@ def generate_audience(self: Any, payload: dict[str, Any]) -> dict[str, Any]:
                             "seed": (config.seed or 0) + 10_000 * attempt + index,
                         }
                     )
-                    fresh = gen.generate(shifted)
+                    fresh = gen.generate_named(shifted)
                     if not fresh:
                         return None
-                    return enrich_personas(
-                        fresh,
+                    replacement_name, replacement_dna = fresh[0]
+                    replacement = enrich_personas(
+                        [replacement_dna],
                         temperature=temperatures.personaCreation,
                         portraits=portraits,
                     ).personas[0]
+                    validated_names[index] = replacement_name
+                    return replacement
                 except Exception:  # noqa: BLE001 — не сумели пересоздать, не отказ фазы
                     return None
 
@@ -232,6 +239,7 @@ def generate_audience(self: Any, payload: dict[str, Any]) -> dict[str, Any]:
                     regenerate=regenerate,
                 )
                 personas = validation.personas
+                names = validated_names
                 verdicts = validation.verdicts
                 validation_meta = {
                     "checked": validation.checked,
@@ -257,7 +265,7 @@ def generate_audience(self: Any, payload: dict[str, Any]) -> dict[str, Any]:
             with psycopg.connect(os.environ["DATABASE_URL"]) as conn, tenant_scope(
                 conn, tenant_id
             ) as cur:
-                for index, (name, dna) in enumerate(zip(names, personas, strict=False)):
+                for index, (name, dna) in enumerate(zip(names, personas, strict=True)):
                     # Пустой объект — «не проверялась». Отличать это от «проверена,
                     # претензий нет» обязательно: иначе набор, созданный без фазы
                     # валидации, выглядел бы прошедшим проверку, которой не было.
