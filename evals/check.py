@@ -353,6 +353,80 @@ def check_compose_health():
         return _res("compose_health", "fail", detail=str(e)[:200])
 
 
+def check_worker_memory_budget():
+    """Помещается ли заявленное число процессов воркера в память машины.
+
+    ─── Зачем метрика ──────────────────────────────────────────────────────
+    10.09.2026 на боевом стояло WORKER_CONCURRENCY=4 при умолчании 1 в compose,
+    где рядом лежит замер: 5,4 ГБ на процесс, четыре копии в 11,6 ГБ не
+    помещаются. Не рвануло только потому, что прогоны запускались по одному.
+
+    Умолчание удерживал КОММЕНТАРИЙ. §5 CLAUDE.md требует падающую проверку —
+    вот она.
+
+    ─── Почему читается запущенная команда, а не compose ────────────────────
+    Файл compose выглядел исправным: --concurrency=${WORKER_CONCURRENCY:-1}.
+    Число приезжало из .env.local, который не попадает ни в один дифф. Проверка
+    по объявленному умолчанию была бы ЗЕЛЁНОЙ при живом дефекте — то есть хуже,
+    чем её отсутствие.
+
+    Объём памяти спрашивается ИЗНУТРИ контейнера тем же кодом, что работает в
+    воркере: вторая реализация чтения памяти разошлась бы с первой, и разошлась
+    бы молча.
+    """
+    name = "worker_memory_budget"
+    if not shutil.which("docker"):
+        return _res(name, "skip", detail="docker CLI unavailable in this env")
+
+    sys.path.insert(0, str(CORE))
+    try:
+        from agent_core.maintenance.memory_budget import budget, parse_concurrency
+    except Exception as e:
+        return _res(name, "skip",
+                    detail=f"agent_core.maintenance.memory_budget не импортируется: {e!s:.80}")
+
+    try:
+        ps = subprocess.run(
+            ["docker", "ps", "--filter", "name=worker", "--format", "{{.Names}}"],
+            capture_output=True, text=True, timeout=60,
+        )
+        names = [n for n in (ps.stdout or "").split() if "langfuse" not in n]
+        if not names:
+            return _res(name, "skip", threshold="concurrency × 5.4 ГБ ≤ память",
+                        detail="контейнер воркера не запущен")
+        container = names[0]
+
+        cmd = subprocess.run(
+            ["docker", "inspect", container, "--format", '{{join .Config.Cmd " "}}'],
+            capture_output=True, text=True, timeout=60,
+        ).stdout.strip()
+
+        mem = subprocess.run(
+            ["docker", "exec", container, "python", "-c",
+             "from agent_core.maintenance.memory_budget import read_total_gb; print(read_total_gb())"],
+            capture_output=True, text=True, timeout=60,
+        )
+        raw = (mem.stdout or "").strip()
+        if mem.returncode != 0 or raw in ("", "None"):
+            return _res(name, "skip", detail="объём памяти контейнера не прочитан")
+        total_gb = float(raw)
+
+        concurrency = parse_concurrency(cmd)
+        if concurrency is None:
+            # Без флага celery берёт число ядер — худший случай, а не умолчание.
+            return _res(name, "fail", threshold="concurrency задан явно",
+                        actual="флага нет",
+                        detail="без --concurrency celery берёт число ядер")
+
+        v = budget(concurrency=concurrency, total_gb=total_gb)
+        return _res(name, "pass" if v.fits else "fail",
+                    threshold=f"≤ {total_gb:.1f} ГБ",
+                    actual=f"{v.need_gb:.1f} ГБ при concurrency={concurrency}",
+                    detail="" if v.fits else v.reason[:200])
+    except Exception as e:
+        return _res(name, "fail", detail=str(e)[:200])
+
+
 def _artifact_pass(name, path, checker):
     art = _load_json(path)
     if art is None:
@@ -933,6 +1007,7 @@ CHECKS = [
     _npm_build,
     _worker_build,
     check_compose_health,
+    check_worker_memory_budget,
     check_e2e_short,
     check_e2e_long,
     check_isolation_persona,
