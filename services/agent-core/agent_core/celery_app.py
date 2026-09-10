@@ -120,6 +120,13 @@ app.conf.update(
             "task": "agora.reap_orphans",
             "schedule": REAP_INTERVAL_SEC,
         },
+        # Тем же расписанием, а не своим: обе уборки дешёвые, а второй интервал
+        # означал бы вторую настройку, которую однажды поправят только в одном
+        # месте. Разбор /proc стоит меньше миллисекунды на процесс.
+        "reap-zombies": {
+            "task": "agora.reap_zombies",
+            "schedule": REAP_INTERVAL_SEC,
+        },
     },
 )
 
@@ -153,3 +160,29 @@ def reap_orphans() -> dict[str, Any]:
         logger.error("Сборщик не обошёл арендатора %s: %s", p["tenant_id"][:8], p["error"])
 
     return {"orphans": len(orphans), "problems": len(problems)}
+
+
+@app.task(name="agora.reap_zombies")
+def reap_zombies() -> dict[str, Any]:
+    """
+    Подталкивает родителей зомби-процессов и докладывает о зависших.
+
+    Задача намеренно тонкая — по тому же доводу, что и `reap_orphans`: разбор
+    `/proc` проверяется на поддельном каталоге, а не на живой системе, поэтому
+    вся логика лежит в `maintenance.zombies`.
+
+    Смотрит внутрь СВОЕГО контейнера: пространство PID у воркера своё, и те два
+    зомби от 08.09.2026 были детьми главного процесса celery, то есть видны
+    отсюда. Хостовые процессы этой задаче не видны и не её забота.
+    """
+    from .maintenance.zombies import sweep
+
+    result = sweep(apply=True)
+
+    for z in result["stale"]:
+        logger.warning(
+            "Зомби-процесс %s (%s) висит %s мин; родителю %s послан SIGCHLD",
+            z["pid"], z["comm"], z["minutes"], z["ppid"],
+        )
+
+    return {"zombies": result["total"], "stale": len(result["stale"])}
