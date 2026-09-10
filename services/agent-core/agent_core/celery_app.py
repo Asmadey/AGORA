@@ -11,6 +11,7 @@ import os
 from typing import Any
 
 from celery import Celery
+from celery.signals import celeryd_init
 
 logger = logging.getLogger(__name__)
 
@@ -186,3 +187,48 @@ def reap_zombies() -> dict[str, Any]:
         )
 
     return {"zombies": result["total"], "stale": len(result["stale"])}
+
+
+@celeryd_init.connect
+def _report_memory_budget(**_: object) -> None:
+    """
+    Печатает бюджет памяти при старте воркера.
+
+    Не отказ, а число в журнале. Отказ на старте означал бы, что ошибка в
+    чтении памяти кладёт продукт целиком, а падающей проверкой здесь работает
+    метрика `worker_memory_budget` в `evals/check.py`: она не может уронить
+    боевой сервер и при этом краснеет, пока нарушение живо.
+
+    Здесь — то, что видит человек, когда воркер уже умер и он ищет причину.
+    `WorkerLostError: signal 9` про память не говорит ничего.
+    """
+    import sys
+
+    from .maintenance.memory_budget import (
+        budget,
+        max_concurrency,
+        parse_concurrency,
+        read_total_gb,
+    )
+
+    command = " ".join(sys.argv)
+    concurrency = parse_concurrency(command)
+    total_gb = read_total_gb()
+
+    if total_gb is None:
+        logger.warning("Бюджет памяти не проверен: не удалось прочитать объём памяти")
+        return
+
+    if concurrency is None:
+        # Без флага celery берёт число ядер — на машине по спецификации это
+        # восемь процессов по 5,4 ГБ.
+        logger.warning(
+            "Число процессов не задано флагом: celery возьмёт число ядер. "
+            "На %.1f ГБ помещается %d — задайте --concurrency явно",
+            total_gb,
+            max_concurrency(total_gb),
+        )
+        return
+
+    verdict = budget(concurrency=concurrency, total_gb=total_gb)
+    (logger.info if verdict.fits else logger.error)("Бюджет памяти: %s", verdict.reason)
