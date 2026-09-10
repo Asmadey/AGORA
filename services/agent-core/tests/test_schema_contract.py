@@ -54,11 +54,48 @@ def known_tables() -> set[str]:
     return tables
 
 
+def _without_comments(source: str) -> str:
+    """
+    Исходник без питоновских комментариев.
+
+    Разбор всего файла подряд ловит объяснения наравне с кодом: комментарий,
+    рассказывающий, почему в запросе не используется `EXTRACT(EPOCH FROM
+    started_at)`, читается этим же шаблоном как обращение к таблице
+    `started_at`. Проверка, срабатывающая на собственном объяснении, заставляет
+    писать комментарии так, чтобы они нравились регулярке.
+
+    Строки не трогаем: SQL живёт именно в них, и вырезать их значит выключить
+    проверку целиком. Достаточно убрать `#` до конца строки, не тронув решётку
+    внутри литерала.
+    """
+    out_lines: list[str] = []
+    for line in source.splitlines():
+        quote: str | None = None
+        cut = len(line)
+        i = 0
+        while i < len(line):
+            ch = line[i]
+            if quote:
+                if ch == "\\":
+                    i += 2
+                    continue
+                if ch == quote:
+                    quote = None
+            elif ch in "\"'":
+                quote = ch
+            elif ch == "#":
+                cut = i
+                break
+            i += 1
+        out_lines.append(line[:cut])
+    return "\n".join(out_lines)
+
+
 def queried_tables() -> dict[str, set[str]]:
     """Имя таблицы → файлы воркера, которые её спрашивают."""
     out: dict[str, set[str]] = {}
     for py in sorted((CORE / "agent_core").rglob("*.py")):
-        text = py.read_text("utf-8")
+        text = _without_comments(py.read_text("utf-8"))
         for name in _QUERY.findall(text):
             low = name.lower()
             if low in _NOT_TABLES:

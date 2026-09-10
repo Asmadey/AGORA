@@ -6,9 +6,13 @@ LangGraph-пайплайн живёт ВНУТРИ Celery-задачи, а не 
 """
 from __future__ import annotations
 
+import logging
 import os
+from typing import Any
 
 from celery import Celery
+
+logger = logging.getLogger(__name__)
 
 _broker = os.environ.get("VALKEY_URL", "redis://localhost:6379/0")
 
@@ -49,6 +53,9 @@ SOFT_TIME_LIMIT_SEC = int(os.environ.get("TASK_SOFT_TIME_LIMIT", 165 * 60))
 #: `task_time_limit` уже сработал: подтверждение приходит не в момент отсечки,
 #: а после выхода из задачи.
 VISIBILITY_TIMEOUT_SEC = TIME_LIMIT_SEC + 30 * 60
+
+#: Как часто искать осиротевшие прогоны. См. `maintenance/reaper.py`.
+REAP_INTERVAL_SEC = int(os.environ.get("REAP_INTERVAL_SEC", 15 * 60))
 
 #: Как держится соединение с брокером на длинном узле.
 #:
@@ -94,6 +101,33 @@ app.conf.update(
     # Результаты идут в тот же Valkey и по ОТДЕЛЬНОМУ соединению: настроить одно
     # и забыть второе значит починить половину отказов.
     result_backend_transport_options=BROKER_TRANSPORT_OPTIONS,
+    # ─── Сборщик осиротевших прогонов ───────────────────────────────────────
+    #
+    # Прогон, чей воркер убит извне (SIGKILL по нехватке памяти), остаётся
+    # RUNNING навсегда: статус ставит сам конвейер из блока except, а SIGKILL
+    # исключения не возбуждает. Такую строку не переведёт в FAILED никто —
+    # ни Celery, ни веб, ни следующий прогон.
+    #
+    # Расписание, а не проверка на чтении списка: сирота мешает не только
+    # тому, кто смотрит. Пока он RUNNING, его нельзя удалить (DELETE отвечает
+    # 202 «отмена запрошена» и ждёт остановки, которой не будет).
+    #
+    # Раз в пятнадцать минут: сборщик читает `teams` и по строке на арендатора,
+    # это дешевле любого прогона на три порядка, а задержка обнаружения и так
+    # определяется отсрочкой молчания в 45 минут.
+    beat_schedule={
+        "reap-orphans": {
+            "task": "agora.reap_orphans",
+            "schedule": REAP_INTERVAL_SEC,
+        },
+        # Тем же расписанием, а не своим: обе уборки дешёвые, а второй интервал
+        # означал бы вторую настройку, которую однажды поправят только в одном
+        # месте. Разбор /proc стоит меньше миллисекунды на процесс.
+        "reap-zombies": {
+            "task": "agora.reap_zombies",
+            "schedule": REAP_INTERVAL_SEC,
+        },
+    },
 )
 
 
@@ -101,3 +135,54 @@ app.conf.update(
 def ping() -> str:
     """Smoke-задача: проверяет, что брокер жив и воркер разбирает очередь."""
     return "pong"
+
+
+@app.task(name="agora.reap_orphans")
+def reap_orphans() -> dict[str, Any]:
+    """
+    Переводит в FAILED прогоны, чей воркер умер, не успев обновить статус.
+
+    Задача намеренно тонкая: вся логика — в `maintenance.reaper`, потому что
+    решение «жив ли прогон» проверяется арифметикой, а не живой базой. Здесь
+    только расписание и журнал.
+    """
+    from .maintenance.reaper import sweep
+
+    found = sweep(apply=True)
+    orphans = [f for f in found if "error" not in f]
+    problems = [f for f in found if "error" in f]
+
+    for o in orphans:
+        logger.warning(
+            "Осиротевший прогон %s переведён в FAILED: %s", o["task_id"][:8], o["reason"]
+        )
+    for p in problems:
+        logger.error("Сборщик не обошёл арендатора %s: %s", p["tenant_id"][:8], p["error"])
+
+    return {"orphans": len(orphans), "problems": len(problems)}
+
+
+@app.task(name="agora.reap_zombies")
+def reap_zombies() -> dict[str, Any]:
+    """
+    Подталкивает родителей зомби-процессов и докладывает о зависших.
+
+    Задача намеренно тонкая — по тому же доводу, что и `reap_orphans`: разбор
+    `/proc` проверяется на поддельном каталоге, а не на живой системе, поэтому
+    вся логика лежит в `maintenance.zombies`.
+
+    Смотрит внутрь СВОЕГО контейнера: пространство PID у воркера своё, и те два
+    зомби от 08.09.2026 были детьми главного процесса celery, то есть видны
+    отсюда. Хостовые процессы этой задаче не видны и не её забота.
+    """
+    from .maintenance.zombies import sweep
+
+    result = sweep(apply=True)
+
+    for z in result["stale"]:
+        logger.warning(
+            "Зомби-процесс %s (%s) висит %s мин; родителю %s послан SIGCHLD",
+            z["pid"], z["comm"], z["minutes"], z["ppid"],
+        )
+
+    return {"zombies": result["total"], "stale": len(result["stale"])}
