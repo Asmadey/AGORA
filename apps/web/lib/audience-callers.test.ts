@@ -57,11 +57,30 @@ const rel = (f: string) => f.slice(WEB.length).replace(/^\//, "");
 test("генерация набора вызывается только оттуда, где она осталась", () => {
   const callers = sources.filter((f) => /fetch\(\s*["'`]\/api\/audience/.test(stripComments(read(f))));
 
-  const allowed = ["components/agora/AudienceStep.tsx", "components/agora/PersonaSetChips.tsx"];
+  const allowed = [
+    "components/agora/AudienceStep.tsx",
+    "components/agora/AudienceRegistry.tsx",
+  ];
   assert.deepEqual(
     callers.map(rel).sort(),
     allowed.sort(),
-    "список вызывающих генерацию набора изменился",
+    "список обращающихся к /api/audience изменился",
+  );
+});
+
+test("создаёт набор только визард, остальные — читают и удаляют", () => {
+  // Прежняя проверка называлась «генерация вызывается только оттуда», но
+  // сравнивала список файлов, обращающихся к маршруту ЛЮБЫМ методом. Она не
+  // отличала «кто-то завёл второй конструктор» от «кто-то научился удалять» —
+  // а это ровно та разница, ради которой проверка и писалась.
+  const posts = sources.filter((f) => {
+    const src = stripComments(read(f));
+    return /fetch\(\s*["'`]\/api\/audience/.test(src) && /method:\s*["'`]POST["'`]/.test(src);
+  });
+  assert.deepEqual(
+    posts.map(rel),
+    ["components/agora/AudienceStep.tsx"],
+    "генерация набора появилась во втором месте",
   );
 });
 

@@ -1,48 +1,15 @@
-import { PersonaRegistry } from "@/components/agora/PersonaRegistry";
-import { withTenant } from "@/lib/server/db";
-import { requireSession } from "@/lib/server/guard";
-import { listPersonas, listPersonaSets } from "@/lib/server/personas";
+import { redirect } from "next/navigation";
 
 /**
- * Реестр персон (задача #6).
+ * Плоский реестр персон убран: раздел слит с «Аудиториями» (11.09.2026).
  *
- * Страница только читает данные: выбор, удаление и шапка живут в
- * `PersonaRegistry`. Кнопка «Удалить» обязана стоять в шапке, а состояние
- * выбора — в карточках; разведённые по серверному и клиентскому дереву, они
- * потребовали бы контекста ради одной кнопки.
+ * Он отвечал не на тот вопрос. Перед запуском спрашивают «на ком я буду
+ * проверять ролик», а не «покажи всех персон за всё время»: четыре сотни
+ * плашек подряд не просматривают. Ответ даёт страница набора.
  *
- * Кнопки «Сгенерировать набор» здесь больше нет (решение владельца,
- * 26.08.2026): она была обычной ссылкой в визард, а набор собирается там же,
- * шагом «Аудитория».
+ * `redirect`, а не 404: по этому адресу ходят закладки и ссылки из переписки,
+ * и чинить дублирование ценой сломанных ссылок — плохой размен.
  */
-
-export const dynamic = "force-dynamic";
-
-export default async function PersonasPage() {
-  const { tenantId } = await requireSession();
-
-  const { personas, sets } = await withTenant(tenantId, async (client) => ({
-    personas: await listPersonas(client),
-    sets: await listPersonaSets(client),
-  }));
-
-  return (
-    <PersonaRegistry
-      personas={personas.map((p) => ({
-        id: p.id,
-        name: p.name,
-        narrative: p.narrative,
-        createdAt: p.createdAt,
-        author: p.author,
-        dna: p.dna as unknown as Record<string, unknown>,
-      }))}
-      sets={sets.map((s) => ({
-        id: s.id,
-        name: s.name,
-        size: s.size,
-        personaCount: s.personaCount,
-        seed: s.seed,
-      }))}
-    />
-  );
+export default function PersonasPage() {
+  redirect("/audience");
 }

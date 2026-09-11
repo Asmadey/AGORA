@@ -1,35 +1,20 @@
-import Link from "next/link";
-import { UsersRound } from "lucide-react";
-
-import { PageHeader } from "@/components/AppShell";
-import { Chip } from "@/components/agora/Primitives";
-import { EmptyState } from "@/components/agora/States";
+import { AudienceRegistry } from "@/components/agora/AudienceRegistry";
 import { withTenant } from "@/lib/server/db";
 import { requireSession } from "@/lib/server/guard";
 import { listPersonaSets } from "@/lib/server/personas";
 
 /**
- * Наборы аудитории.
+ * Аудитории — единственный раздел про наборы персон.
  *
- * Экран показывает то же, что лежит в таблице `persona_sets`, — и это правка,
- * а не оформление. Прежняя версия генерировала набор через `/api/audience`
- * (то есть в базу он попадал), но список читала из localforage. Две копии
- * расходились при первом же входе с другой машины: база знала о наборах,
- * которых экран не показывал.
+ * До 11.09.2026 их было два: здесь лежал список наборов, а в «Персонах» —
+ * все персоны арендатора вперемешку плюс второй список тех же наборов
+ * плашками. Удаление набора жило только во втором, то есть не в том разделе,
+ * который наборам и посвящён.
  *
- * Число персон берётся из `persona_count`, а не из заявленного размера:
- * набор, у которого заказано 50, а сохранено 12, — это отказ генерации на
- * половине, и увидеть его надо здесь, а не в отчёте по прогону.
+ * Страница только читает: выбор, удаление и счётчики — в `AudienceRegistry`.
  *
- * ─── Почему здесь нет конструктора ────────────────────────────────────────
- * Был, и его убрали по решению владельца (26.08.2026). Набор заводится там,
- * где он нужен, — шагом «Аудитория» в визарде запуска. Два входа в одну
- * генерацию означали два места, где она настраивается, и расхождение между ними
- * замечали бы по составу набора, а не по интерфейсу.
- *
- * Маршрут `POST /api/audience` при этом остался: его зовёт визард. Убрать его
- * вместе с кнопкой значило бы сломать запуск исследования — тот самый риск,
- * который владелец назвал, и который держит lib/audience-callers.test.ts.
+ * Число персон берётся из `persona_count`, а не из заявленного размера: набор,
+ * у которого заказано 50, а сохранено 12, — это отказ генерации на половине.
  */
 
 export const dynamic = "force-dynamic";
@@ -39,65 +24,15 @@ export default async function AudiencePage() {
   const sets = await withTenant(tenantId, (client) => listPersonaSets(client));
 
   return (
-    <>
-      <PageHeader
-        title="Аудитории"
-        subtitle="Наборы синтетических персон. Каждый набор заземлён на корпус из 165 реальных респондентов: доли по возрасту, гео и полу берутся оттуда, а не задаются на глаз."
-      />
-
-      <div className="space-y-6 p-8">
-        {sets.length === 0 ? (
-          <EmptyState
-            icon={<UsersRound className="h-5 w-5" />}
-            title="Наборов пока нет"
-            description="Набор персон нужен для запуска исследования и создаётся вместе с ним — шагом «Аудитория» в визарде запуска."
-            action={{ href: "/studies/new", label: "Открыть визард запуска" }}
-          />
-        ) : (
-          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-            {sets.map((s) => {
-              const incomplete = s.personaCount < s.size;
-              return (
-                <div
-                  key={s.id}
-                  className="rounded-xl border border-hairline bg-card p-5"
-                >
-                  <h2 className="truncate font-medium">{s.name}</h2>
-
-                  <div className="mt-4 flex flex-wrap items-center gap-1.5">
-                    <Chip tone={incomplete ? "outline" : "muted"}>
-                      {s.personaCount} из {s.size} персон
-                    </Chip>
-                    {s.seed !== null && <Chip tone="outline">seed {s.seed}</Chip>}
-                  </div>
-
-                  {/* Неполный набор назван прямо. Молча показанное «12» вместо
-                      «12 из 50» читается как заказанный размер, и прогон на нём
-                      выглядит нормальным до самого отчёта. */}
-                  {incomplete && (
-                    <p className="mt-3 text-xs leading-relaxed text-warning">
-                      Набор заполнен не полностью: генерация оборвалась или была
-                      остановлена.
-                    </p>
-                  )}
-
-                  <div className="mt-4 flex items-center justify-between gap-2">
-                    <span className="text-xs text-slate">
-                      {new Date(s.createdAt).toLocaleDateString("ru-RU")}
-                    </span>
-                    <Link
-                      href={`/personas/sets/${s.id}`}
-                      className="text-xs text-slate underline underline-offset-4 transition-colors hover:text-ink"
-                    >
-                      Посмотреть персон
-                    </Link>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        )}
-      </div>
-    </>
+    <AudienceRegistry
+      sets={sets.map((s) => ({
+        id: s.id,
+        name: s.name,
+        size: s.size,
+        personaCount: s.personaCount,
+        seed: s.seed,
+        createdAt: s.createdAt,
+      }))}
+    />
   );
 }
