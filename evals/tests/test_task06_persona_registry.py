@@ -30,7 +30,18 @@ REPO = Path(__file__).resolve().parents[2]
 WEB = REPO / "apps" / "web"
 SCHEMA = REPO / "packages" / "shared" / "schemas" / "persona-dna.schema.json"
 
-LIST_PAGE = WEB / "app" / "personas" / "page.tsx"
+# Плашки персон переехали 11.09.2026: разделы «Персоны» и «Аудитории» слиты в
+# один, и список персон живёт теперь на странице НАБОРА, а не общим реестром.
+#
+# Условие задачи из графа этим не затронуто — оно говорит «клик по плашке
+# открывает карточку», не называя адреса. Плоский реестр отвечал не на тот
+# вопрос: перед запуском спрашивают «на ком я проверяю ролик», а не «покажи всех
+# персон за всё время».
+#
+# `/personas` остался рабочим адресом и перенаправляет на `/audience`; что
+# перенаправление на месте, держит apps/web/lib/audience-merge.test.ts — здесь
+# проверять его значило бы завести второе место для одного правила.
+LIST_PAGE = WEB / "app" / "personas" / "sets" / "[id]" / "page.tsx"
 CARD_PAGE = WEB / "app" / "personas" / "[id]" / "page.tsx"
 API_LIST = WEB / "app" / "api" / "personas" / "route.ts"
 API_ONE = WEB / "app" / "api" / "personas" / "[id]" / "route.ts"
@@ -94,7 +105,7 @@ api_list_src = read(API_LIST)
 api_one_src = read(API_ONE)
 api_sets_src = read(API_SETS)
 
-check("страница реестра существует", bool(list_src))
+check("страница состава набора существует", bool(list_src))
 check("страница карточки существует", bool(card_src))
 check("GET /api/personas существует", "export async function GET" in api_list_src)
 check("GET /api/personas/[id] существует", "export async function GET" in api_one_src)
@@ -126,7 +137,7 @@ def imports_mock(src: str) -> bool:
     )
 
 
-for page_name, src in (("реестр", list_src), ("карточка", card_src)):
+for page_name, src in (("состав набора", list_src), ("карточка", card_src)):
     check(
         f"{page_name} не читает MOCK-данные",
         not imports_mock(src),
