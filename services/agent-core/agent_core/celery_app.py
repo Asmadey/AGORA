@@ -58,6 +58,12 @@ VISIBILITY_TIMEOUT_SEC = TIME_LIMIT_SEC + 30 * 60
 #: Как часто искать осиротевшие прогоны. См. `maintenance/reaper.py`.
 REAP_INTERVAL_SEC = int(os.environ.get("REAP_INTERVAL_SEC", 15 * 60))
 
+#: Как часто пересчитывать мусор в хранилищах. См. `maintenance/orphan_storage.py`.
+#:
+#: Раз в сутки: проход листает бакет целиком, а копится мусор днями. Своим
+#: интервалом, а не общим с уборками выше, — он на два порядка дороже их.
+SWEEP_INTERVAL_SEC = int(os.environ.get("SWEEP_INTERVAL_SEC", 24 * 60 * 60))
+
 #: Как держится соединение с брокером на длинном узле.
 #:
 #: ─── Что чинится ──────────────────────────────────────────────────────────
@@ -128,6 +134,14 @@ app.conf.update(
             "task": "agora.reap_zombies",
             "schedule": REAP_INTERVAL_SEC,
         },
+        # Раз в сутки, а не раз в четверть часа: проход обходит бакет целиком
+        # постраничным листингом, а мусор копится днями, не минутами. И в
+        # отличие от двух соседей выше, этот НИЧЕГО НЕ УДАЛЯЕТ — он называет
+        # найденное в логе. Почему так, написано у самой задачи.
+        "sweep-storage": {
+            "task": "agora.sweep_storage",
+            "schedule": SWEEP_INTERVAL_SEC,
+        },
     },
 )
 
@@ -187,6 +201,81 @@ def reap_zombies() -> dict[str, Any]:
         )
 
     return {"zombies": result["total"], "stale": len(result["stale"])}
+
+
+@app.task(name="agora.sweep_storage")
+def sweep_storage() -> dict[str, Any]:
+    """
+    Пересчитывает мусор в S3, Mongo и слепках корпуса — и НЕ удаляет его.
+
+    ─── Почему по расписанию только счёт ────────────────────────────────────
+    Уборка при удалении исследования уже есть и делает своё дело. Этот проход
+    закрывает то, чего она закрыть не может: её отказ не повторяется, потому
+    что строка, хранившая адреса объектов, к тому моменту удалена.
+
+    Но сам проход отвечает на вопрос сравнением ТРЁХ хранилищ, и цена его
+    ошибки несимметрична. Ошибся в сторону молчания — заняты гигабайты. Ошибся
+    в обратную — удалены кадры и отчёты живых исследований, и восстановить их
+    неоткуда. Автоматическое удаление по такому сравнению стоит дороже мусора,
+    который оно убирает.
+
+    Поэтому расписание превращает невидимое в названное: в логе появляется
+    строка «столько-то объектов на столько-то мегабайт никому не принадлежат».
+    Раньше заметить это было неоткуда — экран чист, место занято, а счёт за
+    хранилище приходит раз в месяц и не объясняет, чем.
+
+    Удаление — отдельное решение человека:
+    `python -m agent_core.maintenance.orphan_storage --apply`.
+
+    ─── Что бывает вместо прохода ───────────────────────────────────────────
+    Отказ. Под политикой миграции 41 владелец схемы видит только RUNNING, и
+    пустой ответ означал бы «всё осиротело». `assert_full_task_visibility`
+    останавливает проход до первого чтения; пока миграция 42 не применена,
+    задача пишет в лог причину и возвращает пустой результат, а не догадку.
+    """
+    from .maintenance.orphan_storage import sweep as sweep_impl
+
+    try:
+        import os
+
+        import psycopg
+
+        from .mongo import mongo_db
+        from .storage import Boto3S3
+
+        dsn = os.environ.get("POSTGRES_ADMIN_URL")
+        if not dsn:
+            logger.warning("Уборка хранилищ пропущена: POSTGRES_ADMIN_URL не задан")
+            return {"skipped": "POSTGRES_ADMIN_URL"}
+
+        s3 = Boto3S3()
+        with psycopg.connect(dsn) as conn:
+            result = sweep_impl(
+                apply=False,
+                conn=conn,
+                s3=s3.client,
+                bucket=s3.bucket,
+                mongo=mongo_db(),
+            )
+    except Exception as exc:  # noqa: BLE001 — уборка не вправе ронять воркер
+        logger.warning("Уборка хранилищ не выполнена: %s", exc)
+        return {"skipped": str(exc)}
+
+    s3r = result.get("s3", {})
+    mongo_total = sum(result.get("mongo", {}).values())
+    snapshots = result.get("слепки", 0)
+    if s3r.get("байт") or mongo_total or snapshots:
+        logger.warning(
+            "Мусор в хранилищах: S3 %s объектов (%.1f МБ), Mongo %s документов, "
+            "слепков корпуса %s. Удаление: "
+            "python -m agent_core.maintenance.orphan_storage --apply",
+            s3r.get("кадров прогонов", 0) + s3r.get("загрузок", 0),
+            s3r.get("байт", 0) / 1024 / 1024,
+            mongo_total,
+            snapshots,
+        )
+
+    return result
 
 
 @worker_ready.connect

@@ -100,6 +100,17 @@ class Boto3S3(S3Client):
             config=Config(s3={"addressing_style": "path"}, retries={"max_attempts": 3}),
         )
 
+    @property
+    def client(self) -> Any:
+        """
+        Тот же boto3-клиент, настроенный один раз.
+
+        Нужен обслуживающим проходам, которым мало `upload`/`download`:
+        сборщику мусора — постраничный листинг и удаление. Второй клиент рядом
+        означал бы вторую настройку адресации, и разошлась бы она молча.
+        """
+        return self._client
+
     def upload(self, src: Path, key: str, content_type: str = "image/jpeg") -> None:
         """
         Кладёт файл в бакет. Ошибка не гасится: гасит вызывающий, если хочет.

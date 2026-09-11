@@ -1,6 +1,6 @@
 import { withTenant } from "@/lib/server/db";
 import { requireOwner, toResponse } from "@/lib/server/guard";
-import { createPortrait } from "@/lib/server/portraits";
+import { upsertDistilledPortrait } from "@/lib/server/portraits";
 
 /**
  * API портретов аудитории (задача #24) — авто-дистилляция из корпуса.
@@ -85,30 +85,42 @@ export async function POST(request: Request) {
       results = results.filter((r) => r.segment === segmentFilter);
     }
 
-    // Persist all distilled portraits to DB
+    // ─── Запись: по записи на сегмент, а не по комплекту на запуск ──────────
+    // Прежняя версия звала `createPortrait` и добавляла новый портрет на
+    // каждый запуск. Десять запусков дали десять комплектов на одни и те же
+    // сегменты, и воркеру, который ищет портрет ПО СЕГМЕНТУ, доставался тот,
+    // кто раньше попался.
+    //
+    // Сегмент — то единственное, по чему воркер найдёт портрет при сборке
+    // персоны, и запись по нему одна. Без сегмента дистилляция даёт красивый
+    // текст, который никогда никем не прочитается, — такой пропускается с
+    // объяснением, а не пишется молча.
+    const skipped: string[] = [];
     const portraits = await withTenant(tenantId, async (client) => {
-      const created = [];
+      const saved = [];
       for (const result of results) {
-        const p = await createPortrait(
-          client,
-          result.name,
-          result.body_md,
-          "distilled",
-          userId,
-          // Сегмент — то единственное, по чему воркер найдёт этот портрет при
-          // сборке персоны. Без него дистилляция даёт красивый текст, который
-          // никогда никем не прочитается.
-          result.segment,
+        if (!result.segment?.trim()) {
+          skipped.push(result.name);
+          continue;
+        }
+        saved.push(
+          await upsertDistilledPortrait(
+            client,
+            result.name,
+            result.body_md,
+            result.segment,
+            userId,
+          ),
         );
-        created.push(p);
       }
-      return created;
+      return saved;
     });
 
     return Response.json({
       portraits,
       count: portraits.length,
       method: useLlm ? "llm" : "deterministic",
+      skipped,
     });
   } catch (error) {
     return toResponse(error);
