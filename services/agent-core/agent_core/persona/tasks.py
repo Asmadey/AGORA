@@ -329,8 +329,22 @@ def _load_portraits(tenant_id: str) -> dict[str, str]:
 
         with psycopg.connect(dsn) as conn, tenant_scope(conn, tenant_id) as cur:
             cur.execute(
-                "SELECT segment_key, body_md FROM audience_portraits "
-                "WHERE segment_key IS NOT NULL AND body_md <> ''"
+                # DISTINCT ON, а не просто SELECT: 11.09.2026 в базе лежало по
+                # ДВА портрета на сегмент — дистилляция добавляла запись вместо
+                # замены. Без сортировки словарь оставлял последнюю строку из
+                # выдачи, а Postgres её порядок не гарантирует: какой из двух
+                # портретов достанется персоне, решал случай.
+                #
+                # Проявилось бы это так: два одинаковых прогона дают разные
+                # описания персон — при тех же настройках, критериях и seed.
+                # Искать причину пришлось бы где угодно, только не здесь.
+                #
+                # Побеждает свежий по updated_at: он и есть тот, который человек
+                # видит в разделе «Портреты».
+                "SELECT DISTINCT ON (segment_key) segment_key, body_md "
+                "  FROM audience_portraits "
+                " WHERE segment_key IS NOT NULL AND body_md <> '' "
+                " ORDER BY segment_key, updated_at DESC, id DESC"
             )
             return {str(k): str(v) for k, v in cur.fetchall()}
     except Exception:  # noqa: BLE001

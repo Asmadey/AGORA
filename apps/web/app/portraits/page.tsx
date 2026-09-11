@@ -6,6 +6,7 @@ import { requireSession } from "@/lib/server/guard";
 import { listPortraits } from "@/lib/server/portraits";
 import Link from "next/link";
 import { Database, ScrollText } from "lucide-react";
+import { PortraitsHint } from "@/components/agora/PortraitsHint";
 
 /**
  * Портреты аудиторий (задача #24).
@@ -56,7 +57,12 @@ export default async function PortraitsPage() {
   return (
     <>
       <PageHeader
-        title="Портреты аудиторий"
+        title={
+          <span className="inline-flex items-center gap-2">
+            Портреты аудиторий
+            <PortraitsHint />
+          </span>
+        }
         subtitle="Описания сегментов, которые подмешиваются в генерацию персон. Портрет уточняет персон, но не переопределяет заземление на корпус."
         actions={
           /* Портрет — это сжатие корпуса, а корпус до сих пор был невидим:
