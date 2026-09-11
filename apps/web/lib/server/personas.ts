@@ -234,12 +234,46 @@ export async function deletePersonaSets(
 
   if (free.length === 0) return { deleted: 0, blocked };
 
+  // ─── Слепок корпуса уходит вместе с набором ──────────────────────────────
+  // `persona_sets.corpus_snapshot_id` объявлен `ON DELETE SET NULL`: удаление
+  // набора обнуляло ссылку и оставляло слепок. Найти его после этого нечем —
+  // на него не смотрит уже ничто, а сам он не знает, чей он был. К 11.09.2026
+  // таких накопилось 59 штук на 33 МБ, все — копии одного состояния корпуса.
+  //
+  // Безопасно это ровно потому, что выше набор с прогонами НЕ удаляется: у
+  // удаляемого набора нет отчёта, которому слепок нужен для ответа «на ком это
+  // считали». Слепок набора, оставшегося жить, здесь не читается вовсе.
+  //
+  // Адреса читаются ДО удаления наборов: после него ссылка обнулена, и списка
+  // уже не будет.
+  const { rows: snaps } = await client.query<{ id: string }>(
+    `SELECT DISTINCT corpus_snapshot_id AS id
+       FROM persona_sets
+      WHERE id = ANY($1::uuid[]) AND corpus_snapshot_id IS NOT NULL`,
+    [free],
+  );
+
   // Персоны уезжают каскадом (`personas_persona_set_id_fkey ON DELETE CASCADE`)
   // — отдельного запроса не нужно, и его отсутствие здесь намеренное.
   const { rowCount } = await client.query(
     "DELETE FROM persona_sets WHERE id = ANY($1::uuid[])",
     [free],
   );
+
+  if (snaps.length > 0) {
+    // Слепок, на который смотрит другой уцелевший набор, не трогается:
+    // условие `NOT EXISTS` проверяет это уже после удаления, то есть по
+    // фактическому состоянию, а не по намерению.
+    await client.query(
+      `DELETE FROM corpus_snapshots cs
+        WHERE cs.id = ANY($1::uuid[])
+          AND NOT EXISTS (
+            SELECT 1 FROM persona_sets ps WHERE ps.corpus_snapshot_id = cs.id
+          )`,
+      [snaps.map((s) => s.id)],
+    );
+  }
+
   return { deleted: rowCount ?? 0, blocked };
 }
 

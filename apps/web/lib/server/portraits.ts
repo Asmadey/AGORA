@@ -197,6 +197,83 @@ export async function createPortrait(
 }
 
 /**
+ * Портрет сегмента: обновить существующий, завести только если его нет.
+ *
+ * ─── Что чинится ──────────────────────────────────────────────────────────
+ * Дистилляция звала `createPortrait` для каждого сегмента, и каждый запуск
+ * добавлял полный комплект. К 11.09.2026 на боевой базе лежало 38 портретов
+ * на 19 сегментов — по паре близнецов на каждый, плюс 163 записи вообще без
+ * ключа сегмента, удалённые отдельно.
+ *
+ * Цена не в месте. Воркер ищет портрет ПО СЕГМЕНТУ, и при двух записях с
+ * одним ключом выбор доставался тому, кто раньше попался. То есть две персоны
+ * одного сегмента могли быть описаны по разным портретам, а разницу не видно
+ * ни в интерфейсе, ни в отчёте.
+ *
+ * ─── Почему по сегменту, а не по имени ────────────────────────────────────
+ * Имя человек правит руками. Матчинг по имени разошёлся бы на первом
+ * переименовании — молча, потому что портрет просто перестал бы находиться.
+ * Сегмент — это ключ, а не подпись: он один на сегмент по определению.
+ *
+ * ─── Что происходит с историей ────────────────────────────────────────────
+ * Обновление пишет новую версию в `audience_portrait_versions` с редактором
+ * `distilled`. Прежний текст остаётся в истории — повторная дистилляция не
+ * стирает то, что было, а продолжает ряд.
+ */
+export async function upsertDistilledPortrait(
+  client: PoolClient,
+  name: string,
+  bodyMd: string,
+  segmentKey: string,
+  userId?: string,
+): Promise<Portrait> {
+  const key = segmentKey?.trim();
+  if (!key) {
+    // Без ключа обновлять нечего и сопоставлять нечем: такой портрет воркер
+    // не найдёт никогда. Отказ громче, чем запись, которую никто не прочтёт.
+    throw new Error("дистиллированный портрет без segment_key не сохраняется");
+  }
+
+  // Существующий ищется по сегменту в пределах арендатора — RLS сужает
+  // выборку сама, отдельного условия по tenant_id не нужно.
+  const { rows: found } = await client.query<{ id: string }>(
+    `SELECT id FROM audience_portraits
+      WHERE segment_key = $1
+      ORDER BY updated_at DESC, id DESC
+      LIMIT 1`,
+    [key],
+  );
+
+  if (found.length === 0) {
+    return createPortrait(client, name, bodyMd, "distilled", userId, key);
+  }
+
+  const portraitId = found[0].id;
+  const { rows: updated } = await client.query<PortraitRow>(
+    `UPDATE audience_portraits
+        SET body_md = $2, name = $3, source = 'distilled', updated_at = now()
+      WHERE id = $1
+      RETURNING id, tenant_id, name, body_md, source, created_at, updated_at`,
+    [portraitId, bodyMd, name],
+  );
+
+  const { rows: vRows } = await client.query<{ max_ver: number | null }>(
+    `SELECT COALESCE(max(version), 0) AS max_ver
+       FROM audience_portrait_versions
+      WHERE portrait_id = $1`,
+    [portraitId],
+  );
+
+  await client.query(
+    `INSERT INTO audience_portrait_versions (tenant_id, portrait_id, version, body_md, editor, created_by)
+     VALUES ($1, $2, $3, $4, 'distilled', $5)`,
+    [updated[0].tenant_id, portraitId, (vRows[0]?.max_ver ?? 0) + 1, bodyMd, userId ?? null],
+  );
+
+  return rowToPortrait(updated[0]);
+}
+
+/**
  * Удаление портрета.
  *
  * Версии уходят каскадом (`audience_portrait_versions.portrait_id`). Персоны,
