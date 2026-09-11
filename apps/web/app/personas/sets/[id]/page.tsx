@@ -1,9 +1,10 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, ArrowUpRight } from "lucide-react";
 
 import { PageHeader } from "@/components/AppShell";
 import { Chip } from "@/components/agora/Primitives";
+import { GenerationCriteria } from "@/components/agora/GenerationCriteria";
 import { EmptyState } from "@/components/agora/States";
 import { withTenant } from "@/lib/server/db";
 import { requireSession } from "@/lib/server/guard";
@@ -73,13 +74,13 @@ export default async function PersonaSetPage({
         subtitle={`Набор из ${set.personaCount} персон${
           set.seed !== null ? ` · seed ${set.seed}` : ""
         } · создан ${new Date(set.createdAt).toLocaleDateString("ru-RU")}`}
-        actions={
+        back={
           <Link
-            href="/personas"
-            className="inline-flex items-center gap-2 rounded-full border border-hairline px-4 py-2 text-sm transition-colors hover:bg-surface"
+            href="/audience"
+            aria-label="К аудиториям"
+            className="grid h-8 w-8 place-items-center rounded-full border border-hairline text-slate transition-colors hover:border-ink hover:text-ink"
           >
             <ArrowLeft className="h-4 w-4" />
-            К реестру
           </Link>
         }
       />
@@ -140,24 +141,7 @@ export default async function PersonaSetPage({
         {/* Критерии генерации показываются как есть, а не пересказом: по ним
             набор воспроизводится, и переписывание их своими словами — лишний
             повод разойтись с тем, что реально ушло в генератор. */}
-        {Object.keys(set.generationConfig ?? {}).length > 0 && (
-          <section className="rounded-xl border border-hairline bg-card p-5">
-            <h2 className="text-sm font-semibold">Критерии генерации</h2>
-            <p className="mt-1 text-xs text-slate">
-              Тот же набор с тем же seed воспроизводится по этим параметрам
-            </p>
-            <dl className="mt-4 grid gap-x-6 gap-y-2 sm:grid-cols-2">
-              {Object.entries(set.generationConfig).map(([key, value]) => (
-                <div key={key} className="flex justify-between gap-3 text-sm">
-                  <dt className="text-slate">{key}</dt>
-                  <dd className="text-right">
-                    {Array.isArray(value) ? value.join(", ") : String(value ?? "—")}
-                  </dd>
-                </div>
-              ))}
-            </dl>
-          </section>
-        )}
+        <GenerationCriteria config={set.generationConfig ?? {}} seed={set.seed} />
 
         {personas.length === 0 ? (
           <EmptyState
@@ -173,10 +157,14 @@ export default async function PersonaSetPage({
               const city = String(dna?.demographics?.city ?? "");
               const hue = avatarHue(p.id);
               return (
+                // Карточка целиком остаётся ссылкой, а стрелка — значок
+                // внутри неё, а не вложенная ссылка: ссылка внутри ссылки —
+                // недопустимая разметка, и браузеры расходятся в том, что по
+                // ней происходит. Нажатие на стрелку при этом ведёт туда же.
                 <Link
                   key={p.id}
                   href={`/personas/${p.id}`}
-                  className="rounded-xl border border-hairline bg-card p-5 transition-colors hover:border-hairline-strong"
+                  className="flex flex-col rounded-xl border border-hairline bg-card p-5 transition-colors hover:border-hairline-strong"
                 >
                   <div className="flex items-start gap-3">
                     <div
@@ -189,7 +177,10 @@ export default async function PersonaSetPage({
                       {initials(p.name)}
                     </div>
                     <div className="min-w-0 flex-1">
-                      <h3 className="truncate font-medium">{p.name}</h3>
+                      <div className="flex items-start gap-2">
+                        <h3 className="min-w-0 flex-1 truncate font-medium">{p.name}</h3>
+                        <ArrowUpRight className="h-4 w-4 shrink-0 text-slate" aria-hidden="true" />
+                      </div>
                       <div className="mt-2 flex flex-wrap gap-1.5">
                         {age > 0 && <Chip>{generation(age)}</Chip>}
                         {age > 0 && <Chip tone="outline">{age} лет</Chip>}
@@ -202,6 +193,13 @@ export default async function PersonaSetPage({
                       {p.narrative}
                     </p>
                   )}
+                  {/* mt-auto: без него описание в две строки и в одну дают
+                      подвалы на разной высоте, и в сетке это читается как
+                      съехавшая вёрстка. */}
+                  <p className="mt-4 pt-1 text-xs text-stone mt-auto">
+                    Создана {new Date(p.createdAt).toLocaleDateString("ru-RU")}
+                    {p.author ? ` · Создал ${p.author}` : ""}
+                  </p>
                 </Link>
               );
             })}

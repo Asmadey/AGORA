@@ -7,7 +7,6 @@ import {
   FolderKanban,
   ListChecks,
   ClipboardList,
-  Users,
   UsersRound,
   BookUser,
   BookOpen,
@@ -49,9 +48,11 @@ import { ThemeToggle } from "@/components/ThemeToggle";
 const NAV = [
   { href: "/researches", label: "Исследования", icon: ListChecks },
   { href: "/projects", label: "Проекты", icon: FolderKanban },
+  // «Персоны» отдельным пунктом убраны 11.09.2026: раздел показывал всех
+  // персон вперемешку и второй раз — список наборов. Состав набора виден
+  // на его странице, карточка персоны — по ссылке оттуда.
   { href: "/audience", label: "Аудитории", icon: UsersRound },
   { href: "/surveys", label: "Анкеты", icon: ClipboardList },
-  { href: "/personas", label: "Персоны", icon: Users },
   { href: "/portraits", label: "Портреты аудиторий", icon: BookUser },
   // Датасет — то, на чём стоит заземление: из него считаются доли, по которым
   // сэмплируются персоны. До этапа Е он лежал файлом в репозитории, то есть
