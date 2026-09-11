@@ -147,3 +147,35 @@ class TestОтчётПриСтартеДоезжаетДоЖурнала:
 
     def test_не_подключён_к_celeryd_init(self):
         assert not re.search(r"@\s*celeryd_init\.connect", self._src())
+
+
+class TestПортретВыбираетсяОднозначно:
+    """
+    Запрос портретов обязан быть детерминированным.
+
+    11.09.2026 в базе лежало по ДВА портрета на сегмент — дистилляцию запускали
+    дважды, и она добавляла запись вместо замены. Запрос `_load_portraits` не
+    имел `ORDER BY`, а словарь оставляет последнюю строку: какой из двух
+    портретов достанется персоне, решал порядок выдачи Postgres, который без
+    сортировки не гарантирован.
+
+    Проявилось бы это так: два одинаковых прогона дают разные описания персон
+    без единой видимой причины — ни в настройках, ни в критериях, ни в seed.
+    """
+
+    @staticmethod
+    def _query() -> str:
+        src = Path(__file__).resolve().parents[1] / "agent_core" / "persona" / "tasks.py"
+        text = src.read_text("utf-8")
+        start = text.index("def _load_portraits")
+        return text[start : start + 1600]
+
+    def test_запрос_детерминирован(self):
+        q = self._query()
+        assert "DISTINCT ON" in q or "ORDER BY" in q, "порядок выдачи не задан"
+
+    def test_выигрывает_свежий(self):
+        # При дубликатах брать надо последний по времени правки: он и есть тот,
+        # который человек видит в разделе «Портреты».
+        q = self._query()
+        assert "updated_at" in q
