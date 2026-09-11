@@ -87,3 +87,6 @@ infra/langfuse/.env
 docs/api cloud.ru/
 docs/Evaluative research/
 docs/updates/
+
+# graft's local graph cache — regenerable, not committed (run `graft build`).
+/graft/
