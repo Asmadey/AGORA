@@ -21,6 +21,9 @@ compose. Умолчание там не случайное: рядом лежи�
 """
 from __future__ import annotations
 
+import re
+from pathlib import Path
+
 import pytest
 
 from agent_core.maintenance.memory_budget import (
@@ -116,3 +119,31 @@ class TestЧтениеПамяти:
         # Ноль объявил бы негодной любую машину. Неизвестность обязана
         # оставаться неизвестностью.
         assert read_total_gb(cgroup_dir=tmp_path, meminfo=tmp_path / "нет") is None
+
+
+class TestОтчётПриСтартеДоезжаетДоЖурнала:
+    """
+    Сигнал обязан приходить ПОСЛЕ настройки логирования.
+
+    11.09.2026 отчёт был подключён к `celeryd_init` — первому сигналу celery.
+    На боевом он отработал без единой ошибки и не оставил в журнале ничего:
+    логирование к тому моменту ещё не настроено, и запись теряется молча.
+
+    Проверено тогда же: argv содержал `--concurrency=1`, разбор возвращал 1,
+    арифметика внутри контейнера давала верный ответ. Не работала только
+    доставка до журнала — то есть ровно то, ради чего отчёт и заведён.
+
+    Проверка смотрит на СТРОКУ ДЕКОРАТОРА, а не на упоминание имени: иначе
+    она поймала бы это самое объяснение и была бы зелёной при любом сигнале.
+    """
+
+    @staticmethod
+    def _src() -> str:
+        src = Path(__file__).resolve().parents[1] / "agent_core" / "celery_app.py"
+        return src.read_text("utf-8")
+
+    def test_подключён_к_worker_ready(self):
+        assert re.search(r"@\s*worker_ready\.connect", self._src())
+
+    def test_не_подключён_к_celeryd_init(self):
+        assert not re.search(r"@\s*celeryd_init\.connect", self._src())

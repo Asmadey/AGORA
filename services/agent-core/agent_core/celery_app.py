@@ -11,7 +11,7 @@ import os
 from typing import Any
 
 from celery import Celery
-from celery.signals import celeryd_init
+from celery.signals import worker_ready
 
 logger = logging.getLogger(__name__)
 
@@ -189,7 +189,7 @@ def reap_zombies() -> dict[str, Any]:
     return {"zombies": result["total"], "stale": len(result["stale"])}
 
 
-@celeryd_init.connect
+@worker_ready.connect
 def _report_memory_budget(**_: object) -> None:
     """
     Печатает бюджет памяти при старте воркера.
@@ -201,6 +201,16 @@ def _report_memory_budget(**_: object) -> None:
 
     Здесь — то, что видит человек, когда воркер уже умер и он ищет причину.
     `WorkerLostError: signal 9` про память не говорит ничего.
+
+    ─── Почему именно этот сигнал ──────────────────────────────────────────
+    Сначала отчёт висел на первом сигнале celery. 11.09.2026 на боевом он
+    отработал БЕЗ ЕДИНОЙ ОШИБКИ и не оставил в журнале ничего: логирование к
+    тому моменту ещё не настроено, и запись теряется молча.
+
+    Отчёт, которого не видно, ничем не отличается от отсутствующего — а
+    молчащая проверка хуже отсутствующей, потому что на неё рассчитывают.
+    Здесь сигнал приходит, когда воркер уже готов принимать задачи, то есть
+    после настройки логирования.
     """
     import sys
 
