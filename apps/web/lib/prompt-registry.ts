@@ -64,10 +64,11 @@ export const PROMPT_REGISTRY: PromptMeta[] = [
     about: [
       "Собирает набор уникальных персон — представителей аудитории, описанной критериями визарда. Не усреднённые копии: у каждой свои взгляды, лексика и поводы для раздражения.",
       "Заземление держится не на этом промпте, а на сэмплировании: доли по полу, возрасту и гео считает генератор из корпуса 165 респондентов, и модель получает их уже посчитанными. Промпт отвечает за правдоподобие текста, а не за состав выборки — поэтому правка здесь не изменит распределения, а метрика persona_grounding останется прежней.",
+      "НЕ ПОДКЛЮЧЁН (проверено 16.09.2026). Боевая генерация идёт детерминированным путём: и задача Celery, и CLI зовут generator.generate_named, а этот шаблон читает только generator.render_prompt, которого не вызывает никто. Правка текста здесь на результат не влияет — владелец менял «values (3-5)» на «values (5)» и получил прежние три. Число ценностей задаёт VALUES_PER_PERSONA в generator.py, список — data/values/traditional_values.json.",
     ],
     inputs: "{{criteria}}, {{portrait_md}}, {{size}}, {{seed}}, {{segment_distributions}}, {{verbatim_pool}}",
     output: "JSON-массив объектов Persona DNA по схеме packages/shared/schemas/persona-dna",
-    calledBy: "agent_core/persona/generator.py",
+    calledBy: "никем: generator.render_prompt не вызывается (см. выше)",
   },
   {
     key: "persona.enrich",

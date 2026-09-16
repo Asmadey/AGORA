@@ -19,7 +19,7 @@ seed = {{seed}} (детерминизм: те же входы → тот же р
 - occupation (род занятий), position (должность), career_experience (кратко), hobbies (2-4)
 - generation (поколение: зумеры/миллениалы/иксы/бумеры по возрасту)
 - big_five (шкала 1..5): openness, conscientiousness, extraversion, agreeableness, neuroticism
-- values (3-5, из ВЦИОМ-набора портрета)
+- values (ровно 5, из канонического перечня 17 традиционных ценностей)
 - media_habits, genre_tastes, tolerances, decision_pattern (как решает смотреть/бросить)
 - speech_style (2-3 характерные черты речи, опираясь на образцы)
 - narrative (связный портрет 3-4 предложения от 3-го лица)
