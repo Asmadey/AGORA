@@ -1,8 +1,9 @@
 "use client";
 
-import { memo, useCallback, useEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { humanDuration } from "@/lib/progress-state";
+import { sceneColumnShare } from "@/lib/timeline-columns";
 import type { TimelineCell, TimelineView } from "@/lib/server/content-pack";
 
 /**
@@ -130,6 +131,42 @@ export function Timeline({
    * Картинка уже скачивается как постер, поэтому второй загрузки здесь нет:
    * браузер отдаёт её из кеша.
    */
+  /**
+   * Ширина колонок «Сцена» и «Речь» — по составу пакета.
+   *
+   * ─── Почему ДО ранних возвратов ──────────────────────────────────────────
+   * Ниже стоят три `return` на ошибку, загрузку и пустой таймлайн. Хук после
+   * них вызывался бы не на каждом рисовании, и порядок хуков поехал бы. На
+   * этом уже споткнулись с `useCallback` в этом же файле — правило одно.
+   *
+   * ─── Почему useMemo ──────────────────────────────────────────────────────
+   * Перебор долей трогает все 322 ячейки. Без памяти он повторялся бы на
+   * каждой смене текущей секунды — около четырёх раз в секунду при
+   * воспроизведении.
+   */
+  const share = useMemo(
+    () => sceneColumnShare(data?.timeline?.cells ?? []),
+    [data],
+  );
+
+  /**
+   * Одна величина на обе сетки — шапку и каждую ячейку.
+   *
+   * Два места с одинаковым числом однажды разойдутся, и заголовок «РЕЧЬ»
+   * встанет не над своей колонкой; заметить это можно будет только глазом.
+   *
+   * `useMemo` здесь не украшение, а условие работы `Cell`. Ячейка
+   * мемоизирована, и объект стилей, пересобранный на каждом рисовании, — это
+   * новые props: все 322 ячейки перерисовывались бы на каждой смене текущей
+   * секунды. Ровно та же ловушка, что с `onSeek`.
+   */
+  const columns = useMemo(
+    () => ({
+      gridTemplateColumns: `minmax(0,${share.toFixed(2)}fr) minmax(0,${(1 - share).toFixed(2)}fr)`,
+    }),
+    [share],
+  );
+
   const poster = data?.timeline?.cells.find((c) => c.screenshot)?.screenshot ?? null;
   useEffect(() => {
     if (!poster) return;
@@ -403,7 +440,10 @@ export function Timeline({
         построению.
       */}
       <div className="max-h-[600px] overflow-y-auto rounded-[5px] bg-secondary/50 p-3">
-        <div className="mb-2 grid grid-cols-[minmax(0,7fr)_minmax(0,9fr)] gap-3 px-2 text-[11px] uppercase tracking-wide text-slate">
+        <div
+          className="mb-2 grid gap-3 px-2 text-[11px] uppercase tracking-wide text-slate"
+          style={columns}
+        >
           <span>Сцена</span>
           <span>Речь</span>
         </div>
@@ -430,6 +470,7 @@ export function Timeline({
                 sceneNumber={cell.scene === null ? null : ++sceneNo}
                 active={currentSec >= cell.start && currentSec < cell.end}
                 onSeek={seek}
+                columns={columns}
               />
             ));
           })()}
@@ -459,12 +500,19 @@ const Cell = memo(function Cell({
   sceneNumber,
   active,
   onSeek,
+  columns,
 }: {
   cell: TimelineCell;
   /** Порядковый номер сцены. null — реплики до первой сцены, это не сцена. */
   sceneNumber: number | null;
   active: boolean;
   onSeek: (sec: number) => void;
+  /**
+   * Доли колонок «Сцена» и «Речь». Приходит СТАБИЛЬНОЙ ссылкой (`useMemo` у
+   * родителя): пересобранный объект стилей — это новые props, и мемоизация
+   * ячейки перестаёт значить что-либо.
+   */
+  columns: React.CSSProperties;
 }) {
   return (
     /*
@@ -481,7 +529,8 @@ const Cell = memo(function Cell({
       <button
         type="button"
         onClick={() => onSeek(cell.start)}
-        className={`grid w-full grid-cols-[minmax(0,7fr)_minmax(0,9fr)] gap-3 rounded-md border p-2 text-left transition-colors ${
+        style={columns}
+        className={`grid w-full gap-3 rounded-md border p-2 text-left transition-colors ${
           active
             ? "border-brand-blue bg-surface-yellow"
             : "border-transparent hover:border-hairline hover:bg-secondary"
