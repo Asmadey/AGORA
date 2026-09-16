@@ -17,6 +17,10 @@
 это допускает: потолок аудитории — 100 персон (`AUDIENCE_SIZE_BOUNDS`), самый
 большой боевой набор дал 231 КБ ответов. Урезать то, что влезает, значит
 отвечать по части данных и не иметь способа об этом сказать.
+
+Урезается не содержание, а служебное — см. `slim_pack` ниже. Разница
+принципиальная: выборка отвечает по части данных, чистка отдаёт те же данные
+без их внутренних координат.
 """
 
 from __future__ import annotations
@@ -34,6 +38,65 @@ def _own_answers(answers: list[dict[str, Any]], persona_id: str) -> list[dict[st
     ]
 
 
+#: Поля сцены, которые в разговор не едут.
+#:
+#: `screenshot` — подписанная ссылка на файл в S3. Текстовая модель картинок не
+#: видит; на боевом прогоне 0091 это 15 233 токена URL, из которых не следует
+#: ничего.
+#:
+#: `frame_times`, `panel_index`, `key` — внутренние координаты нарезки и склейки
+#: панелей. Нужны конвейеру, а не собеседнику.
+#:
+#: `timestamp` — строковый двойник `timestamp_sec`: «6.00» против 6.0.
+#:
+#: ЧЕГО ЗДЕСЬ НЕТ И НЕ ДОЛЖНО БЫТЬ: `time`. Оно выглядит четвёртым написанием
+#: времени, но в нём лежит «0:06–0:16» — ровно тот формат `MM:SS`, который
+#: промпт требует для ссылок, а `has_support` ищет регуляркой. Убрав его, мы
+#: оставили бы модели только числа вида 6.0: она писала бы «на 6-й секунде»,
+#: опора не засчитывалась бы, и каждый ответ получал бы пометку «без опоры на
+#: материал». Отказа при этом не было бы — чат выглядел бы исправным.
+_SCENE_NOISE = ("screenshot", "frame_times", "panel_index", "key", "timestamp")
+
+#: Ключи пакета, которые в разговор не едут.
+#:
+#: `timeline` — не данные, а ВИД: он собран для экрана из тех же `scenes` и
+#: `transcript`, в другой форме. Модель получала описания всех сцен дважды —
+#: 61 403 токена на прогоне 0091.
+_PACK_NOISE = ("timeline",)
+
+
+def slim_pack(pack: dict[str, Any]) -> dict[str, Any]:
+    """
+    Пакет материала без служебного веса.
+
+    ─── Зачем ────────────────────────────────────────────────────────────────
+    16.09.2026 чат по прогону 0091 отвечал отказом: 260 945 токенов входа при
+    потолке 262 144. Замер показал, что 88 % веса — пакет материала, и 34 % от
+    всего контекста не несут ни одного факта, которого нет рядом.
+
+    ─── Что это НЕ ───────────────────────────────────────────────────────────
+    Не выборка. Ни одна сцена, ни одна реплика и ни одно описание отсюда не
+    пропадают: убираются только внутренние координаты и дубликат вида. Разница
+    важна — выборка означала бы ответ по части материала, и об этом пришлось бы
+    предупреждать в каждом ответе.
+
+    Копия, а не правка на месте: пакет читается один раз и живёт дальше, а срез
+    не вправе менять то, из чего собран, — тот же довод, что у `_own_answers`.
+    """
+    slim = {k: copy.deepcopy(v) for k, v in pack.items() if k not in _PACK_NOISE}
+
+    scenes = slim.get("scenes")
+    if isinstance(scenes, list):
+        slim["scenes"] = [
+            {k: v for k, v in scene.items() if k not in _SCENE_NOISE}
+            if isinstance(scene, dict)
+            else scene
+            for scene in scenes
+        ]
+
+    return slim
+
+
 def persona_context(
     *,
     persona: dict[str, Any],
@@ -45,7 +108,7 @@ def persona_context(
     """Срез для допроса персоны. Чужих ответов здесь нет как данных."""
     return {
         "persona_dna": copy.deepcopy(persona.get("dna") or {}),
-        "video_understanding": copy.deepcopy(pack),
+        "video_understanding": slim_pack(pack),
         "survey": copy.deepcopy(survey),
         "my_previous_answers": _own_answers(answers, str(persona.get("id") or "")),
         "chat_history": copy.deepcopy(history),
@@ -65,7 +128,7 @@ def analyst_context(
     return {
         "report": copy.deepcopy(report),
         "all_persona_answers": copy.deepcopy(answers),
-        "video_understanding": copy.deepcopy(pack),
+        "video_understanding": slim_pack(pack),
         "survey": copy.deepcopy(survey),
         "qa_flags": copy.deepcopy(qa_flags or []),
         "chat_history": copy.deepcopy(history),
