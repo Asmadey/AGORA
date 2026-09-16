@@ -9,6 +9,7 @@ import { ShareDialog } from "@/components/agora/ShareDialog";
 import { withTenant } from "@/lib/server/db";
 import { requireSession } from "@/lib/server/guard";
 import { loadReport, loadReportPersonas } from "@/lib/server/reports";
+import { valueDistribution } from "@/lib/server/personas";
 import { getTask, taskNumber, loadRunTiming } from "@/lib/server/tasks";
 import { notFound } from "next/navigation";
 import { resolveRun } from "@/lib/server/run-ref";
@@ -84,6 +85,12 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
   // e81feb92-97a2-43ad-8112-de7503699c60» нельзя ни произнести, ни запомнить, а
   // сослаться на прогон в разговоре нужно каждый день.
   const task = await withTenant(tenantId, (client) => getTask(client, id));
+  // Ценности считаются по персонам НАБОРА, а не по отчёту: поле, добавленное
+  // в отчёт, появилось бы только у прогонов, посчитанных после правки, а
+  // dna персон доступна для любого закрытого прогона.
+  const values = await withTenant(tenantId, (client) =>
+    valueDistribution(client, id),
+  );
   const number = taskNumber(run.seqNo);
   // Подпись живёт час: записанная в базу ссылка протухла бы к первому открытию.
   const videoUrl = task?.videoRef ? safePresign(task.videoRef) : null;
@@ -161,6 +168,7 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
           qaNote={qaNote}
           scope="full"
           timing={timing}
+          values={values}
           timeline={<Timeline runId={id} />}
           rawReport={
             /*
