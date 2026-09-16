@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useRef, useState } from "react";
 
 import type { TimelineCell, TimelineView } from "@/lib/server/content-pack";
 
@@ -100,6 +100,27 @@ export function Timeline({ runId, src }: { runId: string; src?: string }) {
     return () => window.removeEventListener("hashchange", jump);
   }, [data]);
 
+  /*
+    Объявлен ДО ранних возвратов: хуки обязаны вызываться в одном и том же
+    порядке при каждой перерисовке, а ниже стоят три `return` по состоянию
+    загрузки. Первая редакция этой правки поставила `useCallback` после них —
+    поймал eslint, и поймал правильно.
+
+    `useCallback` здесь не украшение. `Cell` мемоизирован, и мемоизация
+    работает лишь пока props не меняются. Функция, созданная заново на каждой
+    перерисовке, отличается от прежней всегда — и memo не спасает ни одной
+    ячейки из 322.
+  */
+  const seek = useCallback((sec: number) => {
+    const el = videoRef.current;
+    if (!el) return;
+    el.currentTime = sec;
+    void el.play().catch(() => {
+      // Автовоспроизведение может быть запрещено политикой браузера. Перемотка
+      // при этом уже случилась — этого достаточно.
+    });
+  }, []);
+
   if (error) {
     return <p className="text-sm text-slate">Таймлайн не загрузился: {error}</p>;
   }
@@ -119,16 +140,6 @@ export function Timeline({ runId, src }: { runId: string; src?: string }) {
   }
 
   const { cells, durationSec, stats } = data.timeline;
-
-  const seek = (sec: number) => {
-    const el = videoRef.current;
-    if (!el) return;
-    el.currentTime = sec;
-    void el.play().catch(() => {
-      // Автовоспроизведение может быть запрещено политикой браузера. Перемотка
-      // при этом уже случилась — этого достаточно.
-    });
-  };
 
   return (
     /*
@@ -196,7 +207,13 @@ export function Timeline({ runId, src }: { runId: string; src?: string }) {
             preload="metadata"
             controls
             className="mx-auto max-h-[600px] w-auto max-w-full rounded-lg border border-hairline bg-black"
-            onTimeUpdate={(e) => setCurrentSec(e.currentTarget.currentTime)}
+            /*
+              Целая секунда, а не дробная. `timeupdate` приходит примерно
+              четыре раза в секунду, и при дробном значении каждое из них
+              меняло состояние, то есть перерисовывало список. Подсветка
+              ячейки от округления не страдает: ячейки длятся 5–30 секунд.
+            */
+            onTimeUpdate={(e) => setCurrentSec(Math.floor(e.currentTarget.currentTime))}
           />
         ) : (
           <p className="rounded-lg border border-hairline bg-secondary p-4 text-sm text-slate">
@@ -234,13 +251,20 @@ export function Timeline({ runId, src }: { runId: string; src?: string }) {
           <span>Сцена</span>
           <span>Речь</span>
         </div>
+        {/*
+          Перемотка передаётся ссылкой, а не встроенной стрелкой. Стрелка
+          `() => seek(cell.start)` создаёт новую функцию для каждой из 322
+          ячеек при каждой перерисовке — то есть props всегда разные, и
+          мемоизация ячейки не значит ничего. Начало ячейки уезжает отдельным
+          props, и `Cell` зовёт `onSeek(start)` сам.
+        */}
         <ol className="space-y-1">
           {cells.map((cell, index) => (
             <Cell
               key={`${cell.start}-${index}`}
               cell={cell}
               active={currentSec >= cell.start && currentSec < cell.end}
-              onSeek={() => seek(cell.start)}
+              onSeek={seek}
             />
           ))}
         </ol>
@@ -249,20 +273,45 @@ export function Timeline({ runId, src }: { runId: string; src?: string }) {
   );
 }
 
-function Cell({
+/**
+ * Ячейка сцены.
+ *
+ * ─── Почему memo ──────────────────────────────────────────────────────────
+ * Ход воспроизведения меняет текущую секунду, и без мемоизации каждая такая
+ * смена перерисовывала все 322 ячейки — с превью, репликами и всем прочим.
+ * На сорокавосьмиминутном ролике это 322 ячейки против двух, у которых
+ * подсветка действительно изменилась.
+ *
+ * Мемоизация держится на двух условиях сразу, и оба легко потерять:
+ * `onSeek` приходит стабильной ссылкой (`useCallback` у родителя), а
+ * `currentSec` округлён до целых секунд. Нарушение любого из них вернёт
+ * перерисовку всего списка молча — экран будет выглядеть правильно, просто
+ * станет тяжёлым. Оба условия держит `lib/timeline-render.test.ts`.
+ */
+const Cell = memo(function Cell({
   cell,
   active,
   onSeek,
 }: {
   cell: TimelineCell;
   active: boolean;
-  onSeek: () => void;
+  onSeek: (sec: number) => void;
 }) {
   return (
-    <li>
+    /*
+      `content-visibility: auto` разрешает браузеру не размечать и не красить
+      ячейку, пока она за пределами прокрутки. Из 322 ячеек видно три.
+
+      `contain-intrinsic-size` обязателен рядом: без предполагаемой высоты
+      невидимая ячейка считается нулевой, полоса прокрутки скачет при каждом
+      измерении. Ключевое слово `auto` велит браузеру запомнить настоящую
+      высоту, когда ячейка один раз показалась, — дальше догадка не нужна.
+      112px — медиана замеренных высот ячейки на прогоне 0091.
+    */
+    <li className="[content-visibility:auto] [contain-intrinsic-size:auto_112px]">
       <button
         type="button"
-        onClick={onSeek}
+        onClick={() => onSeek(cell.start)}
         className={`grid w-full grid-cols-[minmax(0,7fr)_minmax(0,9fr)] gap-3 rounded-md border p-2 text-left transition-colors ${
           active
             ? "border-brand-blue bg-surface-yellow"
@@ -279,6 +328,21 @@ function Cell({
             <img
               src={cell.screenshot}
               alt=""
+              /*
+                `lazy` и явные размеры — одно решение, а не два. Замер на
+                прогоне 0091: 322 кадра выкачивались, чтобы показать три, и
+                эти 322 параллельных запроса к S3 душили сам ролик — после
+                нажатия «play» `readyState` десять секунд держался в нуле.
+
+                Размеры обязательны именно здесь: без них браузер не знает,
+                сколько места займёт картинка, не может отложить загрузку без
+                скачка разметки — и грузит сразу. Числа те же, что в классах
+                (w-20 h-12 = 80×48), и расходиться им нельзя.
+              */
+              loading="lazy"
+              decoding="async"
+              width={80}
+              height={48}
               className="h-12 w-20 shrink-0 rounded object-cover"
             />
           ) : (
@@ -323,7 +387,7 @@ function Cell({
       </button>
     </li>
   );
-}
+});
 
 /** Секунды → M:SS. Часы появляются только когда они есть. */
 function formatTime(sec: number): string {
