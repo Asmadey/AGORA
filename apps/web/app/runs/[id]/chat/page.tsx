@@ -66,7 +66,20 @@ export default async function ChatPage({
     : null;
 
   return (
-    <>
+    /*
+      Обёртка-колонка на всю высоту <main>.
+
+      Прежде шапка и тело были СОСЕДЯМИ во фрагменте, а тело — `<div className="p-8">`
+      без собственной высоты. `h-full` внутри `ChatView` при неопределённой
+      высоте предка разрешается в `auto`, `flex-1` тогда не ограничивает
+      ничего, и лента росла вместе с перепиской, унося строку ввода вниз
+      страницы. Внутренней прокрутки по той же причине не было: `overflow-y-auto`
+      на блоке, который сам под себя растёт, не срабатывает никогда.
+
+      Цепочка высот в оболочке есть: `<main>` — растянутый элемент внутри
+      `h-screen overflow-hidden`. Её надо было просто не терять.
+    */
+    <div className="flex h-full flex-col">
       <PageHeader
         title="Обсудить результаты"
         subtitle={
@@ -85,7 +98,13 @@ export default async function ChatPage({
         }
       />
 
-      <div className="p-8">
+      {/*
+        `min-h-0` обязателен. Без него флекс-элемент не сжимается ниже
+        собственного содержимого — значение по умолчанию у `min-height`
+        в колонке равно `auto`, — и внутренняя прокрутка не включается.
+        Выглядит это как «ничего не изменилось», без единой ошибки.
+      */}
+      <div className="flex min-h-0 flex-1 flex-col p-8">
         {!ready ? (
           <EmptyState
             icon={<MessageCircle className="h-5 w-5" />}
@@ -102,6 +121,6 @@ export default async function ChatPage({
           />
         )}
       </div>
-    </>
+    </div>
   );
 }

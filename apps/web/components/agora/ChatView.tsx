@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { Loader2, Send, BarChart3, User } from "lucide-react";
 
 import { cn } from "@/lib/utils";
+import { TypingAnimation } from "@/components/ui/typing-animation";
 import {
   parseChatEvent,
   replyNote,
@@ -152,7 +153,12 @@ export function ChatView({
 
   return (
     <div className="flex h-full flex-col gap-4">
-      <div className="min-h-[24rem] flex-1 space-y-4 overflow-y-auto rounded-lg border border-hairline bg-card p-6">
+      {/*
+        `min-h-0`, а не `min-h-[24rem]`. Пол в 24rem больше доступной высоты на
+        невысоком экране: лента тогда вылезает за низ, и строка ввода снова
+        уезжает — то есть пол воспроизводил ровно тот дефект, который чинится.
+      */}
+      <div className="min-h-0 flex-1 space-y-4 overflow-y-auto rounded-lg border border-hairline bg-card p-6">
         {messages === null && (
           <p className="text-sm text-slate">Загрузка разговора…</p>
         )}
@@ -184,7 +190,12 @@ export function ChatView({
                 <p className="whitespace-pre-wrap">
                   {m.content}
                   {streaming && !m.content && m.role === "assistant" && (
-                    <span className="text-slate">{step ?? "…"}</span>
+                    /*
+                      Шаг конвейера, когда он известен, и «Думаю» — когда нет.
+                      Заменить шаг словом «Думаю» значило бы обменять сведения
+                      на анимацию: «ищу сцены» говорит больше.
+                    */
+                    <TypingAnimation text={step ?? "Думаю"} className="text-slate" />
                   )}
                 </p>
                 {note && (
@@ -203,7 +214,11 @@ export function ChatView({
         <p className="rounded-md bg-danger-soft px-3 py-2 text-sm text-danger">{error}</p>
       )}
 
-      <div className="flex items-end gap-2">
+      {/*
+        По центру, а не по нижнему краю: поле ввода в две строки выше кнопки,
+        и `items-end` прижимал её к низу — выглядело как съехавшая кнопка.
+      */}
+      <div className="flex shrink-0 items-center gap-2">
         <textarea
           value={draft}
           onChange={(e) => setDraft(e.target.value)}

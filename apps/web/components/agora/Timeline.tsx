@@ -24,6 +24,15 @@ import type { TimelineCell, TimelineView } from "@/lib/server/content-pack";
  * бы пустым без единой ошибки.
  */
 
+/**
+ * Потолок высоты плеера, в пикселях.
+ *
+ * Числом, а не классом: от него считается ширина колонки, и `max-h-[600px]`
+ * в разметке пришлось бы держать в уме отдельно. Разойдясь, они дали бы
+ * плашку не по размеру — ровно тот дефект, который чинится здесь.
+ */
+const PLAYER_MAX_HEIGHT = 600;
+
 interface Payload {
   video: string | null;
   timeline: TimelineView | null;
@@ -60,6 +69,21 @@ export function Timeline({
   const [data, setData] = useState<Payload | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [currentSec, setCurrentSec] = useState(0);
+  /**
+   * Пропорции ролика (ширина ÷ высота).
+   *
+   * ─── Зачем состояние, а если не знаем — 16:9 ─────────────────────────────
+   * Коробка плеера обязана быть известна ДО того, как что-либо загрузится.
+   * Иначе элемент берёт размер того, что сейчас внутри: сначала постера, потом
+   * ролика, — и меняет его на глазах. Замерено на боевом 16.09.2026: до «play»
+   * коробка 514×216 по постеру 512×214, после — по настоящему ролику.
+   *
+   * Виноват не «play». `preload="metadata"` стоит, но при заданном `poster`
+   * Chrome метаданные не грузит: постера достаточно, чтобы что-то показать.
+   * Метаданные приходят только с началом воспроизведения — отсюда и скачок
+   * ровно в этот момент.
+   */
+  const [aspect, setAspect] = useState(16 / 9);
   const videoRef = useRef<HTMLVideoElement>(null);
 
   useEffect(() => {
@@ -75,6 +99,33 @@ export function Timeline({
       alive = false;
     };
   }, [runId, src]);
+
+  /**
+   * Первая догадка о пропорциях — по постеру.
+   *
+   * Постер это кадр ЭТОГО ЖЕ ролика, значит его пропорции и есть пропорции
+   * ролика. Умолчание 16:9 годится как запас, но вертикальные ролики у нас
+   * бывают, и на них коробка дёрнулась бы при загрузке метаданных — то есть
+   * дефект вернулся бы, просто позже и реже.
+   *
+   * Картинка уже скачивается как постер, поэтому второй загрузки здесь нет:
+   * браузер отдаёт её из кеша.
+   */
+  const poster = data?.timeline?.cells.find((c) => c.screenshot)?.screenshot ?? null;
+  useEffect(() => {
+    if (!poster) return;
+    let alive = true;
+    const img = new Image();
+    img.onload = () => {
+      if (alive && img.naturalWidth > 0 && img.naturalHeight > 0) {
+        setAspect(img.naturalWidth / img.naturalHeight);
+      }
+    };
+    img.src = poster;
+    return () => {
+      alive = false;
+    };
+  }, [poster]);
 
   /**
    * Переход по таймкоду из ответа персоны: `#t=961`.
@@ -193,7 +244,29 @@ export function Timeline({
       220px), при 448 — 80, при 640 — 164 и высота падает до 100. Дальше выигрыш
       уже не окупает отнятого у плеера.
     */
-    <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(22rem,40rem)]">
+    <div
+      className="grid gap-4 lg:grid-cols-[minmax(0,var(--player-col))_minmax(22rem,1fr)]"
+      /*
+        Ширина левой колонки — ширина ПЛЕЕРА плюс отступы плашки.
+
+        Прежде здесь стояло `minmax(0,1fr)_minmax(22rem,40rem)`: плеер брал
+        остаток, а панель сцен — от 22rem до 40rem. Плашка при этом получалась
+        744 px вокруг ролика в 514 — «сильно выходит за рамки плеера», как это и
+        назвал владелец.
+
+        Теперь наоборот: колонка считается от плеера, остаток достаётся разбору
+        сцен — там описания и реплики, и ширина им нужна.
+
+        `1.5rem` — это `p-3` плашки с обеих сторон. Величина повторена здесь
+        намеренно и проверяется тестом: вычислить её из класса нельзя, а
+        разойтись они могут молча.
+      */
+      style={
+        {
+          "--player-col": `calc(${Math.round(PLAYER_MAX_HEIGHT * aspect)}px + 1.5rem)`,
+        } as React.CSSProperties
+      }
+    >
       {/*
         `w-full`, а не `w-fit`: обёртка, считаемая по содержимому, возвращает ту
         же круговую зависимость — `max-w-full` у ролика считается в процентах от
@@ -210,6 +283,23 @@ export function Timeline({
             пропорции обоих: горизонтальный упирается в ширину, вертикальный — в
             600 пикселей.
           */
+          <div
+            /*
+              Коробка с ЗАДАННЫМИ пропорциями. Ролик внутри вписывается в неё
+              (`object-contain`), а не задаёт её собой — поэтому подмена постера
+              настоящим кадром ничего не двигает.
+
+              Потолок высоты остаётся: он стоял ради вертикальных роликов, и на
+              9:16 без него плеер уехал бы на три экрана вниз, оставив таймлайн
+              справа напротив пустоты.
+            */
+            className="mx-auto w-full overflow-hidden rounded-lg border border-hairline bg-black"
+            style={{
+              aspectRatio: String(aspect),
+              maxHeight: PLAYER_MAX_HEIGHT,
+              maxWidth: Math.round(PLAYER_MAX_HEIGHT * aspect),
+            }}
+          >
           <video
             ref={videoRef}
             src={data.video}
@@ -224,7 +314,7 @@ export function Timeline({
             poster={cells.find((c) => c.screenshot)?.screenshot ?? undefined}
             preload="metadata"
             controls
-            className="mx-auto max-h-[600px] w-auto max-w-full rounded-lg border border-hairline bg-black"
+            className="h-full w-full object-contain"
             /*
               Целая секунда, а не дробная. `timeupdate` приходит примерно
               четыре раза в секунду, и при дробном значении каждое из них
@@ -232,7 +322,18 @@ export function Timeline({
               ячейки от округления не страдает: ячейки длятся 5–30 секунд.
             */
             onTimeUpdate={(e) => setCurrentSec(Math.floor(e.currentTarget.currentTime))}
+            /*
+              Метаданные уточняют догадку по постеру. Приходят они поздно — при
+              заданном `poster` Chrome откладывает их до начала воспроизведения,
+              — но к этому моменту коробка уже задана, и уточнение либо не меняет
+              ничего, либо поправляет пропорции на доли процента.
+            */
+            onLoadedMetadata={(e) => {
+              const { videoWidth, videoHeight } = e.currentTarget;
+              if (videoWidth > 0 && videoHeight > 0) setAspect(videoWidth / videoHeight);
+            }}
           />
+          </div>
         ) : (
           <p className="rounded-lg border border-hairline bg-secondary p-4 text-sm text-slate">
             Ролик недоступен: ссылка не подписана либо файл удалён по политике
