@@ -39,6 +39,7 @@ from ...chat.context import (
     estimate_tokens,
     needs_tools,
     persona_context,
+    with_tools_note,
 )
 from ...chat.loop import run_with_tools
 
@@ -185,6 +186,8 @@ def reply(request: ChatRequest) -> StreamingResponse:
         context_mode = "tools"
 
     template = _prompt_body(key, request.prompts_snapshot, request.tenant_id)
+    if context_mode == "tools":
+        template = with_tools_note(template)
     user = _render(template, context, request.question)
 
     # Изоляция доезжает и до инструментов: в режиме допроса им нечего вернуть
