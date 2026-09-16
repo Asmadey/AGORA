@@ -1,5 +1,10 @@
 import { Chip } from "@/components/agora/Primitives";
-import { categoryLabel, fieldLabel, SCALE_1_5 } from "@/lib/persona-dna-labels";
+import {
+  categoryLabel,
+  fieldLabel,
+  orderCategories,
+  SCALE_1_5,
+} from "@/lib/persona-dna-labels";
 
 /**
  * Отрисовка DNA персоны — общая для полной карточки и для попапа в отчёте.
@@ -44,8 +49,18 @@ function Scale({ value }: { value: number }) {
 function renderValue(key: string, value: unknown) {
   if (Array.isArray(value)) {
     if (value.length === 0) return <span className="text-slate">—</span>;
+    /*
+      Столбцом, а не строкой. Пять названий вроде «Служение Отечеству и
+      ответственность за его судьбу» в строку не помещаются: плашки рвутся
+      посреди слова, а при узкой колонке (попап «О персоне» — одна колонка)
+      складываются в нечитаемую лесенку.
+
+      `items-start` обязателен рядом с `flex-col`: без него плашка растягивается
+      на всю ширину колонки, и обводка перестаёт обтягивать текст — пять пустых
+      прямоугольников вместо списка.
+    */
     return (
-      <span className="flex flex-wrap gap-1">
+      <span className="flex flex-col items-start gap-1">
         {value.map((v, i) => (
           <Chip key={`${String(v)}-${i}`} tone="outline">
             {String(v)}
@@ -71,9 +86,19 @@ export function PersonaDnaView({
   /** В попапе одна колонка: ширина диалога вдвое меньше страницы. */
   columns?: 1 | 2;
 }) {
-  const categories = Object.entries(dna).filter(
+  const present = Object.entries(dna).filter(
     ([, v]) => v !== null && typeof v === "object" && !Array.isArray(v),
   ) as [string, Record<string, unknown>][];
+
+  /*
+    Порядок задаётся явно, а не порядком ключей в JSON. Прежде блоки шли так,
+    как их сложил генератор в литерале словаря, — то есть менялись бы от правки
+    в другом файле и в другом языке, ничего об этом не сообщая.
+  */
+  const order = orderCategories(present.map(([key]) => key));
+  const categories = order.map(
+    (key) => present.find(([k]) => k === key)!,
+  );
 
   return (
     <>
@@ -95,7 +120,14 @@ export function PersonaDnaView({
                 {Object.entries(fields).map(([key, value]) => (
                   <div key={key} className="flex flex-wrap items-baseline gap-x-2">
                     <dt className="text-slate">{fieldLabel(key)}:</dt>
-                    <dd>{renderValue(key, value)}</dd>
+                    {/*
+                      Список уходит на свою строку под подписью (`basis-full`),
+                      одиночное значение остаётся рядом с ней. Иначе пять плашек
+                      делили бы строку с подписью и получали бы треть ширины.
+                    */}
+                    <dd className={Array.isArray(value) ? "basis-full" : undefined}>
+                      {renderValue(key, value)}
+                    </dd>
                   </div>
                 ))}
               </dl>

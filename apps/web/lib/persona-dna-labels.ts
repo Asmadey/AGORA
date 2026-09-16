@@ -43,7 +43,11 @@ export const FIELD_LABELS: Record<string, string> = {
   agreeableness: "Доброжелательность",
   neuroticism: "Нейротизм",
   // values_and_beliefs
-  important_values: "Важные ценности",
+  // «ВЦИОМ», а не «Важные ценности»: подпись называет ИСТОЧНИК списка —
+  // канонический перечень традиционных ценностей, из которого сделан выбор.
+  // Число выбранных (пять) источником не продиктовано: реальный респондент
+  // называл одну-две. См. data/values/traditional_values.json.
+  important_values: "ВЦИОМ",
   worldview: "Мировоззрение",
   political_orientation: "Политическая ориентация",
   religious_attitude: "Отношение к религии",
@@ -110,4 +114,42 @@ export function fieldLabel(key: string): string {
 
 export function categoryLabel(key: string): string {
   return CATEGORY_LABELS[key] ?? key;
+}
+
+/**
+ * Порядок блоков карточки персоны.
+ *
+ * ─── Почему приоритет, а не перечень ──────────────────────────────────────
+ * Карточка обходит ФАКТИЧЕСКИЙ объект DNA — это требование cdd #6: «ни одно
+ * поле не потеряно при рендере». Перечень блоков это требование сломал бы:
+ * поле, добавленное в схему и забытое здесь, исчезло бы с экрана молча.
+ *
+ * Поэтому известные блоки выстраиваются по приоритету, а всё остальное идёт
+ * следом в том порядке, в каком пришло. Незнакомый блок не теряется — он
+ * просто оказывается ниже.
+ *
+ * ─── Почему ценности первыми ──────────────────────────────────────────────
+ * С 16.09.2026 их пять вместо трёх, и именно они объясняют, почему персона
+ * отреагировала на материал так, а не иначе. Демография отвечает на вопрос
+ * «кто это», ценности — на вопрос «почему так ответил», и второй вопрос
+ * задают чаще.
+ */
+const CATEGORY_ORDER = [
+  "values_and_beliefs",
+  "demographics",
+  "big_five",
+  "viewer_behavior",
+  "lifestyle_and_interests",
+  "communication_style",
+  "decision_making",
+  "technology_usage",
+];
+
+export function orderCategories<T extends string>(categories: T[]): T[] {
+  const rank = (c: string) => {
+    const i = CATEGORY_ORDER.indexOf(c);
+    // Неизвестный блок уходит в конец, но НЕ пропадает.
+    return i === -1 ? CATEGORY_ORDER.length : i;
+  };
+  return [...categories].sort((a, b) => rank(a) - rank(b));
 }
