@@ -31,7 +31,10 @@ export function QaFlags({ flags }: { flags: QaFlagView[] }) {
   const [open, setOpen] = useState(false);
   // Закреплено нажатием: уход мыши такую панель не закрывает.
   const [pinned, setPinned] = useState(false);
-  const box = useDismissable<HTMLDivElement>(open, () => {
+  // Ссылка на ОБЁРТКУ, а не на панель: кнопка должна считаться «внутри».
+  // Иначе нажатие ради закрытия сначала ловится как щелчок мимо (панель
+  // закрывается), а потом собственным обработчиком — и открывается обратно.
+  const box = useDismissable<HTMLSpanElement>(open, () => {
     setOpen(false);
     setPinned(false);
   });
@@ -40,6 +43,7 @@ export function QaFlags({ flags }: { flags: QaFlagView[] }) {
 
   return (
     <span
+      ref={box}
       className="relative inline-flex shrink-0 align-middle"
       onMouseEnter={() => setOpen(true)}
       onMouseLeave={() => !pinned && setOpen(false)}
@@ -69,7 +73,6 @@ export function QaFlags({ flags }: { flags: QaFlagView[] }) {
 
       {open && (
         <div
-          ref={box}
           role="tooltip"
           // Вправо панель не уходит: значок стоит в середине строки, и
           // выравнивание по левому краю выбросило бы её за экран на телефоне.
