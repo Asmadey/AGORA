@@ -4,6 +4,48 @@ import { useEffect, useRef, useState } from "react";
 import { HelpCircle } from "lucide-react";
 
 /**
+ * Панель закрывается Escape и щелчком мимо.
+ *
+ * Вынесено из `Hint`, потому что таких панелей стало две: подсказка у
+ * заголовка и замечания QA в строке персоны. Вторая реализация того же
+ * поведения разошлась бы с первой молча — расходятся обычно мелочи вроде
+ * снятия слушателя при закрытии.
+ *
+ * Ссылка на закрытие держится в ref: иначе эффект пересобирался бы на каждом
+ * рисовании вызывающего, снимая и вешая слушатели заново.
+ */
+export function useDismissable<T extends HTMLElement>(
+  open: boolean,
+  close: () => void,
+): React.RefObject<T | null> {
+  const box = useRef<T>(null);
+  const onClose = useRef(close);
+  // Присваивание в эффекте, а не по ходу рисования: ref во время рендера
+  // трогать нельзя, и правило это ловит.
+  useEffect(() => {
+    onClose.current = close;
+  });
+
+  useEffect(() => {
+    if (!open) return;
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") onClose.current();
+    }
+    function onClick(e: MouseEvent) {
+      if (box.current && !box.current.contains(e.target as Node)) onClose.current();
+    }
+    document.addEventListener("keydown", onKey);
+    document.addEventListener("mousedown", onClick);
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      document.removeEventListener("mousedown", onClick);
+    };
+  }, [open]);
+
+  return box;
+}
+
+/**
  * Кружок со знаком вопроса и объяснением рядом с заголовком.
  *
  * ─── Почему не только по наведению ────────────────────────────────────────
@@ -27,23 +69,7 @@ export function Hint({
   children: React.ReactNode;
 }) {
   const [open, setOpen] = useState(false);
-  const box = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!open) return;
-    function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape") setOpen(false);
-    }
-    function onClick(e: MouseEvent) {
-      if (box.current && !box.current.contains(e.target as Node)) setOpen(false);
-    }
-    document.addEventListener("keydown", onKey);
-    document.addEventListener("mousedown", onClick);
-    return () => {
-      document.removeEventListener("keydown", onKey);
-      document.removeEventListener("mousedown", onClick);
-    };
-  }, [open]);
+  const box = useDismissable<HTMLDivElement>(open, () => setOpen(false));
 
   return (
     <span

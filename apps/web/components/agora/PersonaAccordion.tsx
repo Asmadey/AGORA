@@ -2,12 +2,13 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { ChevronDown, MessageCircle, AlertTriangle } from "lucide-react";
+import { ChevronDown, MessageCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { CRITERIA, CRITERIA_LABELS } from "@/lib/agora-types";
 import { answerForQuestion, retentionShort } from "@/lib/report-view";
 import type { AnswerView, AskedQuestion } from "@/lib/report-view";
 import { PersonaDialog } from "./PersonaDialog";
+import { QaFlags, QaFlagList } from "./QaFlags";
 import { TimecodeRef } from "./Primitives";
 
 /**
@@ -141,15 +142,16 @@ export function PersonaAccordion({
               {/* Распорка: всё, что правее, прижато к краю строки. */}
               <div className="flex-1" />
 
-              {a.qaFlags.length > 0 && (
-                <span
-                  title={`QA: ${a.qaFlags.join("; ")}`}
-                  className="hidden items-center gap-1 text-xs text-amber-400 sm:inline-flex"
-                >
-                  <AlertTriangle className="h-3.5 w-3.5" />
-                  QA
-                </span>
-              )}
+              {/*
+                Значок открывается и показывает причины забраковки. Прежде здесь
+                стоял неподвижный `span` с `title`, в который уезжало поле
+                `verdict`: во всех подсказках прогона 0091 читалось
+                «QA: regenerate» — то есть решение системы вместо причины.
+
+                `hidden … sm:inline-flex` снято намеренно: причина, по которой
+                ответ выкинут из агрегата, — не украшение для широких экранов.
+              */}
+              <QaFlags flags={a.qaFlags} />
 
               {/*
                 Две колонки, а не одна. Прежде здесь стояло одно поле: процент
@@ -273,12 +275,18 @@ export function PersonaAccordion({
                   </div>
                 )}
 
+                {/*
+                  Раскрытая карточка печатает замечания целиком. Прежде здесь
+                  стояло «— regenerate»: строка, из которой нельзя было понять
+                  ни что проверяли, ни что нашли.
+                */}
                 {a.qaFlags.length > 0 && (
-                  <ul className="mt-4 space-y-1 text-xs text-amber-400">
-                    {a.qaFlags.map((f) => (
-                      <li key={f}>— {f}</li>
-                    ))}
-                  </ul>
+                  <div className="mt-5 rounded-lg border border-amber-400/30 bg-amber-400/5 p-4">
+                    <h3 className="mb-3 text-xs uppercase tracking-wide text-amber-400">
+                      Что заметил QA
+                    </h3>
+                    <QaFlagList flags={a.qaFlags} />
+                  </div>
                 )}
 
                 <div className="mt-5 flex flex-wrap items-center gap-x-5 gap-y-2 text-xs text-slate">
