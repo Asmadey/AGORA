@@ -747,6 +747,67 @@ def check_isolation_persona():
                 detail="; ".join(sorted(set(leaks))[:8]))
 
 
+def check_values_grounding():
+    """
+    Следует ли назначение ценностей корпусу — три числа вместо тишины.
+
+    ─── Почему отдельно от persona_grounding ─────────────────────────────────
+    `persona_grounding` называется «заземлением персоны», а сверяет возраст,
+    гео, пол и средние баллы. Ценности в ней не участвуют и никогда не
+    участвовали — при том, что `persona/enrich.py` утверждал обратное.
+
+    Дописать ценности внутрь `persona_grounding` было бы хуже: там сравниваются
+    абсолютные доли с допуском 0.10, а здесь сравнивать доли нельзя. Прямое
+    соответствие корпусу разорвано сознательно — пять ценностей на персону
+    против 1.45 у реального респондента плюс сглаживание. Общий порог сделал бы
+    одну из двух проверок бессмысленной.
+
+    ─── Справочная, а не обязательная ────────────────────────────────────────
+    Решение владельца (16.09.2026). Защита от тех же дефектов уже стоит
+    тестами `test_persona_values.py`, которые блокируют слияние; метрика
+    показывает ЧИСЛО, по которому видно сползание до того, как оно станет
+    нарушением.
+
+    ─── Пороги откалиброваны замером ─────────────────────────────────────────
+    Исправный генератор: ρ = 0.92…0.99 на размерах 100–500 и трёх seed.
+    Равномерные веса (правдоподобная будущая «правка ради разнообразия»):
+    ρ = −0.30. Прежнее поведение с жёстким топ-2: макс. доля 1.00, покрытие
+    12/17. Порог 0.8 лежит посередине разрыва, а не выбран на глаз.
+    """
+    sys.path.insert(0, str(CORE))
+    try:
+        from agent_core.persona.values_grounding import (
+            COVERAGE_SAMPLE, MIN_RANK_CORRELATION, values_grounding,
+        )
+    except Exception as e:
+        return _res("values_grounding", "skip", required=False,
+                    detail=f"agent_core.persona.values_grounding не импортируется: {e!s:.80}")
+
+    try:
+        m = values_grounding(size=COVERAGE_SAMPLE, seed=20260916)
+    except Exception as e:
+        return _res("values_grounding", "skip", required=False,
+                    detail=f"генерация не удалась (нет корпуса?): {type(e).__name__}: {str(e)[:90]}")
+
+    fails = []
+    if m["rank_correlation"] < MIN_RANK_CORRELATION:
+        fails.append(f"порядок разошёлся с корпусом: ρ={m['rank_correlation']}")
+    if m["coverage"] < 17:
+        fails.append(f"недостижимы: {', '.join(m['missing'])}")
+    # Ровно 1.0 означает «стоит у ВСЕХ персон» — это константа, а не выборка.
+    if m["max_share"] >= 1.0:
+        fails.append("самая частая ценность стоит у всех персон")
+
+    return _res(
+        "values_grounding",
+        "pass" if not fails else "fail",
+        required=False,
+        threshold=f"ρ≥{MIN_RANK_CORRELATION}, покрытие 17/17, макс.доля<1.0",
+        actual=f"ρ={m['rank_correlation']} · {m['coverage']}/17 · {m['max_share']}",
+        detail="; ".join(fails),
+    )
+
+
 def check_response_diversity():
     """
     Метрика response_diversity (задача #18) — отсутствие mode collapse.
@@ -1014,6 +1075,7 @@ CHECKS = [
     check_rls_tenant,
     check_schema_drift,
     check_persona_grounding,
+    check_values_grounding,
     check_response_diversity,
     check_qa_catches_injected,
     check_prompts_editable,
