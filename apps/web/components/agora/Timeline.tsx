@@ -258,15 +258,25 @@ export function Timeline({ runId, src }: { runId: string; src?: string }) {
           мемоизация ячейки не значит ничего. Начало ячейки уезжает отдельным
           props, и `Cell` зовёт `onSeek(start)` сам.
         */}
+        {/*
+          Номер считается здесь, а не в ячейке: ячейка своего места в списке не
+          знает, а индекс ей не годится. Первая ячейка может быть репликами ДО
+          первой сцены (`scene === null`) — это не сцена, и нумерация подряд по
+          индексу дала бы сдвиг на единицу против отчёта, причём молча.
+        */}
         <ol className="space-y-1">
-          {cells.map((cell, index) => (
-            <Cell
-              key={`${cell.start}-${index}`}
-              cell={cell}
-              active={currentSec >= cell.start && currentSec < cell.end}
-              onSeek={seek}
-            />
-          ))}
+          {(() => {
+            let sceneNo = 0;
+            return cells.map((cell, index) => (
+              <Cell
+                key={`${cell.start}-${index}`}
+                cell={cell}
+                sceneNumber={cell.scene === null ? null : ++sceneNo}
+                active={currentSec >= cell.start && currentSec < cell.end}
+                onSeek={seek}
+              />
+            ));
+          })()}
         </ol>
       </div>
     </div>
@@ -290,10 +300,13 @@ export function Timeline({ runId, src }: { runId: string; src?: string }) {
  */
 const Cell = memo(function Cell({
   cell,
+  sceneNumber,
   active,
   onSeek,
 }: {
   cell: TimelineCell;
+  /** Порядковый номер сцены. null — реплики до первой сцены, это не сцена. */
+  sceneNumber: number | null;
   active: boolean;
   onSeek: (sec: number) => void;
 }) {
@@ -320,6 +333,13 @@ const Cell = memo(function Cell({
       >
         {/* Левая часть: обложка, таймкод, описание кадра. */}
         <span className="flex min-w-0 gap-3">
+          {/*
+            Кадр и номер — одна колонка: номер подписывает именно картинку, а не
+            стоит третьим элементом в ряду. `shrink-0` переехал сюда с самого
+            кадра — без него восемьдесят пикселей превью схлопываются в узкой
+            колонке, и подпись съезжает вместе с ними.
+          */}
+          <span className="flex shrink-0 flex-col items-center gap-1">
           {cell.screenshot ? (
             // Подписанная ссылка на S3 живёт час; next/image кеширует её на своей
             // стороне и отдавал бы протухшую после истечения подписи. Кадр здесь
@@ -343,11 +363,24 @@ const Cell = memo(function Cell({
               decoding="async"
               width={80}
               height={48}
-              className="h-12 w-20 shrink-0 rounded object-cover"
+              className="h-12 w-20 rounded object-cover"
             />
           ) : (
-            <span className="h-12 w-20 shrink-0 rounded bg-secondary" />
+            <span className="h-12 w-20 rounded bg-secondary" />
           )}
+            {/*
+              Номер, а не индекс: на сцену ссылаются номером и в отчёте, и в
+              ответах персон, и в разговоре — «сцена 47» короче и устойчивее,
+              чем «12:03–12:19». У реплик до первой сцены номера нет, и место
+              под него не занимается: пустая подпись читалась бы как потерянный
+              номер.
+            */}
+            {sceneNumber !== null && (
+              <span className="text-[10px] tabular-nums leading-none text-slate">
+                {sceneNumber}
+              </span>
+            )}
+          </span>
           <span className="min-w-0 flex-1">
             <span className="flex items-center gap-2 text-xs tabular-nums text-slate">
               {formatTime(cell.start)}–{formatTime(cell.end)}
