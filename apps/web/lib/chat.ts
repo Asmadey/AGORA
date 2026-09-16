@@ -24,9 +24,22 @@ export interface ChatMessage {
   flags?: ChatFlags;
 }
 
-/** Событие потока: кусок текста, финал с флагами либо отказ. */
+/**
+ * Событие потока.
+ *
+ * `step` и `mode` появились вместе с инструментами. При большом материале
+ * модель сначала ходит за сценами и речью и только потом пишет ответ: раунды
+ * идут ДО первого слова, и несколько секунд молчания читаются как зависание,
+ * а не как работа.
+ *
+ * `mode` говорит, поехал ли материал целиком или оглавлением. Переключение
+ * решается замером и происходит само; не сказать о нём — значит объяснять
+ * разное поведение чата ничем.
+ */
 export type ChatEvent =
   | { kind: "delta"; text: string }
+  | { kind: "step"; text: string }
+  | { kind: "mode"; mode: "full" | "tools"; tokens: number }
   | { kind: "done"; answer: string; flags: ChatFlags }
   | { kind: "error"; message: string };
 
@@ -62,6 +75,14 @@ export function parseChatEvent(line: string): ChatEvent | null {
 
   if (typeof raw.error === "string") return { kind: "error", message: raw.error };
   if (typeof raw.delta === "string") return { kind: "delta", text: raw.delta };
+  if (typeof raw.step === "string") return { kind: "step", text: raw.step };
+  if (raw.context_mode === "full" || raw.context_mode === "tools") {
+    return {
+      kind: "mode",
+      mode: raw.context_mode,
+      tokens: typeof raw.context_tokens === "number" ? raw.context_tokens : 0,
+    };
+  }
   if (raw.done && typeof raw.done === "object") {
     const done = raw.done as Record<string, unknown>;
     return {

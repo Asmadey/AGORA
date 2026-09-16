@@ -21,6 +21,7 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Iterator
 from typing import Any
 
@@ -92,6 +93,125 @@ def stream_reply(
         extra_body=cfg.extra_body(role),
     )
 
+    for chunk in stream:
+        choices = getattr(chunk, "choices", None) or []
+        if not choices:
+            continue
+        delta = getattr(choices[0], "delta", None)
+        piece = getattr(delta, "content", None) if delta else None
+        if piece:
+            yield piece
+
+
+def call_with_tools(
+    *,
+    messages: list[dict[str, Any]],
+    tools: list[dict[str, Any]] | None,
+    mode: str,
+    config: Any | None = None,
+    temperature: float | None = None,
+) -> tuple[list[Any], Iterator[str] | None]:
+    """
+    Один заход в шлюз: либо вызовы инструментов, либо поток ответа.
+
+    ─── Почему не поток, когда есть инструменты ──────────────────────────────
+    Вызов инструмента — это не текст, а структура, и собрать её из кусков
+    потока можно только целиком. Пока модель решает, что запросить, показывать
+    нечего: раунды идут ДО ответа. Поэтому заход с инструментами —
+    непотоковый, а финальный (инструментов нет) — потоковый, как и прежде.
+
+    Так поток остаётся ровно там, ради чего владелец его выбрал: на прозе,
+    которую читает человек.
+
+    ─── Почему возвращается пара ─────────────────────────────────────────────
+    Шлюз сам решает, звать инструменты или отвечать. Вызывающий обязан уметь
+    оба исхода, и пара «вызовы, поток» заставляет его это учесть: один из
+    членов всегда пуст, и перепутать их нельзя.
+    """
+    from ..config import ModelConfig, TemperatureConfig
+    from .loop import ToolCall
+
+    cfg = config or ModelConfig.from_env()
+    role = "analytics" if mode == "analyst" else "respondent"
+
+    if temperature is None:
+        defaults = TemperatureConfig.defaults()
+        temperature = (
+            defaults.aggregation if mode == "analyst" else defaults.responseSimulation
+        )
+
+    if not tools:
+        return [], _stream(
+            messages=messages, mode=mode, cfg=cfg, role=role, temperature=temperature
+        )
+
+    from ..tracing import llm_client
+
+    client = llm_client(
+        api_key=cfg.api_key,
+        base_url=cfg.base_url,
+        default_headers=cfg.default_headers,
+        timeout=REQUEST_TIMEOUT_SEC,
+    )
+    response = client.chat.completions.create(
+        name=f"chat-{mode}-tools",
+        model=cfg.text_model,
+        temperature=temperature,
+        max_tokens=MAX_TOKENS,
+        messages=messages,
+        tools=tools,
+        tool_choice="auto",
+        extra_body=cfg.extra_body(role),
+    )
+    choice = response.choices[0]
+    raw_calls = getattr(choice.message, "tool_calls", None) or []
+
+    calls = []
+    for call in raw_calls:
+        try:
+            args = json.loads(call.function.arguments or "{}")
+        except json.JSONDecodeError:
+            # Модель прислала не-JSON в аргументах. Пустой словарь честнее
+            # отказа: инструмент ответит тем, что умеет по умолчанию, и
+            # разговор продолжится.
+            args = {}
+        calls.append(
+            ToolCall(
+                id=call.id,
+                name=call.function.name,
+                arguments=args if isinstance(args, dict) else {},
+            )
+        )
+
+    if calls:
+        return calls, None
+
+    # Инструменты были предложены, но модель ответила текстом. Он уже получен
+    # целиком — отдаём его одним куском, а не ходим в шлюз второй раз.
+    return [], iter([choice.message.content or ""])
+
+
+def _stream(
+    *, messages: list[dict[str, Any]], mode: str, cfg: Any, role: str, temperature: float
+) -> Iterator[str]:
+    """Потоковый заход без инструментов — тот же, что у `stream_reply`."""
+    from ..tracing import llm_client
+
+    client = llm_client(
+        api_key=cfg.api_key,
+        base_url=cfg.base_url,
+        default_headers=cfg.default_headers,
+        timeout=REQUEST_TIMEOUT_SEC,
+    )
+    stream = client.chat.completions.create(
+        name=f"chat-{mode}",
+        model=cfg.text_model,
+        temperature=temperature,
+        max_tokens=MAX_TOKENS,
+        stream=True,
+        messages=messages,
+        extra_body=cfg.extra_body(role),
+    )
     for chunk in stream:
         choices = getattr(chunk, "choices", None) or []
         if not choices:

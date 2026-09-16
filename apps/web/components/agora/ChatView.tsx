@@ -42,6 +42,13 @@ export function ChatView({
   const [messages, setMessages] = useState<ChatMessage[] | null>(null);
   const [draft, setDraft] = useState("");
   const [streaming, setStreaming] = useState(false);
+  /*
+    Что модель смотрит прямо сейчас. При большом материале она сначала ходит
+    за сценами и речью и только потом пишет ответ: раунды идут ДО первого
+    слова, и несколько секунд молчания читаются как зависание, а не как
+    работа. Строка живёт до первого куска ответа и там же гаснет.
+  */
+  const [step, setStep] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const bottom = useRef<HTMLDivElement>(null);
 
@@ -110,6 +117,16 @@ export function ChatView({
           const event = parseChatEvent(line);
           if (!event) continue;
           if (event.kind === "error") throw new Error(event.message);
+          if (event.kind === "step") {
+            setStep(event.text);
+            continue;
+          }
+          // Режим контекста наружу не показывается: он объясняет ЗАДЕРЖКУ, а не
+          // ответ, и строка «материал поехал оглавлением» читателю отчёта не
+          // говорит ничего. Событие разбирается затем, чтобы не считаться
+          // неизвестным и не теряться молча.
+          if (event.kind === "mode") continue;
+          if (event.kind === "delta") setStep(null);
           setMessages((prev) =>
             (prev ?? []).map((m) => {
               if (m.id !== replyId) return m;
@@ -126,6 +143,7 @@ export function ChatView({
       setMessages((prev) => (prev ?? []).filter((m) => !(m.id === replyId && !m.content)));
     } finally {
       setStreaming(false);
+      setStep(null);
     }
   }
 
@@ -166,7 +184,7 @@ export function ChatView({
                 <p className="whitespace-pre-wrap">
                   {m.content}
                   {streaming && !m.content && m.role === "assistant" && (
-                    <span className="text-slate">…</span>
+                    <span className="text-slate">{step ?? "…"}</span>
                   )}
                 </p>
                 {note && (
