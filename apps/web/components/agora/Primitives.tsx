@@ -141,6 +141,51 @@ export function StatCard({
   );
 }
 
+/**
+ * Показатель внутри сгруппированного блока.
+ *
+ * Отличие от `StatCard` — не карточка: рамку и фон несёт блок, а показатель
+ * внутри только число с подписью. Четыре показателя каждый в своей рамке
+ * читались как четыре независимые величины; они и правда независимы, но
+ * отвечают на один вопрос — «как приняли материал», — и группировка это
+ * говорит, не тратя четыре рамки.
+ *
+ * Пояснение уехало в попап (`info`): прежде оно висело под числом
+ * раскрывающимся списком и при раскрытии дёргало высоту всего ряда.
+ */
+export function Metric({
+  label,
+  value,
+  hint,
+  info,
+  tone = "default",
+}: {
+  label: string;
+  value: string;
+  hint?: string;
+  /** Кнопка «откуда число» — узлом, чтобы примитив не знал про попапы. */
+  info?: React.ReactNode;
+  tone?: "default" | "good" | "warn" | "bad";
+}) {
+  const toneClass = {
+    default: "text-foreground",
+    good: "text-success",
+    warn: "text-amber-400",
+    bad: "text-danger",
+  }[tone];
+
+  return (
+    <div className="min-w-0">
+      <div className="flex items-start justify-between gap-2">
+        <p className="min-w-0 text-xs uppercase tracking-wide text-slate">{label}</p>
+        {info}
+      </div>
+      <p className={cn("mt-1.5 text-2xl font-semibold tabular-nums", toneClass)}>{value}</p>
+      {hint && <p className="mt-1 text-xs text-slate">{hint}</p>}
+    </div>
+  );
+}
+
 export function Chip({
   children,
   tone = "muted",

@@ -1,12 +1,12 @@
 import type { ReactNode } from "react";
 
-import { Chip, ScoreBar, StatCard, TimecodeRef } from "@/components/agora/Primitives";
+import { Chip, Metric, ScoreBar, TimecodeRef } from "@/components/agora/Primitives";
 import { PersonaAccordion } from "@/components/agora/PersonaAccordion";
 import { ValuesChart } from "@/components/agora/ValuesChart";
 import { MetricProvenance } from "@/components/agora/MetricProvenance";
+import { MetricInfo } from "@/components/agora/MetricInfo";
 import { CRITERIA, CRITERIA_LABELS } from "@/lib/agora-types";
 import { contributions, type MetricKey } from "@/lib/provenance";
-import { humanDuration } from "@/lib/progress-state";
 import { showsSection, type ReportScope } from "@/lib/share-scope";
 import type { AnswerView, ReportView } from "@/lib/report-view";
 
@@ -65,7 +65,6 @@ export interface ReportBodyProps {
    * «не показываем»: карточка просто не рисуется, а прочерк утверждал бы, что
    * замера нет.
    */
-  timing?: { totalSec: number | null; nodes: { node: string; durationSec: number | null }[] } | null;
 }
 
 /** Виды проверки QA в человеческих словах. Ключи — из agent_core/qa/run.py. */
@@ -96,20 +95,6 @@ function Row({ label, value }: { label: string; value: string }) {
   );
 }
 
-/** Самый долгий этап — то, чем объясняется длительность прогона. */
-function longestNode(nodes: { node: string; durationSec: number | null }[]): string {
-  const worst = nodes.reduce<{ node: string; durationSec: number | null } | null>(
-    (best, n) =>
-      n.durationSec !== null && (best === null || n.durationSec > (best.durationSec ?? 0))
-        ? n
-        : best,
-    null,
-  );
-  return worst && worst.durationSec !== null
-    ? `${worst.node} (${humanDuration(worst.durationSec)})`
-    : "неизвестно";
-}
-
 export function ReportBody({
   view,
   answers,
@@ -119,7 +104,6 @@ export function ReportBody({
   scope,
   timeline,
   rawReport,
-  timing = null,
   values = null,
 }: ReportBodyProps) {
   const show = (section: Parameters<typeof showsSection>[1]) => showsSection(scope, section);
@@ -134,12 +118,36 @@ export function ReportBody({
    *
    * В сводке раскрытия нет: оно показывает вербатим ответов, то есть сырьё.
    */
+  /**
+   * Содержимое попапа у показателя: шкала, обоснование, список ответов.
+   *
+   * Собрано здесь, а не в примитиве: примитив не должен знать ни про
+   * происхождение чисел, ни про вербатимы. Он отводит место, попап наполняет
+   * страница.
+   */
+  const info = (
+    label: string,
+    scale: string | null,
+    rationale: string | null,
+    provenance: ReactNode,
+  ) =>
+    scale || rationale || provenance ? (
+      <MetricInfo label={label}>
+        {scale && <p className="text-xs uppercase tracking-wide text-slate">{scale}</p>}
+        {rationale && (
+          <p className="mt-3 text-sm leading-relaxed text-foreground/90">{rationale}</p>
+        )}
+        {provenance}
+      </MetricInfo>
+    ) : undefined;
+
   const origin = (metric: MetricKey, reported: number | null) =>
     show("personas") ? (
       <MetricProvenance
         provenance={contributions(metric, answers)}
         reported={reported}
         total={audienceSize}
+        open
       />
     ) : undefined;
 
@@ -176,98 +184,107 @@ export function ReportBody({
         {/* Происхождение числа: раскрытие под каждой метрикой ведёт к ответам
             персон, из которых она посчитана, а оттуда — таймкодом в плеер.
             Связь одного направления: число → ответы → материал. */}
-        {/* Сводные метрики.
-            «Досмотрят до конца» и «Досмотрено» — две разные величины, и стоят
-            рядом намеренно. Первая считается по retention_intent: он
-            категориален, и процента просмотра из него не выводится. Вторая
-            приходит из шкального вопроса анкеты, и без него честно пуста. */}
-        <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-          <StatCard
-            label="Общее впечатление"
-            value={fmt(view.scores.overall_impression, 1)}
-            hint="из 10"
-            provenance={origin("overall_impression", view.scores.overall_impression)}
-          />
-          {/* Шкала подписана намеренно. NPS лежит в −100…+100, и «−86» без
-              подписи читается как ошибка расчёта, а не как «почти все критики».
-              Рядом — среднее по той же шкале 1–10: оно отвечает на следующий
-              вопрос читателя, «насколько всё-таки плохо». Одно другое не
-              заменяет: NPS чувствителен к поляризации, среднее — нет. */}
-          <StatCard
-            label="NPS"
-            value={fmt(view.nps, 0)}
-            hint="промоутеры минус критики"
-            rationale={view.rationales.nps}
-            provenance={origin("nps", view.nps)}
-            tone={view.nps === null ? undefined : view.nps < 0 ? "bad" : view.nps > 30 ? "good" : "warn"}
-          />
-          <StatCard
-            label="Готовы рекомендовать"
-            value={fmt(view.recommendation, 1)}
-            hint="среднее по шкале 1–10"
-            provenance={origin("recommendation", view.recommendation)}
-            tone={
-              view.recommendation === null
-                ? undefined
-                : view.recommendation < 5 ? "bad" : view.recommendation >= 8 ? "good" : "warn"
-            }
-          />
-          <StatCard
-            label="Досмотрят до конца"
-            value={view.retentionRate === null ? "—" : `${view.retentionRate.toFixed(0)}%`}
-            provenance={origin("retention", view.retentionRate)}
-            tone={view.retentionRate === null ? undefined : view.retentionRate < 70 ? "warn" : "good"}
-          />
-          <StatCard
-            label="Досмотрено"
-            value={view.watchedShare === null ? "—" : `${view.watchedShare.toFixed(0)}%`}
-            hint={
-              view.watchedShare === null
-                ? "в анкете не было вопроса о доле просмотра"
-                : "средняя доля просмотренного"
-            }
-            rationale={view.rationales.watched_share}
-            provenance={origin("watched_share", view.watchedShare)}
-            tone={view.watchedShare === null ? undefined : view.watchedShare < 60 ? "warn" : "good"}
-          />
-          <StatCard
-            label="Эмоц. индекс"
-            value={fmt(view.emotionalIndex, 1)}
-            hint="из 10"
-            rationale={view.rationales.emotional_index}
-          />
-          {/* Прочерк, а не ноль: прогоны до появления замеров не знают своей
-              длительности, и «0 с» утверждало бы, что обработка была мгновенной. */}
-          {/*
-            Ценности аудитории заняли место карточки «Модель зрения» по решению
-            владельца (16.09.2026): состав ценностей объясняет ответы персон
-            сильнее, чем имя модели.
+        {/*
+          Сводные метрики.
 
-            Имена моделей не потеряны — они лежат в `models_used` и видны в
-            «Отчёте в исходном виде» внизу страницы. Это хуже отдельной
-            карточки, и цена названа: сравнивая два отчёта, модель придётся
-            смотреть отдельно.
+          Четыре величины, отвечающие на вопрос «как приняли материал», собраны
+          в один блок: каждая в своей рамке читалась как отдельный сюжет.
+          Пояснение к каждой — в попапе по значку, а не раскрытием под числом:
+          раскрытие дёргало высоту всего ряда.
+        */}
+        <section className="space-y-3">
+          <div className="rounded-lg border border-hairline bg-card p-4">
+            <div className="grid gap-x-6 gap-y-5 sm:grid-cols-2 xl:grid-cols-4">
+              <Metric
+                label="Общее впечатление"
+                value={fmt(view.scores.overall_impression, 1)}
+                hint="из 10"
+                info={info("Общее впечатление", "из 10", null,
+                  origin("overall_impression", view.scores.overall_impression))}
+              />
+              {/* Шкала подписана намеренно. NPS лежит в −100…+100, и «−86» без
+                  подписи читается как ошибка расчёта, а не как «почти все
+                  критики». Рядом — среднее по шкале 1–10: оно отвечает на
+                  следующий вопрос читателя, «насколько всё-таки плохо». Одно
+                  другое не заменяет: NPS чувствителен к поляризации, среднее —
+                  нет. */}
+              <Metric
+                label="NPS"
+                value={fmt(view.nps, 0)}
+                hint="промоутеры минус критики"
+                info={info("NPS", "промоутеры минус критики", view.rationales.nps,
+                  origin("nps", view.nps))}
+                tone={view.nps === null ? undefined : view.nps < 0 ? "bad" : view.nps > 30 ? "good" : "warn"}
+              />
+              <Metric
+                label="Готовы рекомендовать"
+                value={fmt(view.recommendation, 1)}
+                hint="среднее по шкале 1–10"
+                info={info("Готовы рекомендовать", "среднее по шкале 1–10", null,
+                  origin("recommendation", view.recommendation))}
+                tone={
+                  view.recommendation === null
+                    ? undefined
+                    : view.recommendation < 5 ? "bad" : view.recommendation >= 8 ? "good" : "warn"
+                }
+              />
+              <Metric
+                label="Эмоц. индекс"
+                value={fmt(view.emotionalIndex, 1)}
+                hint="из 10"
+                info={info("Эмоц. индекс", "из 10", view.rationales.emotional_index, undefined)}
+              />
+            </div>
+          </div>
 
-            Плитки нет вовсе, когда считать не по чему: `persona_set_id`
-            обнуляется при удалении набора, и пустой график утверждал бы, что у
-            аудитории нет ценностей, — а это другое.
-          */}
-          {values && <ValuesChart counts={values} />}
-          {/* Длительность прогона. Карточки нет вовсе, когда замер не передан:
-              прочерк здесь означает «замера нет», а на публичной странице
-              причина другая — время просто не показывают. Прочерк с чужим
-              смыслом хуже отсутствующей карточки. */}
-          {timing && (
-            <StatCard
-              label="Время обработки"
-              value={timing.totalSec === null ? "—" : humanDuration(timing.totalSec)}
-              hint={
-                timing.nodes.length > 0
-                  ? `${timing.nodes.length} этапов · дольше всего ${longestNode(timing.nodes)}`
-                  : "разбивка по этапам не записана"
-              }
-            />
-          )}
+          <div className="grid gap-3 lg:grid-cols-2">
+            {/*
+              Просмотр — одним блоком по просьбе владельца.
+
+              «Досмотрят до конца» и «Досмотрено» остаются ДВУМЯ величинами, и
+              это не придирка: первая считается по retention_intent, который
+              категориален и процента просмотра не даёт; вторая приходит из
+              шкального вопроса анкеты и без него честно пуста. Свести их в одно
+              число значило бы выдумать данные.
+            */}
+            <div className="rounded-lg border border-hairline bg-card p-4">
+              <p className="mb-4 text-xs uppercase tracking-wide text-slate">Просмотр</p>
+              <div className="grid gap-x-6 gap-y-5 sm:grid-cols-2">
+                <Metric
+                  label="Досмотрят до конца"
+                  value={view.retentionRate === null ? "—" : `${view.retentionRate.toFixed(0)}%`}
+                  hint="намерение досмотреть"
+                  info={info("Досмотрят до конца", "доля намеревающихся досмотреть", null,
+                    origin("retention", view.retentionRate))}
+                  tone={view.retentionRate === null ? undefined : view.retentionRate < 70 ? "warn" : "good"}
+                />
+                <Metric
+                  label="Досмотрено"
+                  value={view.watchedShare === null ? "—" : `${view.watchedShare.toFixed(0)}%`}
+                  hint={
+                    view.watchedShare === null
+                      ? "в анкете не было вопроса о доле просмотра"
+                      : "средняя доля просмотренного"
+                  }
+                  info={info("Досмотрено", "средняя доля просмотренного",
+                    view.rationales.watched_share, origin("watched_share", view.watchedShare))}
+                  tone={view.watchedShare === null ? undefined : view.watchedShare < 60 ? "warn" : "good"}
+                />
+              </div>
+            </div>
+
+            {/*
+              Ценности аудитории заняли место карточки «Модель зрения» по
+              решению владельца (16.09.2026): состав ценностей объясняет ответы
+              персон сильнее, чем имя модели. Имена моделей не потеряны — они
+              лежат в `models_used` и видны в «Отчёте в исходном виде».
+
+              Плитки нет вовсе, когда считать не по чему: `persona_set_id`
+              обнуляется при удалении набора, и пустой график утверждал бы, что
+              у аудитории нет ценностей, — а это другое.
+            */}
+            {values && <ValuesChart counts={values} />}
+          </div>
         </section>
 
         {/* Нарратив: главный текст отчёта */}
@@ -585,38 +602,6 @@ export function ReportBody({
                 </>
               )}
             </p>
-          </section>
-        )}
-
-        {/*
-          Заданные вопросы.
-
-          Секция отвечает на вопрос, который иначе проверяется только чтением
-          кода: получила ли персона анкету. Список собран воркером из готовой
-          строки промпта — то есть из того, что действительно ушло в модель, а
-          не из анкеты в базе, которую после прогона можно отредактировать.
-        */}
-        {show("asked") && view.asked.length > 0 && (
-          <section>
-            <h2 className="mb-1 text-sm font-semibold">Заданные вопросы</h2>
-            <p className="mb-4 text-xs text-slate">
-              {view.asked.length}{" "}
-              {view.asked.length === 1 ? "вопрос" : view.asked.length < 5 ? "вопроса" : "вопросов"}{" "}
-              в том виде, в каком их получила каждая персона
-            </p>
-            <ol className="space-y-2 text-sm">
-              {view.asked.map((q, index) => (
-                <li key={q.id} className="flex gap-3">
-                  <span className="w-6 shrink-0 text-right tabular-nums text-slate">
-                    {index + 1}.
-                  </span>
-                  <span className="flex-1">
-                    {q.label}
-                    <span className="ml-2 text-xs text-slate">{q.type}</span>
-                  </span>
-                </li>
-              ))}
-            </ol>
           </section>
         )}
 
