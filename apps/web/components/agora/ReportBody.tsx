@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 
 import { Chip, ScoreBar, StatCard, TimecodeRef } from "@/components/agora/Primitives";
 import { PersonaAccordion } from "@/components/agora/PersonaAccordion";
+import { ValuesChart } from "@/components/agora/ValuesChart";
 import { MetricProvenance } from "@/components/agora/MetricProvenance";
 import { CRITERIA, CRITERIA_LABELS } from "@/lib/agora-types";
 import { contributions, type MetricKey } from "@/lib/provenance";
@@ -39,6 +40,13 @@ export interface ReportBodyProps {
   answers: AnswerView[];
   /** Сколько ответов в прогоне всего — карточек на странице может быть меньше. */
   audienceSize: number;
+  /**
+   * Сколько персон аудитории несут каждую ценность.
+   *
+   * `null` — считать не по чему: набор персон удалён после прогона
+   * (`tasks.persona_set_id` обнуляется). Плитка тогда не рисуется.
+   */
+  values?: Record<string, number> | null;
   /** Идентификатор прогона: по нему аккордеон догружает следующие страницы. */
   runId: string;
   /** Подпись про отбраковку QA рядом со списком персон. */
@@ -112,6 +120,7 @@ export function ReportBody({
   timeline,
   rawReport,
   timing = null,
+  values = null,
 }: ReportBodyProps) {
   const show = (section: Parameters<typeof showsSection>[1]) => showsSection(scope, section);
 
@@ -229,21 +238,21 @@ export function ReportBody({
           />
           {/* Прочерк, а не ноль: прогоны до появления замеров не знают своей
               длительности, и «0 с» утверждало бы, что обработка была мгновенной. */}
-          {/* Какими моделями считался прогон. Отдельной карточкой, а не
-              строкой в подвале: доля отбраковок и тон ответов зависят от
-              модели не меньше, чем от материала, и сравнивать два отчёта, не
-              зная модели, значит сравнивать не то. */}
-          {view.modelsUsed && (
-            <StatCard
-              label="Модель зрения"
-              value={view.modelsUsed.vision || "—"}
-              hint={
-                view.modelsUsed.judge && view.modelsUsed.judge !== view.modelsUsed.text
-                  ? `рассуждение ${view.modelsUsed.text} · судья ${view.modelsUsed.judge}`
-                  : `рассуждение и проверка ${view.modelsUsed.text}`
-              }
-            />
-          )}
+          {/*
+            Ценности аудитории заняли место карточки «Модель зрения» по решению
+            владельца (16.09.2026): состав ценностей объясняет ответы персон
+            сильнее, чем имя модели.
+
+            Имена моделей не потеряны — они лежат в `models_used` и видны в
+            «Отчёте в исходном виде» внизу страницы. Это хуже отдельной
+            карточки, и цена названа: сравнивая два отчёта, модель придётся
+            смотреть отдельно.
+
+            Плитки нет вовсе, когда считать не по чему: `persona_set_id`
+            обнуляется при удалении набора, и пустой график утверждал бы, что у
+            аудитории нет ценностей, — а это другое.
+          */}
+          {values && <ValuesChart counts={values} />}
           {/* Длительность прогона. Карточки нет вовсе, когда замер не передан:
               прочерк здесь означает «замера нет», а на публичной странице
               причина другая — время просто не показывают. Прочерк с чужим

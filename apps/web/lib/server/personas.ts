@@ -334,3 +334,47 @@ export async function getPersona(
   );
   return rows[0] ? toPersona(rows[0]) : null;
 }
+
+/**
+ * Сколько персон аудитории прогона несут каждую ценность.
+ *
+ * ─── Почему считается здесь, а не в отчёте ────────────────────────────────
+ * Отчёт собирает воркер, и поле, добавленное туда сегодня, появится только у
+ * прогонов, посчитанных завтра. Ценности лежат в `personas.dna` и доступны для
+ * ЛЮБОГО прогона, включая уже закрытые, — считать по ним дешевле, чем
+ * пересчитывать отчёты.
+ *
+ * ─── Почему `null`, а не пустой словарь ───────────────────────────────────
+ * `tasks.persona_set_id` объявлен `ON DELETE SET NULL`: набор могли удалить
+ * после прогона. Пустой словарь нарисовал бы график, утверждающий, что у
+ * аудитории нет ни одной ценности. `null` означает «считать не по чему», и
+ * плитка в этом случае не показывается вовсе.
+ */
+export async function valueDistribution(
+  client: PoolClient,
+  taskId: string,
+): Promise<Record<string, number> | null> {
+  const { rows: setRows } = await client.query<{ persona_set_id: string | null }>(
+    "SELECT persona_set_id FROM tasks WHERE id = $1::uuid",
+    [taskId],
+  );
+  const setId = setRows[0]?.persona_set_id ?? null;
+  if (!setId) return null;
+
+  // `jsonb_array_elements_text` разворачивает список ценностей персоны в строки,
+  // и счёт идёт по персонам: одна персона добавляет по единице каждой своей
+  // ценности и ни одной — дважды.
+  const { rows } = await client.query<{ value: string; n: string }>(
+    `SELECT v AS value, count(*)::text AS n
+       FROM personas p,
+            LATERAL jsonb_array_elements_text(
+              p.dna -> 'values_and_beliefs' -> 'important_values'
+            ) AS v
+      WHERE p.persona_set_id = $1::uuid
+      GROUP BY v`,
+    [setId],
+  );
+
+  if (rows.length === 0) return null;
+  return Object.fromEntries(rows.map((r) => [r.value, Number(r.n)]));
+}
