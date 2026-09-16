@@ -189,15 +189,26 @@ def assert_full_task_visibility(conn: Any) -> None:
         if row and row[0]:
             return
 
-        # `qual IS NULL` у политики SELECT означает USING (true) — без
-        # ограничения по строкам. Политика со строковым условием сюда не
-        # попадает намеренно: именно она и есть источник ошибки.
+        # Что считается «без ограничения по строкам»: `qual IS NULL` либо
+        # `qual = 'true'`.
+        #
+        # Две формы, а не одна, потому что Postgres хранит `USING (true)` —
+        # ровно то, что пишет миграция 42, — как строку 'true', а не как NULL.
+        # Первая редакция проверяла только NULL и на боевом возвращала ноль при
+        # живой и верной политике. Незаметно: там владелец схемы —
+        # суперпользователь, и срабатывала ветка выше. На managed-инстансе,
+        # ради которого миграция и написана, сборщик отказывался бы работать
+        # навсегда.
+        #
+        # Политика со строковым условием (как `tasks_reaper_read` из миграции
+        # 41, где `qual = (status = 'RUNNING')`) сюда не попадает намеренно:
+        # именно она и есть источник исходной ошибки.
         cur.execute(
             """
             SELECT count(*) FROM pg_policies
              WHERE schemaname = 'public' AND tablename = 'tasks'
                AND cmd IN ('SELECT', 'ALL')
-               AND qual IS NULL
+               AND (qual IS NULL OR btrim(lower(qual)) = 'true')
                AND current_user = ANY (roles)
             """
         )
