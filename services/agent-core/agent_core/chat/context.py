@@ -26,6 +26,7 @@
 from __future__ import annotations
 
 import copy
+import json
 from typing import Any
 
 
@@ -97,6 +98,59 @@ def slim_pack(pack: dict[str, Any]) -> dict[str, Any]:
     return slim
 
 
+#: Потолок контекста модели. Тот же, о котором сообщил отказ 16.09.2026:
+#: «maximum context length is 262144 tokens».
+CONTEXT_LIMIT = 262_144
+
+#: Выше этого — едем оглавлением и инструментами, а не материалом целиком.
+#:
+#: Запас до потолка не про осторожность, а про арифметику: сверх среза в
+#: запросе живут вопрос, история разговора и место под ответ
+#: (`client.MAX_TOKENS`), а сама оценка приблизительна. Порог, равный потолку,
+#: означал бы проверку, срабатывающую после того, как всё сломалось.
+TOOLS_THRESHOLD = 150_000
+
+#: Символов на токен. Замер на боевом прогоне 0091: оценка по этому делителю
+#: дала 261 103 там, где шлюз насчитал 260 945 — расхождение 0.06 %. Точный
+#: счётчик потребовал бы токенизатора модели в образе ради решения, которое
+#: принимается один раз за разговор.
+CHARS_PER_TOKEN = 2.6
+
+
+def estimate_tokens(obj: Any) -> int:
+    """Приблизительный вес среза в токенах. Приблизительный — и этого хватает."""
+    return int(len(json.dumps(obj, ensure_ascii=False, default=str)) / CHARS_PER_TOKEN)
+
+
+def needs_tools(context_or_pack: Any) -> bool:
+    """Не помещается целиком — значит, поедет оглавлением и инструментами."""
+    return estimate_tokens(context_or_pack) > TOOLS_THRESHOLD
+
+
+def index_pack(pack: dict[str, Any]) -> dict[str, Any]:
+    """
+    Пакет, свёрнутый до оглавления: полные описания сцен модель запросит сама.
+
+    ─── Что остаётся, а что уходит ───────────────────────────────────────────
+    Уходят `scenes` — 157 953 токена на прогоне 0091, 60 % всего веса. Вместо
+    них `scene_index`: номер, таймкод, одна фраза, около 8 000 токенов.
+
+    Речь ОСТАЁТСЯ на месте. Она втрое легче сцен (11 087 токенов) и нужна почти
+    любому вопросу; сворачивать её ради одного процента веса значило бы
+    добавить раунд там, где он не нужен.
+
+    Нумерация оглавления совпадает с нумерацией на экране исследования
+    (`Timeline.tsx`, `sceneNumber`) — см. `tools.scene_index`. Расхождение здесь
+    не дало бы ошибки: оно дало бы уверенный ответ про чужую сцену.
+    """
+    from .tools import scene_index
+
+    slim = slim_pack(pack)
+    slim["scene_index"] = scene_index(pack)
+    slim.pop("scenes", None)
+    return slim
+
+
 def persona_context(
     *,
     persona: dict[str, Any],
@@ -104,11 +158,12 @@ def persona_context(
     survey: Any,
     answers: list[dict[str, Any]],
     history: list[dict[str, Any]],
+    with_tools: bool = False,
 ) -> dict[str, Any]:
     """Срез для допроса персоны. Чужих ответов здесь нет как данных."""
     return {
         "persona_dna": copy.deepcopy(persona.get("dna") or {}),
-        "video_understanding": slim_pack(pack),
+        "video_understanding": index_pack(pack) if with_tools else slim_pack(pack),
         "survey": copy.deepcopy(survey),
         "my_previous_answers": _own_answers(answers, str(persona.get("id") or "")),
         "chat_history": copy.deepcopy(history),
@@ -123,12 +178,13 @@ def analyst_context(
     answers: list[dict[str, Any]],
     qa_flags: list[dict[str, Any]] | None,
     history: list[dict[str, Any]],
+    with_tools: bool = False,
 ) -> dict[str, Any]:
     """Срез для аналитика: отчёт и все ответы этого исследования."""
     return {
         "report": copy.deepcopy(report),
         "all_persona_answers": copy.deepcopy(answers),
-        "video_understanding": slim_pack(pack),
+        "video_understanding": index_pack(pack) if with_tools else slim_pack(pack),
         "survey": copy.deepcopy(survey),
         "qa_flags": copy.deepcopy(qa_flags or []),
         "chat_history": copy.deepcopy(history),

@@ -33,8 +33,14 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from ...chat.agent import META_SEPARATOR, parse_reply
-from ...chat.client import stream_reply
-from ...chat.context import analyst_context, persona_context
+from ...chat.client import call_with_tools, stream_reply
+from ...chat.context import (
+    analyst_context,
+    estimate_tokens,
+    needs_tools,
+    persona_context,
+)
+from ...chat.loop import run_with_tools
 
 router = APIRouter(prefix="/api/chat", tags=["chat"])
 
@@ -146,32 +152,78 @@ def reply(request: ChatRequest) -> StreamingResponse:
 
     survey = data["report"].get("survey_asked") or []
 
-    if request.mode == "persona":
-        if not request.persona_id:
-            raise HTTPException(422, "persona_id обязателен в режиме допроса персоны")
-        persona = _persona(request.tenant_id, request.persona_id)
-        context = persona_context(
-            persona=persona, pack=data["pack"], survey=survey,
-            answers=data["answers"], history=request.history,
-        )
-        key = "chat.persona_followup"
-    else:
-        context = analyst_context(
+    # ─── Целиком или оглавлением ────────────────────────────────────────────
+    # Решает замер, а не флаг. Флаг нужно помнить, а размер контекста считается
+    # и так: помещается — едем целиком (меньше заходов, модель видит всё
+    # сразу), не помещается — оглавление и инструменты.
+    #
+    # 16.09.2026 прогон 0091 весил 261 103 токена при потолке 262 144 и отвечал
+    # отказом. Чистка (`slim_pack`) увела его на 170 613 — это всё ещё выше
+    # порога, и такой прогон поедет инструментами.
+    def _build(with_tools: bool) -> tuple[dict[str, Any], str]:
+        if request.mode == "persona":
+            if not request.persona_id:
+                raise HTTPException(422, "persona_id обязателен в режиме допроса персоны")
+            persona = _persona(request.tenant_id, request.persona_id)
+            return persona_context(
+                persona=persona, pack=data["pack"], survey=survey,
+                answers=data["answers"], history=request.history,
+                with_tools=with_tools,
+            ), "chat.persona_followup"
+        return analyst_context(
             report=data["report"], pack=data["pack"], survey=survey,
             answers=data["answers"],
             qa_flags=(data["report"].get("qa_summary") or {}).get("by_kind") or [],
             history=request.history,
-        )
-        key = "chat.analyst"
+            with_tools=with_tools,
+        ), "chat.analyst"
+
+    context, key = _build(with_tools=False)
+    context_mode = "full"
+    if needs_tools(context):
+        context, key = _build(with_tools=True)
+        context_mode = "tools"
 
     template = _prompt_body(key, request.prompts_snapshot, request.tenant_id)
     user = _render(template, context, request.question)
 
+    # Изоляция доезжает и до инструментов: в режиме допроса им нечего вернуть
+    # про чужие ответы. Тот же механизм, что в `persona_context`.
+    tool_owner = request.persona_id if request.mode == "persona" else None
+
+    def _model(*, messages: list[dict[str, Any]], tools: Any):
+        return call_with_tools(messages=messages, tools=tools, mode=request.mode)
+
     def events():
         collected: list[str] = []
         shown = 0  # сколько символов прозы уже отдано
+
+        yield "data: " + json.dumps(
+            {"context_mode": context_mode, "context_tokens": estimate_tokens(context)},
+            ensure_ascii=False,
+        ) + "\n\n"
+
         try:
-            for piece in stream_reply(system="", user=user, mode=request.mode):
+            if context_mode == "tools":
+                pieces = run_with_tools(
+                    model=_model,
+                    base_messages=[{"role": "user", "content": user}],
+                    pack=data["pack"],
+                    answers=data["answers"],
+                    persona_id=tool_owner,
+                )
+            else:
+                pieces = (
+                    ("delta", p)
+                    for p in stream_reply(system="", user=user, mode=request.mode)
+                )
+
+            for kind, piece in pieces:
+                if kind == "step":
+                    # Ход инструментов виден человеку: раунды идут ДО первого
+                    # слова, и молчание десять секунд читается как зависание.
+                    yield f"data: {json.dumps({'step': piece}, ensure_ascii=False)}\n\n"
+                    continue
                 collected.append(piece)
                 whole = "".join(collected)
                 # Метаблок наружу не отдаётся: он служебный. Пока разделителя
@@ -196,6 +248,7 @@ def reply(request: ChatRequest) -> StreamingResponse:
                 "out_of_profile": parsed.out_of_profile,
                 "contradicts_previous": parsed.contradicts_previous,
                 "citations": list(parsed.citations),
+                "context_mode": context_mode,
             }
         }, ensure_ascii=False) + "\n\n"
 
