@@ -172,7 +172,11 @@ export interface AnswerView {
   emotions: string[];
   verbatim: string | null;
   groundingRefs: { timecode: string; note: string }[];
-  qaFlags: string[];
+  /**
+   * Замечания QA по этому ответу. Прежде здесь лежали строки, и в них доезжал
+   * `verdict` — одно и то же слово «regenerate» на все забракованные ответы.
+   */
+  qaFlags: QaFlagView[];
   /**
    * Ответы на анкету, как их дала персона: ключ — идентификатор вопроса ЛИБО
    * его текст (промпт разрешает и то, и другое).
@@ -185,6 +189,39 @@ export interface AnswerView {
   surveyAnswers: Record<string, string>;
   /** Свободные ответы: почему такое впечатление, что запомнилось, о героях. */
   verbatims: Record<string, string>;
+}
+
+/**
+ * Замечание QA по одному ответу — как его кладёт воркер (`qa/run.py`, `_verdict`).
+ *
+ * Поле называется `reasons`, во множественном числе: на прогоне 0091 у 33
+ * флагов 66 причин, и первая из них не всегда главная.
+ */
+export interface QaFlagView {
+  /** Что проверяли: `consistency`, `grounding`, `diversity`. */
+  kind: string;
+  /** Уверенность судьи, 0..1. У правил — 1, у судьи на 0091 — от 0.70 до 0.95. */
+  confidence: number | null;
+  /**
+   * Причины словами. Пустой список значит «забраковано без объяснения» — это
+   * возможно и это стоит показать, а не выбросить: исчезнувший флаг делает
+   * забракованный ответ похожим на чистый.
+   */
+  reasons: string[];
+}
+
+/**
+ * Подписи видов проверки. Незнакомый вид показывается как есть: судья может
+ * завести новый раньше, чем сюда допишут перевод, и пропасть он не должен.
+ */
+const QA_KIND_LABELS: Record<string, string> = {
+  consistency: "Согласованность",
+  grounding: "Опора на материал",
+  diversity: "Разнообразие",
+};
+
+export function qaKindLabel(kind: string): string {
+  return QA_KIND_LABELS[kind] ?? kind;
 }
 
 const SEGMENT_LABELS: Record<string, string> = {
@@ -478,10 +515,16 @@ export function parseAnswer(card: {
       const m = REF.exec(ref);
       return m ? [{ timecode: m[1], note: m[2] }] : [];
     }),
-    qaFlags: card.qaFlags.flatMap((f) => {
-      const reason = str(f.reason) ?? str(f.verdict);
-      return reason ? [reason] : [];
-    }),
+    // `reasons` — СПИСОК, и он единственный источник слов. `verdict` сюда не
+    // подставляется ни при каких условиях: у всех забракованных ответов он
+    // равен «regenerate», то есть сообщает решение системы вместо причины.
+    // Именно этот запасной путь прятал промах по имени поля: без него значок
+    // был бы пустым, а пустоту заметили бы в первый день.
+    qaFlags: card.qaFlags.map((f) => ({
+      kind: str(f.kind) ?? "проверка",
+      confidence: num(f.confidence),
+      reasons: strings(f.reasons),
+    })),
     surveyAnswers: flatten(obj(body.survey_answers)),
     verbatims: flatten(verbatims),
   };

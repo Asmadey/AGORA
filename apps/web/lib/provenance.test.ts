@@ -57,7 +57,7 @@ test("забракованные QA в число не входят — как �
     answer({ personaId: "a", scores: { overall_impression: 10, plot: null, acting: null, music: null, cinematography: null } }),
     answer({
       personaId: "b",
-      qaFlags: ["grounding"],
+      qaFlags: [{ kind: "grounding", confidence: 0.95, reasons: ["таймкод не совпал"] }],
       scores: { overall_impression: 2, plot: null, acting: null, music: null, cinematography: null },
     }),
   ];
