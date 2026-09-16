@@ -265,3 +265,53 @@ def test_миграция_42_даёт_владельцу_видеть_все_п�
     assert "USING (true)" in sql, "без ограничения по строкам — в этом смысл"
     assert "DROP POLICY IF EXISTS" in sql, "идемпотентно"
     assert "FORCE" not in sql.split("BEGIN;")[1], "FORCE не снимается"
+
+
+def test_проверка_видимости_узнаёт_политику_которую_ставит_миграция():
+    """
+    Проверка и миграция обязаны сходиться в том, что такое «без ограничения».
+
+    16.09.2026 не сходились. Миграция 42 пишет `USING (true)`, а проверка
+    искала `qual IS NULL`. Postgres хранит `USING (true)` как `qual = 'true'`,
+    и запрос проверки на боевом вернул ноль при живой и верной политике.
+
+    На боевом это осталось незаметным: владелец схемы там суперпользователь, и
+    срабатывала первая ветка проверки. На managed-инстансе, ради которого
+    миграция и написана, суперпользователя нет — и сборщик отказывался бы
+    работать НАВСЕГДА, несмотря на правильно применённую политику.
+
+    Первая редакция теста этого не поймала, потому что подделка соединения
+    возвращала готовое число вместо того, чтобы разбирать условие. Подделка,
+    не повторяющая семантику того, что подделывает, проверяет саму себя.
+
+    Поэтому здесь сверяются два ТЕКСТА: что миграция пишет в `USING` и что
+    проверка согласна считать отсутствием ограничения.
+    """
+    import re
+    from pathlib import Path
+
+    from agent_core.maintenance import orphan_storage
+
+    root = Path(__file__).resolve().parents[3]
+    sql = (root / "infra" / "postgres" / "init" / "42_sweeper_reads_all_tasks.sql").read_text(
+        "utf-8"
+    )
+
+    # Что миграция кладёт в USING у политики сборщика.
+    m = re.search(r"tasks_sweeper_read ON tasks FOR SELECT TO %I USING \(([^)]*)\)", sql)
+    assert m, "в миграции 42 не нашлось условия USING для tasks_sweeper_read"
+    using = m.group(1).strip().strip("'").lower()
+    assert using == "true", f"миграция пишет USING ({using}) — проверка ждёт true"
+
+    # Проверка обязана считать это отсутствием ограничения.
+    guard = orphan_storage.assert_full_task_visibility.__doc__ or ""
+    source = Path(orphan_storage.__file__).read_text("utf-8")
+    body = source[source.index("def assert_full_task_visibility") :]
+    body = body[: body.index("\ndef ")]
+
+    assert "qual IS NULL" in body, "условие на отсутствие ограничения осталось"
+    assert "'true'" in body, (
+        "проверка обязана узнавать и `USING (true)`: Postgres хранит его как "
+        "qual = 'true', а не NULL. Без этого политика миграции 42 не находится"
+    )
+    assert guard, "у проверки есть объяснение"
