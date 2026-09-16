@@ -2,6 +2,7 @@
 
 import { memo, useCallback, useEffect, useRef, useState } from "react";
 
+import { humanDuration } from "@/lib/progress-state";
 import type { TimelineCell, TimelineView } from "@/lib/server/content-pack";
 
 /**
@@ -38,7 +39,24 @@ interface Payload {
  * внутри компонента адрес однажды уехал бы в публичную страницу и упёрся бы
  * там в требование сессии.
  */
-export function Timeline({ runId, src }: { runId: string; src?: string }) {
+export function Timeline({
+  runId,
+  src,
+  processingSec = null,
+}: {
+  runId: string;
+  src?: string;
+  /**
+   * Сколько считался прогон. Приезжает снаружи, из Postgres через страницу:
+   * второй запрос из клиента ради той же величины разошёлся бы с шапкой при
+   * первом же расхождении.
+   *
+   * `null` значит «не показываем» — так на публичной странице, где длительность
+   * нашей обработки никого не касается. Прочерк там утверждал бы «замера нет»,
+   * а это неправда.
+   */
+  processingSec?: number | null;
+}) {
   const [data, setData] = useState<Payload | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [currentSec, setCurrentSec] = useState(0);
@@ -230,6 +248,13 @@ export function Timeline({ runId, src }: { runId: string; src?: string }) {
             ["Спикеров", String(stats.speakers)],
             ["Слов", String(stats.words)],
             ["Длительность", formatTime(durationSec)],
+            // Замер прогона стоит ПРАВЕЕ длительности ролика и рядом с ней —
+            // это два времени, и рядом видно, что одно про материал, а второе
+            // про нашу обработку. В сетке показателей, среди NPS и оценок,
+            // второе читалось как величина, что-то говорящая об аудитории.
+            ...(processingSec !== null
+              ? [["Время обработки", humanDuration(processingSec)] as [string, string]]
+              : []),
           ].map(([label, value]) => (
             <div key={label} className="flex items-baseline gap-1.5">
               <dt>{label}</dt>

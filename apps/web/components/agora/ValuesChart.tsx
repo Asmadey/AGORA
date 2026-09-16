@@ -1,4 +1,4 @@
-import { outsideListCount, valueChartRows } from "@/lib/values-chart";
+import { valueChartRows } from "@/lib/values-chart";
 
 /**
  * Семнадцать ценностей столбиками — в размер обычной плитки показателей.
@@ -19,8 +19,6 @@ import { outsideListCount, valueChartRows } from "@/lib/values-chart";
  */
 export function ValuesChart({ counts }: { counts: Record<string, number> }) {
   const rows = valueChartRows(counts);
-  const outside = outsideListCount(counts);
-  const personas = Math.max(0, ...rows.map((r) => r.count));
 
   /*
     Оболочка повторяет `StatCard` по классам, но карточкой не является:
@@ -30,7 +28,22 @@ export function ValuesChart({ counts }: { counts: Record<string, number> }) {
   */
   return (
     <div className="rounded-lg border border-hairline bg-card p-4">
-      <p className="text-xs uppercase tracking-wide text-slate">Ценности ВЦИОМ</p>
+      {/*
+        Оговорка стоит В СТРОКЕ заголовка, а не подвалом под графиком.
+
+        Подвал владелец просил убрать — плитка должна быть в высоту соседних.
+        Но убрать оговорку совсем нельзя: «Ценности ВЦИОМ» — это название
+        ПЕРЕЧНЯ, а числа принадлежат синтетической аудитории. Без пояснения
+        плитка читается как измерения самого ВЦИОМ, то есть выдаёт
+        сгенерированное за измеренное. В строке заголовка она не стоит ни
+        пикселя высоты.
+      */}
+      <p className="flex items-baseline justify-between gap-2 text-xs uppercase tracking-wide text-slate">
+        <span>Ценности ВЦИОМ</span>
+        <span className="shrink-0 text-[10px] normal-case tracking-normal text-slate/70">
+          персон аудитории · из 17
+        </span>
+      </p>
       <ol className="space-y-[2px]">
         {rows.map((row) => (
           <li key={row.value} className="relative h-[13px] overflow-hidden rounded-sm">
@@ -65,23 +78,6 @@ export function ValuesChart({ counts }: { counts: Record<string, number> }) {
         ))}
       </ol>
 
-      {/*
-        Значения вне перечня не отбрасываются молча. У персон, созданных до
-        16.09.2026, встречаются «Неравенство, разделение людей…» и служебные
-        ответы анкеты: прежняя выборка брала топ-15 корпуса, а не канон.
-        Читатель обязан знать, что часть аудитории описана не тем словарём.
-      */}
-      {outside > 0 && (
-        <p className="mt-2 border-t border-hairline pt-2 text-[10px] leading-snug text-slate">
-          Ещё {outside} назначений — значения вне перечня: аудитория создана до
-          перехода на канонический список.
-        </p>
-      )}
-      <p className="mt-1 text-[10px] leading-snug text-slate">
-        {personas > 0
-          ? "персон аудитории, несущих ценность · в перечне 17"
-          : "ни одной ценности из перечня"}
-      </p>
     </div>
   );
 }

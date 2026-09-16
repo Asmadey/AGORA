@@ -167,9 +167,8 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
           runId={id}
           qaNote={qaNote}
           scope="full"
-          timing={timing}
           values={values}
-          timeline={<Timeline runId={id} />}
+          timeline={<Timeline runId={id} processingSec={timing?.totalSec ?? null} />}
           rawReport={
             /*
               Отчёт в исходном виде (п. 20).

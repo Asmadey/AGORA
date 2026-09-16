@@ -24,8 +24,14 @@ export function MetricProvenance({
   provenance,
   reported,
   total,
+  open = false,
 }: {
   provenance: Provenance;
+  /**
+   * Раскрыть сразу. В карточке список свёрнут — он длинный и дёргал бы высоту
+   * ряда. В попапе раскрывать нечего: попап открыли ровно за этим.
+   */
+  open?: boolean;
   /** Число из шапки отчёта — то, что должно получиться. */
   reported: number | null;
   /** Сколько ответов всего у прогона: список может покрывать не все. */
@@ -45,7 +51,7 @@ export function MetricProvenance({
     reported !== null && computed !== null && Math.abs(reported - computed) > 0.05;
 
   return (
-    <details className="mt-2 border-t border-hairline pt-2">
+    <details open={open} className="mt-2 border-t border-hairline pt-2">
       <summary className="cursor-pointer text-xs text-slate hover:text-foreground">
         Откуда это число — {rows.length}{" "}
         {rows.length === 1 ? "ответ" : rows.length < 5 ? "ответа" : "ответов"}
