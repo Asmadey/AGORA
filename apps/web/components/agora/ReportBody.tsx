@@ -258,18 +258,30 @@ export function ReportBody({
                     origin("retention", view.retentionRate))}
                   tone={view.retentionRate === null ? undefined : view.retentionRate < 70 ? "warn" : "good"}
                 />
-                <Metric
-                  label="Досмотрено"
-                  value={view.watchedShare === null ? "—" : `${view.watchedShare.toFixed(0)}%`}
-                  hint={
-                    view.watchedShare === null
-                      ? "в анкете не было вопроса о доле просмотра"
-                      : "средняя доля просмотренного"
-                  }
-                  info={info("Досмотрено", "средняя доля просмотренного",
-                    view.rationales.watched_share, origin("watched_share", view.watchedShare))}
-                  tone={view.watchedShare === null ? undefined : view.watchedShare < 60 ? "warn" : "good"}
-                />
+                {/*
+                  Карточки нет вовсе, когда доли просмотра не спрашивали.
+
+                  Здесь стояло «—» с подписью «в анкете не было вопроса о доле
+                  просмотра». Пока вопрос был обязательным, прочерк означал
+                  сбой и его стоило показывать. С 17.09.2026 обязательная
+                  анкета — пятнадцать вопросов заказчика, доли просмотра среди
+                  них нет, и прочерк стоял бы в КАЖДОМ отчёте.
+
+                  Постоянный прочерк читается как «посчитать не смогли», а не
+                  как «не спрашивали», и заказчик первым делом спросит, что
+                  сломалось. Вопрос остаётся доступным: добавив его в анкету
+                  своими руками, владелец возвращает и карточку.
+                */}
+                {view.watchedShare !== null && (
+                  <Metric
+                    label="Досмотрено"
+                    value={`${view.watchedShare.toFixed(0)}%`}
+                    hint="средняя доля просмотренного"
+                    info={info("Досмотрено", "средняя доля просмотренного",
+                      view.rationales.watched_share, origin("watched_share", view.watchedShare))}
+                    tone={view.watchedShare < 60 ? "warn" : "good"}
+                  />
+                )}
               </div>
             </div>
 

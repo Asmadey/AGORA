@@ -478,9 +478,17 @@ else:
                 if v.get("persona_id") and bool(v.get("escalated")) is escalated
             })
 
-        check(ESC_CASES[2], ids(True) == ["p0", "p1"] and ids(False) == ["p2", "p3", "p4"],
-              f"эскалированы {ids(True)} (ожидались ['p0', 'p1'] — у них confidence 0.4 "
-              f"при пороге 0.7), не эскалированы {ids(False)}")
+        # У каждой персоны есть несколько независимых вердиктов. Маркер снижает
+        # confidence только у одного проверяемого вердикта для p0/p1, поэтому
+        # у них закономерно остаются и неэскалированные вердикты с confidence
+        # выше порога. Проверяем именно границы эскалации: низкие вердикты p0/p1
+        # прошли перепроверку, а у p2–p4 перепроверки нет.
+        check(ESC_CASES[2],
+              ids(True) == ["p0", "p1"]
+              and not any(v.get("escalated") for v in on.verdicts
+                          if v.get("persona_id") in {"p2", "p3", "p4"}),
+              f"эскалированы {ids(True)} (ожидались низкие вердикты p0/p1 — confidence "
+              f"0.4 при пороге 0.7), не эскалированы {ids(False)}")
 
         escalated_verdicts = [v for v in on.verdicts if v.get("escalated")]
         check(ESC_CASES[3],

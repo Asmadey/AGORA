@@ -29,6 +29,7 @@ GenerationConfig принимал size / seed / serial / city / segment, и по
 from __future__ import annotations
 
 import json
+import re
 import os
 import shutil
 import subprocess
@@ -76,9 +77,39 @@ for name, needle in (
     ("три гео", "иные НП"),
     ("пол", "муж"),
     ("образование", "education"),
-    ("размер по умолчанию 20", "20"),
 ):
     check(f"в контракте объявлен(ы) {name}", needle in audience_ts)
+
+# Размер набора проверяется отдельно и по значению, а не подстрокой.
+#
+# Здесь стояло `("размер по умолчанию 20", "20")`, то есть поиск подстроки «20»
+# в исходнике. 17.09.2026 умолчание стало 100, а потолок 200 — и проверка
+# прошла, потому что «20» нашлось внутри «200». Проверка, которую нельзя
+# уронить, не проверяет ничего.
+#
+# Числа: заказчик требует колонку «14–35 лет» у каждого показателя, эта группа
+# составляет 44.8 % корпуса, и в срез попадает около 0.45 набора. При наборе 20
+# это девять человек, и один весит одиннадцать процентных пунктов.
+_default = re.search(r"DEFAULT_AUDIENCE_SIZE = (\d+)", audience_ts)
+_bounds = re.search(r"AUDIENCE_SIZE_BOUNDS = \{ min: (\d+), max: (\d+) \}", audience_ts)
+check(
+    "размер набора объявлен числами, а не подстрокой",
+    bool(_default and _bounds),
+    "не найдены DEFAULT_AUDIENCE_SIZE или AUDIENCE_SIZE_BOUNDS",
+)
+if _default and _bounds:
+    low, high = int(_bounds.group(1)), int(_bounds.group(2))
+    default = int(_default.group(1))
+    check(
+        "нижняя граница набора не меньше 40",
+        low >= 40,
+        f"минимум {low}: в срезе 14–35 окажется {int(low * 0.45)} человек",
+    )
+    check(
+        "умолчание внутри границ и не меньше 100",
+        low <= default <= high and default >= 100,
+        f"умолчание {default}, границы {low}–{high}",
+    )
 
 gen_src = read(CORE / "agent_core" / "persona" / "generator.py")
 check(

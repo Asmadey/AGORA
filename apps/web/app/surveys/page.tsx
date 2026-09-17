@@ -56,7 +56,6 @@ export default async function SurveysPage() {
           <div className="space-y-2">
             {surveys.map((s) => {
               const custom = s.questions.filter((q) => !q.baseKey).length;
-              const hasWatchedShare = s.questions.some((q) => q.type === "watched_share");
               return (
                 <Link
                   key={s.id}
@@ -67,13 +66,20 @@ export default async function SurveysPage() {
 
                   <Chip tone="outline">{s.questions.length} вопросов</Chip>
                   {custom > 0 && <Chip tone="outline">{custom} своих</Chip>}
-                  {/* Отсутствие вопроса о доле просмотра — не ошибка, но
-                      последствие видно только в отчёте, где секция «Досмотрено»
-                      останется пустой. Поэтому оно названо здесь, а не там. */}
-                  {!hasWatchedShare && (
-                    <Chip tone="outline">без доли просмотра</Chip>
-                  )}
+                  {/*
+                      Плашки «без доли просмотра» здесь больше нет.
 
+                      Она предупреждала, что секция «Досмотрено» в отчёте
+                      останется пустой, — и была полезна, пока вопрос входил в
+                      обязательные и его отсутствие было редкостью. С
+                      17.09.2026 обязательная анкета — пятнадцать вопросов
+                      заказчика, доли просмотра среди них нет, и плашка стояла
+                      бы у КАЖДОЙ анкеты. Предупреждение, которое видно всегда,
+                      не предупреждает ни о чём и вытесняет те, что рядом.
+
+                      Секция в отчёте теперь тоже не пустует, а отсутствует
+                      (`ReportBody.tsx`).
+                  */}
                   <span className="text-xs text-slate">
                     {new Date(s.createdAt).toLocaleDateString("ru-RU")}
                   </span>

@@ -18,13 +18,32 @@ import type { SurveyQuestion, QuestionType } from "@/lib/agora-types";
  * базового критерия — цена ошибки должна быть один клик.
  */
 
-export const QUESTION_TYPES: { v: QuestionType; label: string; hint: string }[] = [
-  { v: "scale", label: "Шкала", hint: "числовая оценка в заданных границах" },
-  { v: "emotions", label: "Эмоции", hint: "набор эмоций, вызванных материалом" },
-  { v: "retention", label: "Удержание", hint: "досмотрел бы или выключил" },
-  { v: "watched_share", label: "Доля просмотра", hint: "какую часть ролика досмотрел бы, 0–100%" },
-  { v: "recommendation", label: "Рекомендация", hint: "порекомендует ли и кому" },
-  { v: "open", label: "Открытый", hint: "свободный ответ текстом" },
+/**
+ * Пять типов вместо прежних шести.
+ *
+ * «Эмоции», «удержание», «рекомендация» и «доля просмотра» были не типами, а
+ * ПРЕСЕТАМИ: эмоции — выбор нескольких из готового словаря, удержание — выбор
+ * одного из трёх, рекомендация и доля — шкалы. Каждый нёс свою ветку в
+ * конструкторе, промпте, правилах QA, агрегате, графиках и выгрузке; свёрнутые,
+ * они дают один редьюсер и один график на тип. Пресет живёт в данных анкеты —
+ * готовым списком `options`, — а не в перечне типов.
+ *
+ * `chartable` отвечает на вопрос, который пользователь задаёт при создании
+ * вопроса: построится ли по нему график. У открытого ответа не построится
+ * никогда — его нельзя упорядочить и нечего считать, — и сказать об этом надо
+ * ДО прогона, а не после.
+ */
+export const QUESTION_TYPES: {
+  v: QuestionType;
+  label: string;
+  hint: string;
+  chartable: boolean;
+}[] = [
+  { v: "scale", label: "Шкала", hint: "числовая оценка в заданных границах", chartable: true },
+  { v: "single_choice", label: "Один из списка", hint: "ровно один вариант из закрытого перечня", chartable: true },
+  { v: "multi_choice", label: "Несколько из списка", hint: "до N вариантов из закрытого перечня", chartable: true },
+  { v: "matrix_single", label: "Матрица", hint: "по одному варианту на каждую строку", chartable: true },
+  { v: "open", label: "Открытый", hint: "свободный ответ текстом — график не построится", chartable: false },
 ];
 
 const TYPE_LABEL: Record<QuestionType, string> = Object.fromEntries(
@@ -33,16 +52,11 @@ const TYPE_LABEL: Record<QuestionType, string> = Object.fromEntries(
 
 /** Исходные пять критериев. Ключи зафиксированы acceptance-критерием задачи #10. */
 export const BASE_QUESTIONS: SurveyQuestion[] = [
-  { id: "base-1", baseKey: "overall_impression", label: "Общее впечатление", type: "scale", scaleMin: 1, scaleMax: 10 },
-  { id: "base-2", baseKey: "plot", label: "Сюжет", type: "scale", scaleMin: 1, scaleMax: 10 },
-  { id: "base-3", baseKey: "acting", label: "Актёрская игра", type: "scale", scaleMin: 1, scaleMax: 10 },
-  { id: "base-4", baseKey: "music", label: "Музыка", type: "scale", scaleMin: 1, scaleMax: 10 },
-  { id: "base-5", baseKey: "cinematography", label: "Операторская работа", type: "scale", scaleMin: 1, scaleMax: 10 },
-  // Не базовый критерий (baseKey нет — их ровно пять, это проверяет валидатор),
-  // а системный вопрос: он подставляется в новую анкету по умолчанию и
-  // удаляется как обычный. Без него секция «Досмотрено, %» в отчёте пуста —
-  // взять это число больше неоткуда, retention_intent категориален.
-  { id: "base-6", label: "Какую часть ролика вы бы досмотрели", type: "watched_share", scaleMin: 0, scaleMax: 100 },
+  { id: "base-1", baseKey: "overall_impression", label: "Общее впечатление", type: "scale", scaleMin: 0, scaleMax: 10 },
+  { id: "base-2", baseKey: "plot", label: "Сюжет", type: "scale", scaleMin: 0, scaleMax: 10 },
+  { id: "base-3", baseKey: "acting", label: "Актёрская игра", type: "scale", scaleMin: 0, scaleMax: 10 },
+  { id: "base-4", baseKey: "music", label: "Музыка", type: "scale", scaleMin: 0, scaleMax: 10 },
+  { id: "base-5", baseKey: "cinematography", label: "Операторская работа", type: "scale", scaleMin: 0, scaleMax: 10 },
 ];
 
 /** Базовый критерий считается изменённым, если разошлись подпись, тип или шкала. */
@@ -75,7 +89,12 @@ function QuestionEditor({
   onCancel: () => void;
 }) {
   const invalidLabel = draft.label.trim().length === 0;
-  const invalidScale = draft.type === "scale" && draft.scaleMin >= draft.scaleMax;
+  // Границы есть только у шкалы; у выбора из списка их нет и быть не может.
+  const invalidScale =
+    draft.type === "scale" &&
+    (draft.scaleMin === undefined ||
+      draft.scaleMax === undefined ||
+      draft.scaleMin >= draft.scaleMax);
 
   return (
     <div className="space-y-3 rounded-md border border-ink/40 bg-secondary/40 p-4">

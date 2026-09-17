@@ -474,7 +474,7 @@ export function AudienceStep({
               <input
                 type="range"
                 min={AUDIENCE_SIZE_BOUNDS.min}
-                max={60}
+                max={AUDIENCE_SIZE_BOUNDS.max}
                 step={1}
                 value={criteria.size}
                 onChange={(e) => set({ size: Number(e.target.value) })}
@@ -485,7 +485,10 @@ export function AudienceStep({
               </span>
             </div>
             <p className="mt-2 text-xs text-slate">
-              Рекомендуем 20 — этого хватает на сегментные срезы без лишней стоимости.
+              От 100 — тогда в срезе «14–35 лет», который заказчик требует у
+              каждого показателя, оказывается около 45 персон и один человек
+              весит 2 процентных пункта. При 40 в срезе 18 человек, и один
+              весит 5.6 пункта: доли останутся, но станут втрое грубее.
             </p>
           </div>
 

@@ -97,7 +97,18 @@ else:
 # нужные». Смысл её в том, что список ЗАКРЫТ: воркер разбирает ответ только
 # известных форм, и седьмой тип обязан сломать этот тест — чтобы вместе с ним
 # поправили prompts/respondent.user.md, миграцию засева и разбор в agent_core.
-QUESTION_TYPES = {"scale", "emotions", "retention", "watched_share", "recommendation", "open"}
+#
+# ─── 17.09.2026: шесть типов сведены к пяти ─────────────────────────────────
+# Решение владельца под анкету заказчика. «Эмоции», «удержание», «рекомендация»
+# и «доля просмотра» оказались не типами, а ПРЕСЕТАМИ: эмоции — выбор
+# нескольких из готового словаря, удержание — выбор одного из трёх,
+# рекомендация и доля — шкалы. Каждый нёс свою ветку в конструкторе, промпте,
+# правилах QA, агрегате, графиках и выгрузке.
+#
+# Требование «список закрыт» НЕ ослаблено: проверка осталась на равенство, и
+# шестой тип по-прежнему обязан сломать этот тест. Изменился состав списка, а
+# не его закрытость.
+QUESTION_TYPES = {"scale", "single_choice", "multi_choice", "matrix_single", "open"}
 
 if schema:
     qt_def = defs.get("QuestionType", {})
@@ -110,27 +121,86 @@ if schema:
 else:
     check("схема определяет закрытый набор типов вопросов в enum", False, "схема не загружена")
 
-# 5. Schema requires base criteria with scale 1-10
+# 5. Базовые критерии объявлены, но не прибиты к шкале 1–10
+#
+# ─── Чем это было и почему изменилось ──────────────────────────────────────
+# Здесь стояло «схема требует 5 базовых критериев со шкалой 1–10» — пять
+# блоков `contains`, каждый из которых требовал ПРИСУТСТВИЯ вопроса с своим
+# baseKey и границами ровно 1 и 10.
+#
+# Требование отменено дважды, и оба раза молча:
+#
+# 1. Базовые критерии перестали быть обязательными — владелец разрешил снимать
+#    любое их число. Рукописный валидатор `survey-validator.ts` это учёл, схема
+#    нет, и расхождение полтора месяца жило незамеченным: валидатор мягче
+#    схемы, поэтому ни один прогон на нём не падал. Оно было записано в его
+#    же тесте («survey.schema.json всё ещё требует пять вопросов, а валидатор —
+#    один») и осталось незакрытым.
+# 2. 17.09.2026 анкета заказчика пришла на шкале 0–10. Старые блоки отвергали
+#    её целиком.
+#
+# Что осталось проверяться: перечень ключей баз объявлен и закрыт. Именно он —
+# контракт с корпусом: по этим пяти ключам посчитаны средние 165 респондентов,
+# и ключ здесь часть данных, а не подпись.
 if schema:
-    all_of = schema.get("allOf", [])
-    base_criterion_blocks = 0
-    for block in all_of:
-        props = block.get("properties", {}).get("questions", {}).get("contains", {}).get("properties", {})
-        if "baseKey" in props and "scaleMin" in props and "scaleMax" in props:
-            base_criterion_blocks += 1
+    base_enum = set(defs.get("BaseCriterionKey", {}).get("enum") or [])
     check(
-        "схема требует 5 базовых критериев со шкалой 1–10 (contains blocks)",
-        base_criterion_blocks == 5,
-        f"найдено {base_criterion_blocks} contains-блоков",
+        "схема объявляет закрытый перечень ключей базовых критериев",
+        base_enum == {"overall_impression", "plot", "acting", "music", "cinematography"},
+        f"перечень={sorted(base_enum)}",
+    )
+    pinned = [
+        block for block in (schema.get("allOf") or [])
+        if (block.get("properties", {}).get("questions", {})
+            .get("contains", {}).get("properties", {})
+            .get("scaleMin", {}).get("const") == 1)
+    ]
+    check(
+        "базовые критерии не прибиты к шкале 1–10",
+        not pinned,
+        f"осталось {len(pinned)} блоков, требующих шкалу 1–10 — анкета 0–10 будет отвергнута",
     )
 else:
-    check("схема требует 5 базовых критериев со шкалой 1–10", False, "схема не загружена")
+    check("схема объявляет закрытый перечень ключей базовых критериев", False, "схема не загружена")
+    check("базовые критерии не прибиты к шкале 1–10", False, "схема не загружена")
 
 # 6. TS types generated from schema
+#
+# `Question` экспортируется как `type`, а не `interface`: у вопроса появились
+# условные требования (шкала только у шкалы, варианты только у закрытого), и
+# json2ts выражает их пересечением, а не интерфейсом. Проверка смотрит на
+# наличие экспорта, а не на ключевое слово — иначе она держалась бы за форму
+# генератора, а не за утверждение «типы собраны из схемы».
 check(
     "TS-типы сгенерированы (survey.ts)",
-    TYPES_PATH.exists() and "export interface Survey" in types_text and "export interface Question" in types_text,
+    TYPES_PATH.exists()
+    and "export interface Survey" in types_text
+    and ("export interface Question" in types_text or "export type Question" in types_text),
 )
+
+# 6-бис. Сгенерированные типы не отстали от схемы
+#
+# Повод конкретный: `packages/shared/types/survey.ts` полтора месяца не знал
+# типа `watched_share`, потому что анкеты не было в `npm run codegen`, — а его
+# докстрока при этом утверждала «только этих пяти форм». Файл, который никто не
+# генерирует, это рукописный файл с надписью «не править руками».
+if schema:
+    generated = set(re.findall(r'"(\w+)"', (
+        re.search(r"export type QuestionType = ([^;]+);", types_text) or re.Match
+    ).group(1))) if "export type QuestionType" in types_text else set()
+    check(
+        "перечень типов в сгенерированном survey.ts совпадает со схемой",
+        generated == QUESTION_TYPES,
+        f"в типах={sorted(generated)}, в схеме={sorted(QUESTION_TYPES)}",
+    )
+    check(
+        "анкета входит в npm run codegen",
+        "codegen:survey" in (REPO / "package.json").read_text("utf-8"),
+        "без этого сгенерированный файл отстанет от схемы молча",
+    )
+else:
+    check("перечень типов в сгенерированном survey.ts совпадает со схемой", False, "схема не загружена")
+    check("анкета входит в npm run codegen", False, "схема не загружена")
 
 # 7. Validator module exists and exports validateSurvey
 check(
@@ -150,11 +220,35 @@ check(
     "BASE_CRITERIA" in validator_text and "overall_impression" in validator_text,
 )
 
-# 10. Validator checks scale 1-10 for base criteria
-check(
-    "валидатор проверяет шкалу 1–10 для базовых критериев",
-    "REQUIRED_BASE_SCALE" in validator_text,
-)
+# 10. Перечень типов у валидатора и у схемы совпадает
+#
+# ─── Чем это было ──────────────────────────────────────────────────────────
+# Здесь стояло «валидатор проверяет шкалу 1–10 для базовых критериев». Анкета
+# заказчика пришла на шкале 0–10 (17.09.2026), требование снято, и проверять
+# нечего.
+#
+# Место занято тем, чего в этом файле не хватало и что уже стоило полутора
+# месяцев незамеченного расхождения: перечень типов живёт в ТРЁХ копиях —
+# в JSON Schema, в рукописном валидаторе и в реплике ниже. Две копии расходятся
+# молча, и это уже случилось: схема требовала пять базовых критериев, валидатор
+# считал их необязательными, и ни один прогон на этом не падал, потому что
+# валидатор мягче.
+if schema:
+    ts_types = set(
+        re.findall(r'"(\w+)"', (
+            re.search(
+                r"ALLOWED_QUESTION_TYPES: QuestionType\[\] = \[(.*?)\]",
+                validator_text, re.S,
+            ) or re.Match
+        ).group(1))
+    ) if re.search(r"ALLOWED_QUESTION_TYPES: QuestionType\[\] = \[", validator_text) else set()
+    check(
+        "перечень типов у валидатора совпадает со схемой",
+        ts_types == QUESTION_TYPES,
+        f"валидатор={sorted(ts_types)}, схема={sorted(QUESTION_TYPES)}",
+    )
+else:
+    check("перечень типов у валидатора совпадает со схемой", False, "схема не загружена")
 
 # 11. API route exists with GET and PUT
 check(
@@ -229,11 +323,11 @@ check(
 print("\n== Поведенческий уровень (unit-тесты схемы) ==")
 
 BASE_QUESTIONS_VALID = [
-    {"id": "base-1", "baseKey": "overall_impression", "label": "Общее впечатление", "type": "scale", "scaleMin": 1, "scaleMax": 10},
-    {"id": "base-2", "baseKey": "plot", "label": "Сюжет", "type": "scale", "scaleMin": 1, "scaleMax": 10},
-    {"id": "base-3", "baseKey": "acting", "label": "Актёрская игра", "type": "scale", "scaleMin": 1, "scaleMax": 10},
-    {"id": "base-4", "baseKey": "music", "label": "Музыка", "type": "scale", "scaleMin": 1, "scaleMax": 10},
-    {"id": "base-5", "baseKey": "cinematography", "label": "Операторская работа", "type": "scale", "scaleMin": 1, "scaleMax": 10},
+    {"id": "base-1", "baseKey": "overall_impression", "label": "Общее впечатление", "type": "scale", "scaleMin": 0, "scaleMax": 10},
+    {"id": "base-2", "baseKey": "plot", "label": "Сюжет", "type": "scale", "scaleMin": 0, "scaleMax": 10},
+    {"id": "base-3", "baseKey": "acting", "label": "Актёрская игра", "type": "scale", "scaleMin": 0, "scaleMax": 10},
+    {"id": "base-4", "baseKey": "music", "label": "Музыка", "type": "scale", "scaleMin": 0, "scaleMax": 10},
+    {"id": "base-5", "baseKey": "cinematography", "label": "Операторская работа", "type": "scale", "scaleMin": 0, "scaleMax": 10},
 ]
 
 REQUIRED_BASE_KEYS = {"overall_impression", "plot", "acting", "music", "cinematography"}
@@ -294,16 +388,29 @@ def validate_survey_python(doc):
         if qtype not in ALLOWED_TYPES:
             errors.append(f"questions[{i}].type: должен быть одним из {ALLOWED_TYPES}")
 
+        # Шкала обязательна только у шкального вопроса: у выбора из списка её
+        # нет и быть не может. Реплика повторяет `survey-validator.ts`.
         scale_min = q.get("scaleMin")
         scale_max = q.get("scaleMax")
-        if not isinstance(scale_min, int):
-            errors.append(f"questions[{i}].scaleMin: целое число")
-        if not isinstance(scale_max, int):
-            errors.append(f"questions[{i}].scaleMax: целое число")
+        if qtype == "scale":
+            if not isinstance(scale_min, int):
+                errors.append(f"questions[{i}].scaleMin: целое число")
+            if not isinstance(scale_max, int):
+                errors.append(f"questions[{i}].scaleMax: целое число")
+            if isinstance(scale_min, int) and isinstance(scale_max, int):
+                if scale_min >= scale_max:
+                    errors.append(f"questions[{i}]: scaleMax должен быть больше scaleMin")
 
-        if qtype == "scale" and isinstance(scale_min, int) and isinstance(scale_max, int):
-            if scale_min >= scale_max:
-                errors.append(f"questions[{i}]: scaleMax должен быть больше scaleMin")
+        if qtype in {"single_choice", "multi_choice", "matrix_single"}:
+            options = q.get("options")
+            if not isinstance(options, list) or len(options) < 2:
+                errors.append(
+                    f"questions[{i}].options: закрытому вопросу нужно не меньше двух вариантов"
+                )
+        if qtype == "matrix_single":
+            rows = q.get("rows")
+            if not isinstance(rows, list) or not rows:
+                errors.append(f"questions[{i}].rows: матрице нужна хотя бы одна строка")
 
         base_key = q.get("baseKey")
         if base_key is not None:
@@ -316,24 +423,86 @@ def validate_survey_python(doc):
                     base_keys_found.add(base_key)
                 if qtype != "scale":
                     errors.append(f"questions[{i}]: базовый критерий должен быть type=scale")
-                if scale_min != 1 or scale_max != 10:
-                    errors.append(f"questions[{i}]: базовый критерий должен иметь шкалу 1–10")
+                # Границы базового критерия больше не прибиты к 1–10.
+                #
+                # Здесь стояло `scale_min != 1 or scale_max != 10` — копия
+                # прежнего правила, которое `survey-validator.ts` снял
+                # 17.09.2026 ради анкеты заказчика на шкале 0–10. Реплика в
+                # гейте осталась строже оригинала, и гейт был зелёным только
+                # потому, что ни одна фикстура 0–10 в него не подавалась:
+                # первая же настоящая анкета была бы отвергнута проверкой,
+                # которая существует, чтобы её пропустить.
+                #
+                # Ключ критерия остаётся контрактом с данными — по этим пяти
+                # ключам посчитаны средние 165 респондентов корпуса. Меняется
+                # шкала, не ключ.
+                # Ровно 0–10, как в `survey-validator.ts`.
+                #
+                # Правило переписывалось в этом файле дважды за день. Стояло
+                # «ровно 1–10» — отвергало анкету заказчика. Стало «любая
+                # шкала» — пропускало анкету на 1–5, для которой пороги
+                # расчёта (доля 8–10, промоутеры 9–10) дают ноль и минус
+                # единицу, то есть правдоподобные неверные числа. Решение
+                # владельца 17.09.2026: базовому критерию разрешена одна
+                # шкала. Своя шкала остаётся у вопроса БЕЗ baseKey.
+                if (scale_min, scale_max) != (BASE_SCALE_MIN, BASE_SCALE_MAX):
+                    errors.append(
+                        f"questions[{i}]: базовый критерий должен быть на шкале "
+                        f"{BASE_SCALE_MIN}–{BASE_SCALE_MAX}, "
+                        f"получено {scale_min}–{scale_max}"
+                    )
 
     # Требования «все пять базовых на месте» больше нет. Осталось то, что
-    # защищает данные: базовый критерий, ЕСЛИ он есть, обязан быть шкалой 1–10
-    # и не может повторяться — иначе ключ overall_impression с чужой шкалой
-    # попал бы в те же средние, по которым идёт сравнение с корпусом.
+    # защищает данные: базовый критерий, ЕСЛИ он есть, обязан быть шкалой и не
+    # может повторяться — иначе ключ overall_impression встретился бы дважды с
+    # разными границами и оба попали бы в одно среднее.
 
     return errors
 
 
-# B1: Базовая анкета из 5 критериев 1–10 валидна
+# Шкала базовых критериев берётся ИЗ ВАЛИДАТОРА, а не объявляется здесь заново.
+# Переписанная константа — ровно тот способ, которым реплика разошлась с
+# оригиналом в прошлый раз.
+_validator_src = (REPO / "apps" / "web" / "lib" / "server" / "survey-validator.ts").read_text(
+    "utf-8"
+)
+BASE_SCALE_MIN = int(re.search(r"BASE_SCALE_MIN\s*=\s*(-?\d+)", _validator_src).group(1))
+BASE_SCALE_MAX = int(re.search(r"BASE_SCALE_MAX\s*=\s*(-?\d+)", _validator_src).group(1))
+
+# B1: Базовая анкета из 5 критериев 0–10 валидна
 errors = validate_survey_python({"name": "Базовая", "questions": BASE_QUESTIONS_VALID})
 check(
-    "базовая анкета из 5 критериев 1–10 валидна",
+    "базовая анкета из 5 критериев 0–10 валидна",
     len(errors) == 0,
     f"errors={errors[:3]}" if errors else "",
 )
+
+# B1-бис: анкета заказчика — настоящая, с диска — проходит реплику валидатора
+#
+# Проверки на фикстурах 1–10 были зелёными, пока реплика требовала ровно
+# 1–10: фикстуры сами написаны на 1–10. Расхождение реплики с
+# `survey-validator.ts` стало видно только когда на вход подали документ,
+# ради которого правило и снимали. Поэтому гейт теперь читает анкету с диска,
+# а не описывает её у себя.
+CUSTOMER_SURVEY_PATH = REPO / "data" / "survey" / "customer_2026.json"
+if CUSTOMER_SURVEY_PATH.exists():
+    # Файл — КАТАЛОГ обязательных вопросов, а не готовая анкета: имени у него
+    # нет, его даёт исследование. Поэтому сюда подаётся то, что отправит
+    # конструктор, — имя плюс вопросы с диска.
+    customer = json.loads(CUSTOMER_SURVEY_PATH.read_text("utf-8"))
+    errors = validate_survey_python(
+        {"name": "Анкета заказчика", "questions": customer["questions"]}
+    )
+    check(
+        "анкета заказчика (шкала 0–10) валидна по реплике валидатора",
+        len(errors) == 0,
+        f"errors={errors[:3]}" if errors else "",
+    )
+else:
+    skip(
+        "анкета заказчика (шкала 0–10) валидна по реплике валидатора",
+        f"нет {CUSTOMER_SURVEY_PATH.name}",
+    )
 
 # B2: Кастомный вопрос неподдерживаемого типа отвергается
 invalid_questions = BASE_QUESTIONS_VALID + [
@@ -380,15 +549,20 @@ check(
     f"errors={errors[:3]}",
 )
 
-# B4: Базовый критерий с неправильной шкалой (2-10) невалиден
-wrong_scale = [
-    {**q, "scaleMin": 2 if q["baseKey"] == "overall_impression" else 1}
+# B4: вырожденная шкала отвергается отдельной проверкой
+#
+# Проверка живёт своей жизнью и после привязки базовых критериев к 0–10:
+# `scaleMax > scaleMin` относится к ЛЮБОЙ шкале, включая пользовательские
+# вопросы без `baseKey`, которым своя шкала разрешена. Здесь она подана на
+# базовом критерии просто потому, что такой набор уже собран рядом.
+broken_scale = [
+    {**q, "scaleMin": 10 if q["baseKey"] == "overall_impression" else 1, "scaleMax": 10}
     for q in BASE_QUESTIONS_VALID
 ]
-errors = validate_survey_python({"name": "Шкала 2-10", "questions": wrong_scale})
+errors = validate_survey_python({"name": "Вырожденная шкала", "questions": broken_scale})
 check(
-    "базовый критерий со шкалой 2–10 невалиден",
-    any("1–10" in e or "1-10" in e for e in errors),
+    "базовый критерий с вырожденной шкалой невалиден",
+    any("scaleMax" in e for e in errors),
     f"errors={errors[:3]}",
 )
 
@@ -404,13 +578,27 @@ check(
     f"errors={errors[:3]}",
 )
 
-# B6: Кастомный вопрос поддерживаемого типа (emotions) валиден
+# B6: Кастомный вопрос поддерживаемого типа валиден
+#
+# Был `emotions`. 17.09.2026 он перестал быть типом и стал ПРЕСЕТОМ — выбором
+# нескольких из готового словаря, — поэтому проверка идёт по типу, в который он
+# превратился. Утверждение то же: конструктор вправе добавить свой вопрос
+# поддерживаемой формы, и валидатор его принимает.
 valid_custom = BASE_QUESTIONS_VALID + [
-    {"id": "custom-1", "label": "Какие эмоции вызвало видео?", "type": "emotions", "scaleMin": 0, "scaleMax": 0},
+    {
+        "id": "custom-1",
+        "label": "Какие эмоции вызвало видео?",
+        "type": "multi_choice",
+        "maxChoices": 3,
+        "options": [
+            {"id": "c-1", "label": "Радость"},
+            {"id": "c-2", "label": "Грусть"},
+        ],
+    },
 ]
-errors = validate_survey_python({"name": "С emotions", "questions": valid_custom})
+errors = validate_survey_python({"name": "С выбором нескольких", "questions": valid_custom})
 check(
-    "кастомный вопрос типа emotions валиден",
+    "кастомный вопрос с выбором нескольких валиден",
     len(errors) == 0,
     f"errors={errors[:3]}" if errors else "",
 )

@@ -19,6 +19,7 @@ import pytest
 from agent_core.config import ConfigError, QaConfig
 from agent_core.qa.checks import (
     consistency_reasons,
+    coverage_reasons,
     grounding_reasons,
     retention_stance,
     timecodes,
@@ -112,7 +113,7 @@ def test_gap_between_impression_and_nps_is_caught():
 
 def test_unanswered_survey_question_is_caught():
     survey = {"questions": [{"id": "q1"}, {"id": "q2"}]}
-    reasons = consistency_reasons(_answer(survey_answers={"q1": 7}), survey)
+    reasons = coverage_reasons(_answer(survey_answers={"q1": 7}), survey)
     assert any("q2" in r for r in reasons)
 
 

@@ -20,11 +20,13 @@
     "down": "docker compose -f infra/docker-compose.yml down",
     "logs": "docker compose -f infra/docker-compose.yml logs -f",
     "_comment:codegen": "Исполняемый файл пакета json-schema-to-typescript называется json2ts — другого он не ставит. Прежний скрипт вызывал бинарник по имени пакета и падал с command not found; артефакты, лежащие в репозитории, были получены не этой командой.",
-    "codegen": "npm run codegen:persona && npm run codegen:corpus",
+    "codegen": "npm run codegen:persona && npm run codegen:corpus && npm run codegen:survey",
     "codegen:persona": "json2ts packages/shared/schemas/persona-dna.schema.json -o packages/shared/types/persona-dna.ts && datamodel-codegen --input packages/shared/schemas/persona-dna.schema.json --input-file-type jsonschema --output services/agent-core/agent_core/schemas/persona_dna.py --output-model-type pydantic_v2.BaseModel",
     "codegen:corpus": "json2ts packages/shared/schemas/respondent-session.schema.json -o packages/shared/types/respondent-session.ts && datamodel-codegen --input packages/shared/schemas/respondent-session.schema.json --input-file-type jsonschema --output services/agent-core/agent_core/schemas/respondent_session.py --output-model-type pydantic_v2.BaseModel",
     "typecheck": "npm run typecheck --workspace @agora/web",
-    "prompts:seed:sql": "node apps/web/scripts/generate-prompts-seed.mjs"
+    "prompts:seed:sql": "node apps/web/scripts/generate-prompts-seed.mjs",
+    "_comment:codegen:survey": "Анкеты в codegen не было, и packages/shared/types/survey.ts отстал от схемы молча: в нём не хватало типа watched_share, а докстрока утверждала «только этих пяти форм». Сгенерированный файл, который никто не генерирует, — это рукописный файл с надписью «не править руками».",
+    "codegen:survey": "json2ts packages/shared/schemas/survey.schema.json -o packages/shared/types/survey.ts"
   },
   "devDependencies": {
     "json-schema-to-typescript": "^15.0.4"

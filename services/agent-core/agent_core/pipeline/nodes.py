@@ -56,6 +56,38 @@ def workdir(state: PipelineState) -> Path:
     return path
 
 
+def _answer_schema(state: dict[str, Any]) -> dict[str, Any] | None:
+    """
+    Грамматика ответа для анкеты этого прогона, либо None.
+
+    ─── Почему выключатель, а не «всегда» ───────────────────────────────────
+    Строгая схема у ответа персоны уже была и была убрана по замеру: 8
+    разобранных ответов из двенадцати против 12 из 12 без неё. Новая схема
+    (`respondent/answer_schema.py`) ставит границы там, где прежняя их не
+    имела, но проверить это может только замер, а не рассуждение.
+
+    Выключатель — это то, что делает замер возможным: сравниваются два прогона
+    одного кода, а не две ветки кода. Настройка `structuredAnswer`, умолчание —
+    включено (решение владельца 17.09.2026: неполный ответ есть ошибка, и
+    грамматика — первая из трёх мер вместе с правилом покрытия и переспросом).
+    """
+    snapshot = state.get("settings_snapshot") or {}
+    if snapshot.get("structuredAnswer") is False:
+        return None
+    survey = state.get("survey") or {}
+    if not survey:
+        return None
+    from ..respondent.answer_schema import answer_json_schema
+
+    try:
+        return answer_json_schema(survey)
+    except Exception:  # noqa: BLE001
+        # Схема — усиление, а не условие работы. Анкета, из которой её нельзя
+        # построить, обязана опрашиваться по-прежнему: отказ здесь означал бы,
+        # что необязательная мера роняет оплаченный прогон.
+        return None
+
+
 def _temperatures(state: PipelineState) -> Any:
     """
     Температуры прогона из снимка настроек задачи.
@@ -863,6 +895,7 @@ def evaluate_personas(state: PipelineState) -> dict[str, Any]:
         client=QwenRespondentClient(
             config=_model_config(state),
             temperature=_temperatures(state).responseSimulation,
+            answer_schema=_answer_schema(state),
         ),
         replication_count=int(state.get("replication_count") or 1),
         artifact_path=workdir(state) / "persona_answers.json",
@@ -1163,6 +1196,10 @@ def _requestion_flagged(
             client=QwenRespondentClient(
                 config=_model_config(state),
                 temperature=_temperatures(state).responseSimulation,
+                # Переспрос идёт с той же грамматикой, что и первый вызов.
+                # Иначе вторая попытка отвечала бы по другим правилам, и
+                # сравнить её с первой было бы нельзя.
+                answer_schema=_answer_schema(state),
             ),
             replication_count=1,
             artifact_path=workdir(state) / "persona_answers_retry.json",

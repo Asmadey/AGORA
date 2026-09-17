@@ -37,7 +37,7 @@ from pathlib import Path
 from typing import Any
 
 from ..respondent.diversity import diversity_report
-from .checks import consistency_reasons, grounding_reasons
+from .checks import consistency_reasons, coverage_reasons, grounding_reasons
 from .judge import JUDGE_ROLE, JudgeClient, load_templates, parse_verdict, render
 
 #: Минимальный размер выборки, на котором разнообразие вообще измеримо. Ниже
@@ -48,6 +48,8 @@ DIVERSITY_MIN_SAMPLE = 2
 KIND_CONSISTENCY = "consistency"
 KIND_GROUNDING = "grounding"
 KIND_DIVERSITY = "diversity"
+#: Покрытие анкеты — отдельный вид, чтобы переспрос подсказывал по адресу.
+KIND_COVERAGE = "coverage"
 
 
 @dataclass
@@ -184,6 +186,7 @@ def run_qa(
         body = _body(item)
         c_reasons = consistency_reasons(body, survey)
         g_reasons = grounding_reasons(body, pack)
+        v_reasons = coverage_reasons(body, survey)
         outcome.verdicts.append(_verdict(
             KIND_CONSISTENCY, source="rule",
             verdict="regenerate" if c_reasons else "ok",
@@ -194,7 +197,12 @@ def run_qa(
             verdict="regenerate" if g_reasons else "ok",
             confidence=1.0, reasons=g_reasons, item=item,
         ))
-        if not c_reasons and not g_reasons:
+        outcome.verdicts.append(_verdict(
+            KIND_COVERAGE, source="rule",
+            verdict="regenerate" if v_reasons else "ok",
+            confidence=1.0, reasons=v_reasons, item=item,
+        ))
+        if not c_reasons and not g_reasons and not v_reasons:
             clean.append(item)
 
     # ── Слой судьи ───────────────────────────────────────────────────────────

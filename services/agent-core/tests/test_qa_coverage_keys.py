@@ -34,7 +34,10 @@
 
 from __future__ import annotations
 
-from agent_core.qa.checks import consistency_reasons
+# Покрытие выделено в свою проверку 17.09.2026: переспрос выбирает подсказку
+# по виду претензии, и «анкета не закрыта» под именем «ответ противоречив»
+# отправляла персоне подсказку про другое.
+from agent_core.qa.checks import coverage_reasons
 
 SURVEY = [
     {"id": "base-1", "baseKey": "overall_impression", "label": "Общее впечатление",
@@ -78,7 +81,7 @@ def test_typed_question_is_answered_by_the_structured_block():
     его никогда — и браковать каждого респондента, чья анкета содержит вопрос о
     доле просмотра.
     """
-    assert _coverage_complaint(consistency_reasons(_answer(), SURVEY)) is None
+    assert _coverage_complaint(coverage_reasons(_answer(), SURVEY)) is None
 
 
 def test_answer_keyed_by_label_counts():
@@ -88,7 +91,7 @@ def test_answer_keyed_by_label_counts():
     """
     answer = _answer(survey_answers={"Что запомнилось больше всего": "заставка"})
 
-    assert _coverage_complaint(consistency_reasons(answer, SURVEY)) is None
+    assert _coverage_complaint(coverage_reasons(answer, SURVEY)) is None
 
 
 def test_answer_keyed_by_the_prompt_line_counts():
@@ -111,7 +114,7 @@ def test_answer_keyed_by_the_prompt_line_counts():
         survey_answers={"[q-77] (open) Что запомнилось больше всего": "заставка"}
     )
 
-    assert _coverage_complaint(consistency_reasons(answer, SURVEY)) is None
+    assert _coverage_complaint(coverage_reasons(answer, SURVEY)) is None
 
 
 def test_prompt_line_of_another_question_does_not_count():
@@ -122,7 +125,7 @@ def test_prompt_line_of_another_question_does_not_count():
     пропуск вопроса перестал бы отличаться от ответа на него.
     """
     answer = _answer(survey_answers={"[q-99] (open) Совсем другой вопрос": "нечто"})
-    complaint = _coverage_complaint(consistency_reasons(answer, SURVEY))
+    complaint = _coverage_complaint(coverage_reasons(answer, SURVEY))
 
     assert complaint is not None and "q-77" in complaint
 
@@ -134,7 +137,7 @@ def test_genuinely_missing_answer_is_still_caught():
     назван. Иначе отчёт покажет пустую секцию как «никто не высказался».
     """
     answer = _answer(survey_answers={})
-    complaint = _coverage_complaint(consistency_reasons(answer, SURVEY))
+    complaint = _coverage_complaint(coverage_reasons(answer, SURVEY))
 
     assert complaint is not None
     assert "q-77" in complaint
@@ -147,6 +150,6 @@ def test_missing_watched_share_is_caught():
     answer = _answer()
     answer["perception"] = {k: v for k, v in answer["perception"].items()  # type: ignore[union-attr]
                             if k != "watched_share_pct"}
-    complaint = _coverage_complaint(consistency_reasons(answer, SURVEY))
+    complaint = _coverage_complaint(coverage_reasons(answer, SURVEY))
 
     assert complaint is not None and "base-6" in complaint

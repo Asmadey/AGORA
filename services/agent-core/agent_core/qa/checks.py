@@ -27,7 +27,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from ..survey import question_label, survey_questions
+from ..survey import question_label, question_rows, survey_questions
 
 #: Допуск к длительности ролика. Секунда, а не ноль: таймкод последней сцены
 #: округляется при склейке, и ссылка на 01:40 при длительности 99.6 с — это
@@ -195,6 +195,30 @@ def _int_or_none(value: Any) -> int | None:
     return int(value)
 
 
+#: Шкала базовых критериев по умолчанию — когда анкеты рядом нет.
+#:
+#: Ноль–десять, потому что это шкала, на которой работает продукт с 17.09.2026;
+#: `survey-validator.ts` другой у базового критерия не допускает. Умолчание
+#: нужно ровно для вызовов без анкеты (их в тестах и в старых артефактах
+#: хватает), а не как второе мнение о том, какая шкала верна.
+DEFAULT_SCORE_MIN = 0
+DEFAULT_SCORE_MAX = 10
+
+
+def _score_bounds(survey: Any) -> dict[str, tuple[int, int]]:
+    """Границы шкалы по ключу базового критерия, как их объявила анкета."""
+    out: dict[str, tuple[int, int]] = {}
+    for question in survey_questions(survey):
+        key = question.get("baseKey")
+        if not key:
+            continue
+        low = question.get("scaleMin")
+        high = question.get("scaleMax")
+        if isinstance(low, int) and isinstance(high, int) and low < high:
+            out[str(key)] = (low, high)
+    return out
+
+
 def consistency_reasons(answer: dict[str, Any], survey: dict[str, Any] | None = None) -> list[str]:
     """
     Внутренние противоречия ответа. Пустой список — правила ничего не нашли.
@@ -208,12 +232,26 @@ def consistency_reasons(answer: dict[str, Any], survey: dict[str, Any] | None = 
     scores = answer.get("scores") if isinstance(answer.get("scores"), dict) else {}
     perception = answer.get("perception") if isinstance(answer.get("perception"), dict) else {}
 
+    # Границы берутся из АНКЕТЫ, а не из памяти правила.
+    #
+    # Здесь стояло `1 <= value <= 10`. Базовые критерии переехали на шкалу 0–10
+    # (решение владельца 17.09.2026), и правило начало браковать каждый ответ с
+    # нулём — то есть «совсем не понравилось», самую информативную оценку на
+    # этой шкале. Выбывает такой ответ по правилу, а не по мнению судьи, то
+    # есть из агрегата уходит совсем; систематически уходили бы только низкие
+    # оценки, и средний балл отчёта полз бы вверх сам собой.
+    #
+    # Расхождение того же класса, что уже чинили в этом файле трижды: одна
+    # сторона контракта изменилась, вторая осталась и продолжила выглядеть
+    # исправной.
+    bounds = _score_bounds(survey)
     for field in _SCORE_FIELDS:
         value = _int_or_none(scores.get(field))
+        low, high = bounds.get(field, (DEFAULT_SCORE_MIN, DEFAULT_SCORE_MAX))
         if scores.get(field) is not None and value is None:
             reasons.append(f"балл {field} не число: {scores.get(field)!r}")
-        elif value is not None and not 1 <= value <= 10:
-            reasons.append(f"балл {field}={value} вне шкалы 1–10")
+        elif value is not None and not low <= value <= high:
+            reasons.append(f"балл {field}={value} вне шкалы {low}–{high}")
 
     nps = _int_or_none(perception.get("recommendation_nps_1_to_10"))
     if perception.get("recommendation_nps_1_to_10") is not None and nps is None:
@@ -223,8 +261,11 @@ def consistency_reasons(answer: dict[str, Any], survey: dict[str, Any] | None = 
 
     overall = _int_or_none(scores.get("overall_impression"))
     stance = retention_stance(perception.get("retention_intent"))
+    overall_low, overall_high = bounds.get(
+        "overall_impression", (DEFAULT_SCORE_MIN, DEFAULT_SCORE_MAX)
+    )
 
-    if overall is not None and 1 <= overall <= 10:
+    if overall is not None and overall_low <= overall <= overall_high:
         if overall >= HIGH_SCORE and stance == "stop":
             reasons.append(
                 f"впечатление {overall}/10 при намерении прекратить просмотр "
@@ -244,6 +285,68 @@ def consistency_reasons(answer: dict[str, Any], survey: dict[str, Any] | None = 
     if not any(str(v).strip() for v in verbatims.values()):
         reasons.append("вербатимы пусты: обоснования оценок нет")
 
+    return reasons
+
+
+def grounding_reasons(answer: dict[str, Any], pack: dict[str, Any] | None = None) -> list[str]:
+    """
+    Ссылки на то, чего в материале не было. Пустой список — правила чисты.
+
+    Проверяются и `grounding_refs`, и вербатимы: выдуманный таймкод чаще всего
+    появляется именно в тексте («на седьмой минуте меня зацепило»), а поле
+    refs персона заполняет аккуратнее — там оно у неё на виду.
+    """
+    reasons: list[str] = []
+    refs = answer.get("grounding_refs")
+    refs = [str(r) for r in refs] if isinstance(refs, list) else []
+    if not [r for r in refs if r.strip()]:
+        reasons.append("нет ни одной отсылки к материалу (grounding_refs пуст)")
+
+    duration = (pack or {}).get("duration_sec")
+    if not isinstance(duration, (int, float)) or duration <= 0:
+        # Длительности нет — сравнивать не с чем. Молчим намеренно: флаг
+        # «таймкод не проверен» на каждом ответе научил бы не читать флаги.
+        return reasons
+
+    limit = float(duration) + TIMECODE_TOLERANCE_SEC
+    verbatims = answer.get("verbatims") if isinstance(answer.get("verbatims"), dict) else {}
+    sources = [("grounding_refs", r) for r in refs]
+    sources += [(f"вербатим {k}", str(v)) for k, v in verbatims.items()]
+
+    for where, text in sources:
+        for seconds in timecodes(text):
+            if seconds > limit:
+                reasons.append(
+                    f"{where}: таймкод {_hhmmss(seconds)} за пределами ролика "
+                    f"({_hhmmss(float(duration))})"
+                )
+    return reasons
+
+
+def _hhmmss(seconds: float) -> str:
+    total = int(round(seconds))
+    return f"{total // 60:02d}:{total % 60:02d}" if total < 3600 else (
+        f"{total // 3600:d}:{(total % 3600) // 60:02d}:{total % 60:02d}"
+    )
+
+
+def coverage_reasons(answer: dict[str, Any], survey: Any = None) -> list[str]:
+    """
+    Все ли поля анкеты закрыты. Пустой список — закрыта целиком.
+
+    ─── Почему отдельная проверка, а не часть согласованности ───────────────
+    Проверка жила внутри `consistency_reasons` и приезжала под её именем.
+    Переспрос выбирает подсказку ПО ВИДУ претензии, и персона, пропустившая
+    сорок полей, получала подсказку «твой ответ разошёлся сам с собой» — то
+    есть про другое. Подсказка не по адресу хуже её отсутствия: переспрос
+    стоит как полный вызов, а пакет материала занимает в нём почти весь промпт.
+
+    Решение владельца 17.09.2026: неполный ответ есть ошибка, и закрывают её
+    три меры в связке — грамматика ответа (`respondent/answer_schema.py`), это
+    правило и переспрос.
+    """
+    reasons: list[str] = []
+    scores = answer.get("scores") if isinstance(answer.get("scores"), dict) else {}
     # Форму анкеты разбирает agent_core.survey — единственное место, где это
     # знание живёт. Здесь стояло `(survey or {}).get("questions")`, и сквозной
     # прогон падал на 690-й секунде ровно тем же способом, что до этого в
@@ -310,6 +413,24 @@ def consistency_reasons(answer: dict[str, Any], survey: dict[str, Any] | None = 
         if field and perception.get(field) is not None:
             continue
 
+        # Матрица закрывается ПОСТРОЧНО. `render_questions` печатает её строка
+        # за строкой, промпт просит ответ на каждую, и все читатели ниже по
+        # течению — `survey_stats`, `excel_export`, проба нагрузки — адресуют
+        # ответ идентификатором строки. Искать здесь идентификатор вопроса
+        # значило бы третий раз повторить то же расхождение, что уже было с
+        # `scores` и с `perception`: правило ищет не там, где лежит ответ.
+        #
+        # Цена больше прежней: анкета заказчика стоит на двух матрицах, и
+        # покрытие не прошёл бы ни один ответ — `surviving()` выбросила бы
+        # выборку целиком.
+        rows = question_rows(question)
+        if rows:
+            for row in rows:
+                rid = str(row.get("id") or "")
+                if rid and _norm(rid) not in given_keys:
+                    missing.append(f"{qid}/{rid}" if qid else rid)
+            continue
+
         if not answered_directly:
             missing.append(qid or label or qtype or "вопрос без идентификатора")
 
@@ -317,45 +438,3 @@ def consistency_reasons(answer: dict[str, Any], survey: dict[str, Any] | None = 
         reasons.append(f"анкета покрыта не полностью, нет ответов: {', '.join(sorted(missing))}")
 
     return reasons
-
-
-def grounding_reasons(answer: dict[str, Any], pack: dict[str, Any] | None = None) -> list[str]:
-    """
-    Ссылки на то, чего в материале не было. Пустой список — правила чисты.
-
-    Проверяются и `grounding_refs`, и вербатимы: выдуманный таймкод чаще всего
-    появляется именно в тексте («на седьмой минуте меня зацепило»), а поле
-    refs персона заполняет аккуратнее — там оно у неё на виду.
-    """
-    reasons: list[str] = []
-    refs = answer.get("grounding_refs")
-    refs = [str(r) for r in refs] if isinstance(refs, list) else []
-    if not [r for r in refs if r.strip()]:
-        reasons.append("нет ни одной отсылки к материалу (grounding_refs пуст)")
-
-    duration = (pack or {}).get("duration_sec")
-    if not isinstance(duration, (int, float)) or duration <= 0:
-        # Длительности нет — сравнивать не с чем. Молчим намеренно: флаг
-        # «таймкод не проверен» на каждом ответе научил бы не читать флаги.
-        return reasons
-
-    limit = float(duration) + TIMECODE_TOLERANCE_SEC
-    verbatims = answer.get("verbatims") if isinstance(answer.get("verbatims"), dict) else {}
-    sources = [("grounding_refs", r) for r in refs]
-    sources += [(f"вербатим {k}", str(v)) for k, v in verbatims.items()]
-
-    for where, text in sources:
-        for seconds in timecodes(text):
-            if seconds > limit:
-                reasons.append(
-                    f"{where}: таймкод {_hhmmss(seconds)} за пределами ролика "
-                    f"({_hhmmss(float(duration))})"
-                )
-    return reasons
-
-
-def _hhmmss(seconds: float) -> str:
-    total = int(round(seconds))
-    return f"{total // 60:02d}:{total % 60:02d}" if total < 3600 else (
-        f"{total // 3600:d}:{(total % 3600) // 60:02d}:{total % 60:02d}"
-    )

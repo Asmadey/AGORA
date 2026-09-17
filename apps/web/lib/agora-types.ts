@@ -212,17 +212,9 @@ export interface StudyRun {
  */
 export type QuestionType =
   | "scale"
-  | "emotions"
-  | "retention"
-  /**
-   * Доля просмотренного в процентах — отдельно от `retention`, а не вместо.
-   *
-   * `retention` категориален («скорее досмотреть» против «скорее выключить»),
-   * и процент из категории не выводится никаким честным способом. Намерение и
-   * поведение — разные величины, и отчёт показывает обе.
-   */
-  | "watched_share"
-  | "recommendation"
+  | "single_choice"
+  | "multi_choice"
+  | "matrix_single"
   | "open";
 
 /**
@@ -237,15 +229,66 @@ export type BaseCriterionKey =
   | "music"
   | "cinematography";
 
+/** Вариант ответа закрытого вопроса. */
+export interface SurveyOption {
+  /**
+   * Уникален внутри вопроса. Ответ персоны адресует вариант ИМЕННО им:
+   * подпись правят, идентификатор — нет.
+   */
+  id: string;
+  label: string;
+  /**
+   * Служебный вариант вроде «Затрудняюсь ответить». В долях по содержательным
+   * вариантам не участвует, но остаётся в знаменателе — доли считаются
+   * «в % от опрошенных», как подписано у заказчика.
+   */
+  service?: boolean;
+}
+
+/** Строка матрицы. Ответ даётся по каждой строке, а не по вопросу. */
+export interface SurveyRow {
+  id: string;
+  label: string;
+  /** Тема, к которой относится строка: единица выбора оператора. */
+  themeId?: string;
+}
+
+/** Тема матрицы. Галочка ставится на теме, строки идут целиком. */
+export interface SurveyTheme {
+  id: string;
+  label: string;
+}
+
 export interface SurveyQuestion {
   id: string;
   /** Задан только у пяти базовых критериев; у пользовательских вопросов — undefined. */
   baseKey?: BaseCriterionKey;
   label: string;
   type: QuestionType;
-  /** Границы шкалы. Осмысленны только при type === "scale". */
-  scaleMin: number;
-  scaleMax: number;
+  /**
+   * Границы шкалы. Обязательны и осмысленны только при type === "scale";
+   * у выбора из списка шкалы нет и быть не может.
+   */
+  scaleMin?: number;
+  scaleMax?: number;
   /** Подсказка для персоны — что именно оценивать. Необязательна. */
   hint?: string;
+  /** Номер вопроса в анкете заказчика — им его называют отчёт и выгрузка. */
+  number?: number;
+  /** Блок верхнего уровня: верхняя строка двухуровневой шапки выгрузки. */
+  block?: string;
+  /** Варианты закрытого вопроса. Без них закрытый вопрос становится открытым. */
+  options?: SurveyOption[];
+  /** Потолок выбора при type === "multi_choice". */
+  maxChoices?: number;
+  /** Варианты, выбираемые только в одиночку. */
+  exclusiveOptionIds?: string[];
+  /** Строки матрицы при type === "matrix_single". */
+  rows?: SurveyRow[];
+  /** Темы матрицы. */
+  themes?: SurveyTheme[];
+  /** Вопрос, выбор тем в котором определяет состав строк этого. */
+  dependsOnQuestion?: string;
+  /** Единица выбора оператора у матрицы. */
+  selectableBy?: "theme";
 }

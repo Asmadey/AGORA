@@ -1,115 +1,129 @@
 """
-Нормализация ответа персоны: поле «досмотрит».
+Схема ответа персоны строится ИЗ АНКЕТЫ, а не пишется рядом с ней.
 
-─── Что увидел владелец ──────────────────────────────────────────────────────
-В списке персон одни отвечали процентами, другие словами: «хотелось
-досмотреть», «скорее досмотреть». Причина — не в модели, а в том, что словарей
-в репозитории ТРИ:
+─── Зачем схема, когда её однажды уже убрали ────────────────────────────────
+Убрали по замеру, и замер стоит помнить: двенадцать боевых персон, один
+промпт, температура 0.3, бок о бок — со строгой схемой разобрано 8 из 12, без
+неё 12 из 12. Четыре ответа вырождались под грамматикой: модель залипала то на
+пробельных токенах между значениями, то на счётчике внутри строки
+(«, 4, 5, 6, … 675»), и шла до потолка, не дописав JSON.
 
-    корпус ВЦИОМ            3 закрытых значения (140 / 22 / 3 из 165)
-    промпт персоны          4 подсказки, придуманных отдельно
-    правило в том же промпте  2 («продолжить/остановиться»)
+Решение владельца 17.09.2026 — вернуть схему, вместе с правилом покрытия и
+переспросом, все три в связке. Возвращается она не в прежнем виде, и это не
+формальность: прежняя схема оставляла массивы и строки БЕЗ ГРАНИЦ, а названные
+режимы вырождения — это ровно неограниченная длина. Здесь каждый массив несёт
+`maxItems`, каждая свободная строка — `maxLength`.
 
-─── Почему нормализация, а не строгая схема ──────────────────────────────────
-Строгий режим для ответа персоны выключен намеренно, по замеру: 8 разобранных
-ответов из 12 со схемой против 12 из 12 без неё. `RESPONDENT` и `_PERCEPTION` в
-рантайме не используются вовсе. Добавить `enum` в мёртвую схему — значит ничего
-не изменить и решить, что починил.
+Утверждать, что этого достаточно, я не могу: доказать может только замер тем
+же прибором. Тест держит другое — что схема описывает ИМЕННО ту анкету,
+которую задали, и не расходится с ней молча.
 
-Поэтому приведение стоит ПОСЛЕ разбора: оно не ограничивает провайдера, а
-приводит уже полученное к словарю корпуса — тому единственному, с которым
-ответы персон вообще можно сравнить с ответами живых людей.
-
-─── Почему исходная строка сохраняется ───────────────────────────────────────
-Переписывать чужой ответ молча нельзя. И по несовпадению видно то, чего иначе не
-увидеть: что промпт разошёлся с моделью.
+─── Почему схема генерируется, а не лежит файлом ────────────────────────────
+Анкета у каждого исследования своя: оператор выбирает темы, добавляет свои
+вопросы. Схема, написанная рядом с кодом, описывала бы одну анкету и тихо
+разъезжалась бы со всеми остальными — это ровно то семейство дефектов, которое
+в этом репозитории чинили четырежды.
 """
-
 from __future__ import annotations
 
-import pytest
+import json
+import pathlib
 
-from agent_core.schemas.answer import (
-    RETENTION_CONTINUE,
-    RETENTION_STOP,
-    RETENTION_UNSURE,
-    normalize_retention,
-)
+from agent_core.respondent.answer_schema import answer_json_schema
+from agent_core.survey import answerable_fields
 
-# ─── Словарь корпуса проходит как есть ───────────────────────────────────────
-
-@pytest.mark.parametrize(
-    "value",
-    [RETENTION_CONTINUE, RETENTION_STOP, RETENTION_UNSURE],
-)
-def test_corpus_values_pass_through(value):
-    assert normalize_retention(value).value == value
+REPO = pathlib.Path(__file__).resolve().parents[3]
+SURVEY = json.loads((REPO / "data" / "survey" / "customer_2026.json").read_text("utf-8"))
+QUESTIONS = SURVEY["questions"]
 
 
-def test_corpus_values_survive_case_and_spaces():
-    # Ответ модели приезжает с разным регистром и лишними пробелами; отличать
-    # «Скорее хотелось досмотреть до конца» от «скорее хотелось досмотреть до
-    # конца » значило бы ловить формулировку, а не смысл.
-    assert normalize_retention("  скорее ХОТЕЛОСЬ досмотреть до конца ").value == RETENTION_CONTINUE
+def _fields(schema: dict) -> dict:
+    return schema["properties"]["survey_answers"]
 
 
-# ─── Четыре старые формулировки промпта ──────────────────────────────────────
-
-@pytest.mark.parametrize(
-    ("said", "expected"),
-    [
-        ("хотелось досмотреть", RETENTION_CONTINUE),
-        ("скорее досмотреть", RETENTION_CONTINUE),
-        ("скорее выключить", RETENTION_STOP),
-        ("выключил бы", RETENTION_STOP),
-    ],
-)
-def test_old_prompt_wording_maps_to_the_corpus(said, expected):
+def test_каждое_поле_анкеты_обязательно():
     """
-    Эти четыре значения промпт предлагал до 19.08, и они лежат в уже собранных
-    отчётах. Перестав их понимать, мы сделали бы старые прогоны нечитаемыми.
+    Ради этого схема и возвращается. Пропуск поля перестаёт быть возможным
+    исходом: модель не может не назвать ключ, который грамматика требует.
     """
-    assert normalize_retention(said).value == expected
+    schema = answer_json_schema(QUESTIONS)
+    block = _fields(schema)
+    expected = answerable_fields(QUESTIONS)
+    assert sorted(block["required"]) == sorted(expected)
+    assert len(expected) == 67, "пятнадцать вопросов дают шестьдесят семь полей"
+    assert block["additionalProperties"] is False
 
 
-def test_negation_wins_over_the_verb():
-    # «не досмотрел бы» содержит и «досмотр», и отрицание. Порядок проверок
-    # решает, в какую сторону будет ошибка, и ошибаться в сторону «досмотрят»
-    # нельзя: это завышает главную метрику отчёта.
-    assert normalize_retention("не стал бы досматривать").value == RETENTION_STOP
+def test_шкала_описана_своими_границами():
+    schema = answer_json_schema(QUESTIONS)
+    plot = _fields(schema)["properties"]["q01-plot"]
+    assert plot["type"] == "integer"
+    assert (plot["minimum"], plot["maximum"]) == (0, 10)
 
 
-# ─── Чего делать нельзя ──────────────────────────────────────────────────────
+def test_закрытый_вопрос_описан_перечнем_идентификаторов():
+    schema = answer_json_schema(QUESTIONS)
+    q10 = _fields(schema)["properties"]["q10-importance"]
+    assert q10["type"] == "string"
+    assert q10["enum"] == ["i-1", "i-2", "i-s1"], "варианты вопроса 10, включая служебный"
 
-def test_percentage_is_not_swallowed():
+
+def test_мультивыбор_ограничен_потолком_вопроса():
     """
-    Процент в поле категории — признак, что модель перепутала два вопроса
-    анкеты. Приведи мы его молча к «досмотрят», отчёт стал бы увереннее, чем
-    данные под ним.
+    `maxChoices` перестаёт быть правилом, которое можно нарушить: он становится
+    границей массива в грамматике.
     """
-    out = normalize_retention("80%")
-    assert out.value is None
-    assert out.raw == "80%"
+    schema = answer_json_schema(QUESTIONS)
+    q7 = _fields(schema)["properties"]["q07-emotions"]
+    assert q7["type"] == "array"
+    assert q7["maxItems"] == 3
+    assert q7["items"]["enum"][0] == "e-1"
+    assert len(q7["items"]["enum"]) == 15
 
 
-def test_unknown_wording_is_not_silently_positive():
-    out = normalize_retention("ну как сказать")
-    assert out.value is None, "неизвестная формулировка приведена к категории"
-    assert out.raw == "ну как сказать"
+def test_строка_матрицы_становится_своим_полем():
+    schema = answer_json_schema(QUESTIONS)
+    props = _fields(schema)["properties"]
+    assert "t1-1" in props, "поле адресуется идентификатором строки"
+    assert props["t1-1"]["enum"] == ["m-1", "m-2", "m-3"]
 
 
-def test_raw_is_always_kept():
-    """По несовпадению видно, что промпт разошёлся с моделью."""
-    assert normalize_retention("скорее досмотреть").raw == "скорее досмотреть"
-
-
-def test_empty_is_empty_not_unsure():
+def test_свободный_текст_ограничен_длиной():
     """
-    Пустой ответ и «затрудняюсь ответить» — разные вещи. Первое означает, что
-    поля не было; второе — что персона ответила именно так, и это значение
-    корпуса, участвующее в долях.
+    Прямая заплатка на измеренный режим вырождения: «счётчик внутри строки»
+    возможен ровно там, где у строки нет верхней границы.
     """
-    for empty in (None, "", "   "):
-        out = normalize_retention(empty)
-        assert out.value is None
-        assert out.raw == ""
+    schema = answer_json_schema(QUESTIONS)
+    for key in ("why_impression", "memorable_elements", "character_opinions"):
+        assert schema["properties"]["verbatims"]["properties"][key]["maxLength"] > 0
+    refs = schema["properties"]["grounding_refs"]
+    assert refs["maxItems"] > 0
+    assert refs["items"]["maxLength"] > 0
+
+
+def test_схема_строгая_насквозь():
+    """
+    `strict: true` у OpenAI-совместимых endpoint требует, чтобы в КАЖДОМ
+    объекте были закрыты дополнительные поля и перечислены обязательные.
+    Объект, который это нарушает, endpoint отвергает целиком — то есть прогон
+    падает на первой персоне, а выглядит это как отказ провайдера.
+    """
+    def walk(node: dict, path: str = "$") -> None:
+        if node.get("type") == "object":
+            assert node.get("additionalProperties") is False, f"{path}: не закрыт"
+            assert sorted(node.get("required", [])) == sorted(node.get("properties", {})), (
+                f"{path}: required не совпадает с properties"
+            )
+            for key, child in node.get("properties", {}).items():
+                walk(child, f"{path}.{key}")
+        elif node.get("type") == "array":
+            walk(node.get("items") or {}, f"{path}[]")
+
+    walk(answer_json_schema(QUESTIONS))
+
+
+def test_анкета_без_матрицы_даёт_меньше_полей():
+    """Схема следует за анкетой, а не за файлом заказчика."""
+    small = [q for q in QUESTIONS if q["type"] != "matrix_single"]
+    block = _fields(answer_json_schema(small))
+    assert len(block["required"]) == 13

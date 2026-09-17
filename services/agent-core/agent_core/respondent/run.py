@@ -42,7 +42,7 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from ..prompt_text import body_of
-from ..survey import question_label, survey_questions
+from ..survey import question_label, render_questions, survey_questions
 from ..tracing import submit_in_context
 from .diversity import diversity_report
 
@@ -78,10 +78,18 @@ class QwenRespondentClient:
     """Боевой клиент: OpenAI-совместимый endpoint TimeWeb (Decision Log #1)."""
 
     def __init__(self, config: Any | None = None, model: str | None = None,
-                 temperature: float | None = None):
+                 temperature: float | None = None,
+                 answer_schema: dict[str, Any] | None = None):
         from ..config import ModelConfig, TemperatureConfig
 
         self.config = config or ModelConfig.from_env()
+        #: Грамматика ответа для ЭТОЙ анкеты, либо None — тогда её нет вовсе.
+        #:
+        #: Схему строит вызывающий (`pipeline/nodes.py`), потому что только он
+        #: знает и анкету, и настройки прогона. Клиент её не выдумывает: если
+        #: бы он строил схему сам, выключить её на прогоне было бы нечем, а
+        #: замер против неё уже один раз был нужен и понадобится снова.
+        self.answer_schema = answer_schema
         self.model = model or self.config.text_model
         # Стадия responseSimulation, умолчание 0.3.
         #
@@ -114,6 +122,12 @@ class QwenRespondentClient:
             default_headers=self.config.default_headers,
             timeout=REQUEST_TIMEOUT_SEC,
         )
+        extra: dict[str, Any] = {}
+        if self.answer_schema:
+            from ..schemas.responses import response_format
+
+            extra["response_format"] = response_format("PersonaAnswer", self.answer_schema)
+
         response = client.chat.completions.create(
             # Имя наблюдения в трассе. Без него интеграция назовёт
             # генерацию `OpenAI-generation` — одинаково для ответа
@@ -125,7 +139,7 @@ class QwenRespondentClient:
                 {"role": "user", "content": user},
             ],
             temperature=self.temperature,
-            # ─── Почему ЗДЕСЬ строгой схемы нет ─────────────────────────
+            # ─── Схема: была, ушла по замеру, вернулась с границами ─────
             #
             # Она тут была и делала хуже. Замер на двенадцати боевых персонах,
             # один и тот же промпт, температура 0.3, бок о бок:
@@ -146,13 +160,26 @@ class QwenRespondentClient:
             # есть где заблудиться, и цена блуждания здесь максимальна: теряется
             # не поле, а весь оплаченный ответ.
             #
-            # Покрытие анкеты, ради которого схема и вводилась, держит правило
-            # `consistency` в QA: оно называет пропущенный вопрос поимённо. Это
-            # слабее гарантии по построению, но двенадцать ответов с проверкой
-            # покрытия полезнее восьми с гарантией.
+            # 17.09.2026 владелец решил вернуть схему — вместе с правилом
+            # покрытия и переспросом, все три в связке, потому что неполный
+            # ответ объявлен ошибкой.
+            #
+            # Возвращается она не прежней. Оба названных режима вырождения —
+            # это отсутствие верхней границы: и пробельное залипание, и счётчик
+            # внутри строки возможны ровно там, где грамматика не знает, когда
+            # остановиться. Прежняя схема описывала `survey_answers` массивом
+            # пар без `maxItems`, а вербатимы — строками без длины. Новая
+            # (`answer_schema.py`) ставит границу каждому массиву и каждой
+            # свободной строке, а `survey_answers` делает объектом с известным
+            # набором ключей.
+            #
+            # Достаточно ли этого — покажет замер тем же прибором, а не это
+            # рассуждение. Поэтому схема приезжает параметром и её можно
+            # выключить, не трогая код.
             max_tokens=MAX_TOKENS["respondent"],
             # Размышление выключено: см. ModelConfig.thinking — замер и причина.
             extra_body=self.config.extra_body("respondent"),
+            **extra,
         )
         return content_of(response, role="respondent")
 
@@ -248,12 +275,19 @@ def _render_questions(survey: Any) -> str:
     это знание живёт. Раньше разбор был здесь по месту, и после его починки
     ровно тот же дефект нашёлся в `qa/checks.py`: заплатка не уменьшает число
     мест, она только отодвигает встречу со следующим.
+
+    ─── Почему тело переехало в survey.py ───────────────────────────────────
+    Прежняя строка `- [id] (тип) формулировка` годилась, пока все вопросы были
+    шкалой или свободным текстом. У анкеты заказчика девять вопросов из
+    пятнадцати — выбор из закрытого списка, и без списка это открытый вопрос:
+    персона назовёт эмоцию своими словами, ответ разберётся, отчёт соберётся —
+    и не сойдётся с тринадцатью строками заказчика.
+
+    Обёртка оставлена намеренно: по ней названа причина падения в докстроке
+    `test_survey_contract.py`, и она же держит запрет читать анкету мимо
+    `agent_core.survey`.
     """
-    lines = []
-    for q in survey_questions(survey):
-        label = question_label(q)
-        lines.append(f"- [{q.get('id', '?')}] ({q.get('type', 'открытый')}) {label}".rstrip())
-    return "\n".join(lines) if lines else "(анкета пуста)"
+    return render_questions(survey)
 
 
 def _asked_questions(user_prompt: str, survey: Any) -> list[dict[str, Any]]:
@@ -373,9 +407,30 @@ def _answers_to_map(raw: Any) -> dict[str, Any]:
 
     Словарь на входе принимается как есть: так отвечали персоны до перехода на
     схему, и перечитывание старых прогонов (#30) не должно на этом падать.
+
+    ─── Матрица приезжает и вложенной ───────────────────────────────────────
+    Замер 17.09.2026 на двадцати персонах без грамматики: ТРИНАДЦАТЬ ответили
+    на матрицу вложенным объектом —
+
+        "q09-themes": {"t1-1": "m-1", "t1-2": "m-2", ...}
+
+    — вместо сорока трёх полей рядом. Промпт этого не запрещает: он просит
+    «ответь по каждой строке» и не говорит, как их сгруппировать. Группировка
+    под идентификатором вопроса — ровно то, что делает человек, читая анкету.
+
+    Читатель знал только плоскую форму, и сорок три ответа считались
+    пропусками. Замер показывал «закрыто 31.9 поля из 67» — ЧЕТВЁРТОЕ подряд
+    число, оказавшееся дефектом чтения, а не свойством модели.
+
+    Цена прямая: правило покрытия забраковало бы такие ответы, они выбыли бы
+    из агрегата по правилу, и отчёт встал бы на семи персонах из двадцати.
+    Отчёт на семи персонах выглядит как отчёт.
+
+    Разворачивается вложенность здесь, а не у читателей: их пять, и каждый
+    развернул бы её по-своему.
     """
     if isinstance(raw, dict):
-        return raw
+        return _flatten(raw)
     if not isinstance(raw, list):
         return {}
     out: dict[str, Any] = {}
@@ -385,6 +440,30 @@ def _answers_to_map(raw: Any) -> dict[str, Any]:
         question = str(item.get("question") or "").strip()
         if question:
             out[question] = item.get("answer")
+    return _flatten(out)
+
+
+def _flatten(answers: dict[str, Any]) -> dict[str, Any]:
+    """
+    Разворачивает вложенную матрицу в поля верхнего уровня.
+
+    Ключ самого вопроса при этом УБИРАЕТСЯ: полем он не является (отвечают по
+    строкам), и оставленный рядом он выглядел бы ответом на матрицу целиком.
+    Вложенный ключ, уже занятый сверху, не перетирается: то, что персона
+    назвала явно, весомее того, что она сгруппировала.
+    """
+    out: dict[str, Any] = {}
+    nested: dict[str, Any] = {}
+    for key, value in answers.items():
+        if isinstance(value, dict):
+            for inner, answer in value.items():
+                inner_key = str(inner).strip()
+                if inner_key:
+                    nested.setdefault(inner_key, answer)
+            continue
+        out[str(key)] = value
+    for key, value in nested.items():
+        out.setdefault(key, value)
     return out
 
 
