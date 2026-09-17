@@ -211,7 +211,20 @@ def check_persona_grounding():
     if not isinstance(gen, list) or not gen:
         return _res("persona_grounding", "skip", threshold=f"|gen-real|≤{GROUNDING_PROP_TOL}",
                     detail=f"no generated personas at {GEN_PERSONAS} (Persona Generator not run)")
-    socio = [(p.get("socio_demographics") or p.get("socio") or {}) for p in gen]
+    # Persona DNA несёт `demographics` — так поле называется и в схеме
+    # packages/shared/schemas/persona-dna.schema.json, и в выдаче генератора.
+    # Прежние два имени читались, а этого не было: метрика при появлении
+    # артефакта получила бы пустые словари, посчитала бы нули по всем корзинам и
+    # упала бы целиком — при исправном генераторе. Не видно это было потому, что
+    # `generated_personas.json` не пишет никто и метрика вечно в skip.
+    #
+    # Старые имена оставлены запасными: артефакт мог быть снят прежней сборкой,
+    # и молча перестать его читать — значит повторить тот же дефект с другой
+    # стороны.
+    socio = [
+        (p.get("demographics") or p.get("socio_demographics") or p.get("socio") or {})
+        for p in gen
+    ]
     fails = []
     for dim, buckets in (("age_group", AGE_GROUPS), ("geo", GEOS), ("gender", GENDERS)):
         gp = _proportions([s.get(dim) for s in socio], buckets)
