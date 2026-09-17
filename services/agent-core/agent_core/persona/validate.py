@@ -42,6 +42,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
 
+from ..prompt_text import body_of
+
 #: Сколько раз пересоздавать персону, не прошедшую проверку.
 #:
 #: Три — не круглое число из воздуха: одна попытка не отличает случайную
@@ -171,6 +173,13 @@ def _parse(text: str) -> Verdict:
 
 
 def _render(template: str, persona: dict[str, Any], verbatim_pool: list[str]) -> str:
+    # Служебная шапка снимается, как у всех прочих читателей промптов. До этой
+    # правки «Переменные: {{skeleton_json}}, {{narrative}}, {{verbatim_pool}}»
+    # подставлялась наравне с телом, и судья получал скелет, текст портрета и пул
+    # реплик ПО ДВА РАЗА — причём первыми, до единой инструкции о том, что
+    # считать расхождением. Модуль просто забыли внести в список читателей;
+    # держит его теперь tests/test_prompt_header.py.
+    template = body_of(template)
     skeleton = {k: v for k, v in persona.items() if k != "narrative"}
     return (
         template

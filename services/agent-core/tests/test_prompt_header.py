@@ -111,6 +111,14 @@ READERS = (
     "respondent/run.py",
     "qa/judge.py",
     "analytics/report.py",
+    # Добавлены 17.09.2026. Оба читают шаблон с диска и шапку не снимали, а в
+    # списке их не было — «мест пять» в комментарии выше считало только те, что
+    # чинили тогда. Замер рендера до правки: в обогащении значение каждой черты
+    # доезжало до модели ПЯТЬ раз, портрет — два; в валидации пул реплик и текст
+    # портрета — по два, и промпт начинался словами «Переменные: {» со всем
+    # скелетом JSON до единой инструкции.
+    "persona/enrich.py",
+    "persona/validate.py",
 )
 
 
@@ -144,3 +152,45 @@ def test_pipeline_prompt_returns_a_body():
         assert isinstance(first, ast.Call) and getattr(first.func, "id", "") == "body_of", (
             "_prompt возвращает шаблон без body_of — шапка доедет до модели"
         )
+
+
+def test_rendered_prompts_carry_no_header():
+    """
+    Шапки нет в том, что реально уходит в модель.
+
+    Проверка по исходнику ловит «не позвали вовсе», но не ловит «позвали не там».
+    Здесь рендерится настоящий промпт настоящей персоной, и ищется подпись
+    формата — строка «Переменные:» с подставленными значениями.
+    """
+    import sys
+
+    sys.path.insert(0, str(PKG.parent))
+    from agent_core.persona.enrich import PROMPT_PATH, render_prompt
+    from agent_core.persona.validate import _find_prompt, _render
+
+    persona = {
+        "demographics": {"age": 41, "gender": "жен", "city": "Казань",
+                         "geo": "центры субъектов"},
+        "values_and_beliefs": {"important_values": ["Крепкая семья"]},
+        "lifestyle_and_interests": {"hobbies": ["чтение"], "work_status": "работает"},
+        "viewer_behavior": {"pacing_tolerance": "медленный"},
+        "communication_style": {"directness": "окольный"},
+        "decision_making": {"impulsivity": 1},
+        "narrative": "Текст портрета.",
+    }
+
+    out = render_prompt(PROMPT_PATH.read_text("utf-8"), persona, portrait_md="МАРКЕР")
+    assert "Переменные:" not in out, (
+        "шапка обогащения уехала в модель: промпт начинается перечнем "
+        f"переменных с подставленными значениями — {out[:80]!r}"
+    )
+    assert out.count("МАРКЕР") == 1, "портрет подставлен дважды — шапка не снята"
+
+    pool = ["Реплика корпуса номер один.", "Вторая реплика корпуса."]
+    rendered = _render(_find_prompt().read_text("utf-8"), persona, pool)
+    assert "Переменные:" not in rendered, (
+        f"шапка валидации уехала в модель — {rendered[:80]!r}"
+    )
+    assert rendered.count("Текст портрета.") == 1, (
+        "текст портрета подставлен дважды — шапка не снята"
+    )
