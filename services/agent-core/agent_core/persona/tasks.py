@@ -237,6 +237,7 @@ def generate_audience(self: Any, payload: dict[str, Any]) -> dict[str, Any]:
                         max_tokens=MAX_TOKENS["persona_validation"],
                     ),
                     regenerate=regenerate,
+                    verbatim_pool=_judge_pool(gen.dist.verbatims),
                 )
                 personas = validation.personas
                 names = validated_names
@@ -304,6 +305,27 @@ def generate_audience(self: Any, payload: dict[str, Any]) -> dict[str, Any]:
             "enrichment": meta,
             "validation": validation_meta,
         }
+
+
+def _judge_pool(verbatims: list[str], n: int = 20) -> list[str]:
+    """
+    Образец речи корпуса для судьи связности.
+
+    `persona.validate.md` бракует за «досочинённый факт» — подробность, которой
+    нет «ни в атрибутах, НИ В РЕПЛИКАХ КОРПУСА». До этой правки раздел с репликами
+    рендерился пустым при каждой проверке: `validate_set` принимает пул
+    необязательным параметром, и продовый вызов его не передавал. Судью просили
+    сверить текст с образцом, а образец не показывали.
+
+    Берём с равномерным шагом, а не первые двадцать: `validate._render` обрезает
+    пул до двадцати реплик, а в порядке корпуса это почти один материал —
+    17 из 20 приходились на «Константинополь». Шаг сохраняет детерминизм и даёт
+    речь со всего корпуса.
+    """
+    if not verbatims:
+        return []
+    step = max(1, len(verbatims) // n)
+    return verbatims[::step]
 
 
 def _load_portraits(tenant_id: str) -> dict[str, str]:
