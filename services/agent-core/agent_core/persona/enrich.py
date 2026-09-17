@@ -387,6 +387,16 @@ def render_prompt(
         .replace("{{viewer_behavior}}", pairs("viewer_behavior"))
         .replace("{{communication_style}}", pairs("communication_style"))
         .replace("{{decision_making}}", pairs("decision_making"))
+        # Второй заход, 17.09.2026. Первый развернул три группы и покрыл 47
+        # упоминаний из 78; среди оставшихся оказалось ВТОРОЕ по частоте поле
+        # всего списка — `social_activity` (8 претензий), а также
+        # `education_level` (5), `media_consumption` (2), `streaming_frequency`
+        # и `tech_savviness` (по 3). Все они лежали только внутри skeleton_json.
+        .replace("{{lifestyle_and_interests}}", pairs("lifestyle_and_interests"))
+        .replace("{{technology_usage}}", pairs("technology_usage"))
+        # `children` — четвёртое по частоте (6). Лежит в demographics, где
+        # возраст, пол, город и гео развёрнуты, а наличие детей не было.
+        .replace("{{children}}", str(demo.get("children", "не задано")))
         .replace("{{min_len}}", str(MIN_NARRATIVE_LEN))
     )
 

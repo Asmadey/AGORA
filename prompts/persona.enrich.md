@@ -1,8 +1,9 @@
 # persona.enrich (narrative)
 Переписывание поля narrative у персоны, СКЕЛЕТ которой уже собран из корпуса.
 Переменные: {{skeleton_json}}, {{age}}, {{gender}}, {{city}}, {{geo}}, {{values}},
-{{hobbies}}, {{work_status}}, {{viewer_behavior}}, {{communication_style}},
-{{decision_making}}, {{min_len}}, {{portrait_md}}.
+{{hobbies}}, {{work_status}}, {{children}}, {{viewer_behavior}},
+{{communication_style}}, {{decision_making}}, {{lifestyle_and_interests}},
+{{technology_usage}}, {{min_len}}, {{portrait_md}}.
 ---
 Ниже — синтетическая персона, собранная сэмплированием по реальным долям
 исследовательского корпуса. Все её факты уже определены и менять их нельзя.
@@ -13,11 +14,14 @@
 {{skeleton_json}}
 
 Опорные признаки: {{age}} лет, {{gender}}, {{city}} ({{geo}}), {{work_status}}.
+Дети: {{children}}.
 Ценности: {{values}}.
 Увлечения: {{hobbies}}.
 Как смотрит: {{viewer_behavior}}.
 Как говорит: {{communication_style}}.
 Как решает: {{decision_making}}.
+Как живёт: {{lifestyle_and_interests}}.
+Чем пользуется: {{technology_usage}}.
 
 {{portrait_md}}
 

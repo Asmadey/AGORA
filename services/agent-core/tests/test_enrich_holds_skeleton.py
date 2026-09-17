@@ -49,20 +49,44 @@ GROUPS = {
     "viewer_behavior": "viewer_behavior",
     "communication_style": "communication_style",
     "decision_making": "decision_making",
+    # Добавлено 17.09.2026 вторым заходом. Первый развернул три группы и покрыл
+    # 47 упоминаний из 78; остальные 31 остались видны модели только внутри
+    # `skeleton_json`. Среди непокрытых оказалось ВТОРОЕ по частоте поле всего
+    # списка — `social_activity` (8 претензий), плюс `education_level` (5),
+    # `media_consumption` (2), `streaming_frequency` и `tech_savviness` (по 3).
+    "lifestyle_and_interests": "lifestyle_and_interests",
+    "technology_usage": "technology_usage",
 }
+
+#: Отдельные поля вне групп, по которым тоже приходили претензии.
+#:
+#: `children` — четвёртое по частоте (6 претензий). Лежит в `demographics`, где
+#: развёрнуты возраст, пол, город и гео, а наличие детей не было.
+SINGLE_FIELDS = ("children",)
 
 PERSONA = {
     "demographics": {"age": 41, "gender": "жен", "city": "Казань",
-                     "geo": "центры субъектов", "children": "Нет детей"},
+                     "geo": "центры субъектов", "children": "Не указано"},
     "values_and_beliefs": {"important_values": ["Крепкая семья"]},
-    "lifestyle_and_interests": {"hobbies": ["чтение"], "work_status": "работает"},
+    "lifestyle_and_interests": {"hobbies": ["чтение"], "work_status": "работает",
+                                "social_activity": "одиночка",
+                                "media_consumption": "среднее",
+                                "education_level": "среднее"},
     "viewer_behavior": {"pacing_tolerance": "медленный", "attention_span": "длинный",
                         "length_tolerance": "длинные", "violence_tolerance": "низкая",
                         "streaming_frequency": "раз в неделю"},
     "communication_style": {"verbosity": "лаконичный", "directness": "окольный",
                             "emotionality": "сдержанный"},
     "decision_making": {"impulsivity": 1, "ad_response": "доверие"},
+    "technology_usage": {"streaming_frequency": "раз в неделю", "tech_savviness": 2},
 }
+
+
+def test_prompt_declares_the_single_fields():
+    """Отдельные часто опровергаемые поля объявлены переменными."""
+    text = PROMPT.read_text("utf-8")
+    missing = [f for f in SINGLE_FIELDS if "{{" + f + "}}" not in text]
+    assert not missing, f"в промпте нет переменных для полей: {', '.join(missing)}"
 
 
 def test_prompt_declares_the_contradicted_groups():
@@ -99,7 +123,8 @@ def test_render_substitutes_the_groups():
         )
 
     # Значения из тех самых полей, которые переворачивались на боевом.
-    for value in ("медленный", "окольный", "длинный"):
+    for value in ("медленный", "окольный", "длинный", "одиночка", "раз в неделю",
+                  "Нет детей" if False else "Не указано"):
         assert value in out, f"значение «{value}» не доехало до промпта"
 
 

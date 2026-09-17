@@ -186,6 +186,14 @@ class CorpusDistribution:
     geo: dict[str, float]
     gender: dict[str, float]
     city: dict[str, float]
+    #: Доли значений `children` из корпуса.
+    #:
+    #: Заведено 17.09.2026. Прежде поле разыгрывалось прибитыми весами
+    #: `[0.4, 0.4, 0.2]` под комментарием «сэмплим из корпуса». Замер: в
+    #: корпусе «Не указано» 73 %, «Да, есть дети» 27 %, а «Нет детей» —
+    #: НОЛЬ записей из 165. Генератор выдавал это значение сорока процентам
+    #: персон, то есть заземлял их на том, чего в исследовании не было.
+    children: dict[str, float]
     serial: dict[str, float]
     serial_x_city: dict[tuple[str, str], float]
     values: dict[str, float]  # топ-значения и их доли — для портрета и промпта
@@ -216,6 +224,9 @@ class CorpusDistribution:
         geo = _dist(lambda r: r["socio_demographics"]["geo"])
         gender = _dist(lambda r: r["socio_demographics"]["gender"])
         city = _dist(lambda r: r["socio_demographics"]["city"])
+        # Умолчание «Не указано», а не пропуск записи: отсутствие ответа —
+        # это тоже наблюдение, и в корпусе оно самое частое (73 %).
+        children = _dist(lambda r: r["socio_demographics"].get("children") or "Не указано")
         serial = _dist(lambda r: r["content_under_test"]["title"])
 
         sc_counter: Counter[tuple[str, str]] = Counter()
@@ -271,6 +282,7 @@ class CorpusDistribution:
             geo=geo,
             gender=gender,
             city=city,
+            children=children,
             serial=serial,
             serial_x_city=serial_x_city,
             values=values,
@@ -680,12 +692,9 @@ class PersonaGenerator:
         geo_cities = GEO_CITIES.get(geo, list(self.dist.city.keys()))
         city = rng.choice(geo_cities) if geo_cities else "Москва"
 
-        # Children — сэмплим из корпуса
-        children = rng.choices(
-            ["Да, есть ребенок / дети", "Нет детей", "Не указано"],
-            weights=[0.4, 0.4, 0.2],
-            k=1,
-        )[0]
+        # Children — из долей корпуса, а не из списка с прибитыми весами.
+        # Прежний список содержал «Нет детей», которого в корпусе нет ни разу.
+        children = self._sample_weighted(rng, dist.children)
 
         # 2. Big Five — калибровка: средние ~3.0-3.5, разброс 1-5
         big_five = {
