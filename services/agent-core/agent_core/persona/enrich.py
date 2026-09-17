@@ -332,6 +332,17 @@ def render_prompt(
     demo = persona.get("demographics", {})
     values = persona.get("values_and_beliefs", {}).get("important_values", [])
     lifestyle = persona.get("lifestyle_and_interests", {})
+
+    def pairs(block: str) -> str:
+        """Черты одной группы как «ключ: значение», через точку с запятой.
+
+        Ключи те же, что в `skeleton_json`, а не переведённые на русский: модель
+        видит одну и ту же черту дважды под одним именем, и это подкрепляет, а не
+        путает. Перевод имён развёл бы список и JSON молча.
+        """
+        data = persona.get(block) or {}
+        return "; ".join(f"{k}: {v}" for k, v in data.items()) or "не задано"
+
     return (
         template
         # Пустая строка, а не пропуск подстановки: оставленный `{{portrait_md}}`
@@ -346,6 +357,17 @@ def render_prompt(
         .replace("{{values}}", ", ".join(values))
         .replace("{{hobbies}}", ", ".join(lifestyle.get("hobbies", [])))
         .replace("{{work_status}}", str(lifestyle.get("work_status", "")))
+        # Черты, которые чаще всего опровергались в тексте портрета. Замер на
+        # боевом 17.09.2026: 38 претензий судьи из 74 — противоречие атрибуту, и
+        # ведут они почти целиком в эти три группы (length_tolerance 9,
+        # social_activity 8, attention_span 7, pacing_tolerance 5, directness 4,
+        # impulsivity 4, ad_response 3 …). До этой правки группы лежали только
+        # внутри `skeleton_json`, а промпт тут же требовал «покажи, как эти черты
+        # выглядят в поведении» — то есть перевести атрибут в поступок. Перевод и
+        # есть место, где черта переворачивается.
+        .replace("{{viewer_behavior}}", pairs("viewer_behavior"))
+        .replace("{{communication_style}}", pairs("communication_style"))
+        .replace("{{decision_making}}", pairs("decision_making"))
         .replace("{{min_len}}", str(MIN_NARRATIVE_LEN))
     )
 
