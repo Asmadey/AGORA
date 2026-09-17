@@ -78,10 +78,18 @@ class QwenRespondentClient:
     """Боевой клиент: OpenAI-совместимый endpoint TimeWeb (Decision Log #1)."""
 
     def __init__(self, config: Any | None = None, model: str | None = None,
-                 temperature: float | None = None):
+                 temperature: float | None = None,
+                 answer_schema: dict[str, Any] | None = None):
         from ..config import ModelConfig, TemperatureConfig
 
         self.config = config or ModelConfig.from_env()
+        #: Грамматика ответа для ЭТОЙ анкеты, либо None — тогда её нет вовсе.
+        #:
+        #: Схему строит вызывающий (`pipeline/nodes.py`), потому что только он
+        #: знает и анкету, и настройки прогона. Клиент её не выдумывает: если
+        #: бы он строил схему сам, выключить её на прогоне было бы нечем, а
+        #: замер против неё уже один раз был нужен и понадобится снова.
+        self.answer_schema = answer_schema
         self.model = model or self.config.text_model
         # Стадия responseSimulation, умолчание 0.3.
         #
@@ -114,6 +122,12 @@ class QwenRespondentClient:
             default_headers=self.config.default_headers,
             timeout=REQUEST_TIMEOUT_SEC,
         )
+        extra: dict[str, Any] = {}
+        if self.answer_schema:
+            from ..schemas.responses import response_format
+
+            extra["response_format"] = response_format("PersonaAnswer", self.answer_schema)
+
         response = client.chat.completions.create(
             # Имя наблюдения в трассе. Без него интеграция назовёт
             # генерацию `OpenAI-generation` — одинаково для ответа
@@ -125,7 +139,7 @@ class QwenRespondentClient:
                 {"role": "user", "content": user},
             ],
             temperature=self.temperature,
-            # ─── Почему ЗДЕСЬ строгой схемы нет ─────────────────────────
+            # ─── Схема: была, ушла по замеру, вернулась с границами ─────
             #
             # Она тут была и делала хуже. Замер на двенадцати боевых персонах,
             # один и тот же промпт, температура 0.3, бок о бок:
@@ -146,13 +160,26 @@ class QwenRespondentClient:
             # есть где заблудиться, и цена блуждания здесь максимальна: теряется
             # не поле, а весь оплаченный ответ.
             #
-            # Покрытие анкеты, ради которого схема и вводилась, держит правило
-            # `consistency` в QA: оно называет пропущенный вопрос поимённо. Это
-            # слабее гарантии по построению, но двенадцать ответов с проверкой
-            # покрытия полезнее восьми с гарантией.
+            # 17.09.2026 владелец решил вернуть схему — вместе с правилом
+            # покрытия и переспросом, все три в связке, потому что неполный
+            # ответ объявлен ошибкой.
+            #
+            # Возвращается она не прежней. Оба названных режима вырождения —
+            # это отсутствие верхней границы: и пробельное залипание, и счётчик
+            # внутри строки возможны ровно там, где грамматика не знает, когда
+            # остановиться. Прежняя схема описывала `survey_answers` массивом
+            # пар без `maxItems`, а вербатимы — строками без длины. Новая
+            # (`answer_schema.py`) ставит границу каждому массиву и каждой
+            # свободной строке, а `survey_answers` делает объектом с известным
+            # набором ключей.
+            #
+            # Достаточно ли этого — покажет замер тем же прибором, а не это
+            # рассуждение. Поэтому схема приезжает параметром и её можно
+            # выключить, не трогая код.
             max_tokens=MAX_TOKENS["respondent"],
             # Размышление выключено: см. ModelConfig.thinking — замер и причина.
             extra_body=self.config.extra_body("respondent"),
+            **extra,
         )
         return content_of(response, role="respondent")
 

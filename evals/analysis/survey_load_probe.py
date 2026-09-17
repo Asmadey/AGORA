@@ -225,15 +225,18 @@ def answered_keys(answer: dict[str, Any]) -> set[str]:
 
 def coverage(answer: dict[str, Any], fields: list[str]) -> tuple[int, list[str]]:
     """
-    Сколько полей закрыто. Адрес матричного поля — `<вопрос>/<строка>`, но
-    персона называет только строку: её идентификатор уникален по анкете.
+    Сколько полей закрыто.
+
+    Здесь стояло деление адреса по «/»: `answerable_fields` выдавала пару
+    «вопрос/строка», а персона называет строку. Обход работал и ровно поэтому
+    прятал расхождение — адрес поля разошёлся с тем, что печатает промпт, и
+    увидеть это по числам было нельзя.
+
+    Адрес теперь один (голый идентификатор строки), и обход снят: если формы
+    разойдутся снова, покрытие честно упадёт, а не подстроится.
     """
     said = answered_keys(answer)
-    missing = []
-    for field in fields:
-        key = field.split("/")[-1]
-        if key not in said and field not in said:
-            missing.append(field)
+    missing = [field for field in fields if field not in said]
     return len(fields) - len(missing), missing
 
 

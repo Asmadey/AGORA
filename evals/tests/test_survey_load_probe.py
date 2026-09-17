@@ -89,7 +89,13 @@ def test_покрытие_считает_матрицу_построчно():
     answer = {"survey_answers": [{"question": "q09-themes", "answer": "m-1"}]}
     done, missing = probe.coverage(answer, FIELDS)
     assert done == 0, "матрица целиком не закрывает ни одного поля"
-    assert len([m for m in missing if m.startswith("q09-themes/")]) == 43
+    # Поле матрицы адресуется голым идентификатором строки — ровно так, как
+    # промпт печатает его в скобках (`[t1-1]`). Здесь стоял префикс
+    # `q09-themes/`: четвёртая форма адреса, которой не писал и не читал никто,
+    # а проба обходила её делением строки по «/».
+    themes = {r["id"] for q in SURVEY["questions"] if q["number"] == 9 for r in q["rows"]}
+    assert len(themes) == 43
+    assert themes <= set(missing)
 
 
 def test_покрытие_принимает_идентификатор_строки():

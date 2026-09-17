@@ -285,6 +285,68 @@ def consistency_reasons(answer: dict[str, Any], survey: dict[str, Any] | None = 
     if not any(str(v).strip() for v in verbatims.values()):
         reasons.append("вербатимы пусты: обоснования оценок нет")
 
+    return reasons
+
+
+def grounding_reasons(answer: dict[str, Any], pack: dict[str, Any] | None = None) -> list[str]:
+    """
+    Ссылки на то, чего в материале не было. Пустой список — правила чисты.
+
+    Проверяются и `grounding_refs`, и вербатимы: выдуманный таймкод чаще всего
+    появляется именно в тексте («на седьмой минуте меня зацепило»), а поле
+    refs персона заполняет аккуратнее — там оно у неё на виду.
+    """
+    reasons: list[str] = []
+    refs = answer.get("grounding_refs")
+    refs = [str(r) for r in refs] if isinstance(refs, list) else []
+    if not [r for r in refs if r.strip()]:
+        reasons.append("нет ни одной отсылки к материалу (grounding_refs пуст)")
+
+    duration = (pack or {}).get("duration_sec")
+    if not isinstance(duration, (int, float)) or duration <= 0:
+        # Длительности нет — сравнивать не с чем. Молчим намеренно: флаг
+        # «таймкод не проверен» на каждом ответе научил бы не читать флаги.
+        return reasons
+
+    limit = float(duration) + TIMECODE_TOLERANCE_SEC
+    verbatims = answer.get("verbatims") if isinstance(answer.get("verbatims"), dict) else {}
+    sources = [("grounding_refs", r) for r in refs]
+    sources += [(f"вербатим {k}", str(v)) for k, v in verbatims.items()]
+
+    for where, text in sources:
+        for seconds in timecodes(text):
+            if seconds > limit:
+                reasons.append(
+                    f"{where}: таймкод {_hhmmss(seconds)} за пределами ролика "
+                    f"({_hhmmss(float(duration))})"
+                )
+    return reasons
+
+
+def _hhmmss(seconds: float) -> str:
+    total = int(round(seconds))
+    return f"{total // 60:02d}:{total % 60:02d}" if total < 3600 else (
+        f"{total // 3600:d}:{(total % 3600) // 60:02d}:{total % 60:02d}"
+    )
+
+
+def coverage_reasons(answer: dict[str, Any], survey: Any = None) -> list[str]:
+    """
+    Все ли поля анкеты закрыты. Пустой список — закрыта целиком.
+
+    ─── Почему отдельная проверка, а не часть согласованности ───────────────
+    Проверка жила внутри `consistency_reasons` и приезжала под её именем.
+    Переспрос выбирает подсказку ПО ВИДУ претензии, и персона, пропустившая
+    сорок полей, получала подсказку «твой ответ разошёлся сам с собой» — то
+    есть про другое. Подсказка не по адресу хуже её отсутствия: переспрос
+    стоит как полный вызов, а пакет материала занимает в нём почти весь промпт.
+
+    Решение владельца 17.09.2026: неполный ответ есть ошибка, и закрывают её
+    три меры в связке — грамматика ответа (`respondent/answer_schema.py`), это
+    правило и переспрос.
+    """
+    reasons: list[str] = []
+    scores = answer.get("scores") if isinstance(answer.get("scores"), dict) else {}
     # Форму анкеты разбирает agent_core.survey — единственное место, где это
     # знание живёт. Здесь стояло `(survey or {}).get("questions")`, и сквозной
     # прогон падал на 690-й секунде ровно тем же способом, что до этого в
@@ -376,45 +438,3 @@ def consistency_reasons(answer: dict[str, Any], survey: dict[str, Any] | None = 
         reasons.append(f"анкета покрыта не полностью, нет ответов: {', '.join(sorted(missing))}")
 
     return reasons
-
-
-def grounding_reasons(answer: dict[str, Any], pack: dict[str, Any] | None = None) -> list[str]:
-    """
-    Ссылки на то, чего в материале не было. Пустой список — правила чисты.
-
-    Проверяются и `grounding_refs`, и вербатимы: выдуманный таймкод чаще всего
-    появляется именно в тексте («на седьмой минуте меня зацепило»), а поле
-    refs персона заполняет аккуратнее — там оно у неё на виду.
-    """
-    reasons: list[str] = []
-    refs = answer.get("grounding_refs")
-    refs = [str(r) for r in refs] if isinstance(refs, list) else []
-    if not [r for r in refs if r.strip()]:
-        reasons.append("нет ни одной отсылки к материалу (grounding_refs пуст)")
-
-    duration = (pack or {}).get("duration_sec")
-    if not isinstance(duration, (int, float)) or duration <= 0:
-        # Длительности нет — сравнивать не с чем. Молчим намеренно: флаг
-        # «таймкод не проверен» на каждом ответе научил бы не читать флаги.
-        return reasons
-
-    limit = float(duration) + TIMECODE_TOLERANCE_SEC
-    verbatims = answer.get("verbatims") if isinstance(answer.get("verbatims"), dict) else {}
-    sources = [("grounding_refs", r) for r in refs]
-    sources += [(f"вербатим {k}", str(v)) for k, v in verbatims.items()]
-
-    for where, text in sources:
-        for seconds in timecodes(text):
-            if seconds > limit:
-                reasons.append(
-                    f"{where}: таймкод {_hhmmss(seconds)} за пределами ролика "
-                    f"({_hhmmss(float(duration))})"
-                )
-    return reasons
-
-
-def _hhmmss(seconds: float) -> str:
-    total = int(round(seconds))
-    return f"{total // 60:02d}:{total % 60:02d}" if total < 3600 else (
-        f"{total // 3600:d}:{(total % 3600) // 60:02d}:{total % 60:02d}"
-    )
