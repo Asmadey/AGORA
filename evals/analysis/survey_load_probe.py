@@ -197,21 +197,55 @@ def ask_one(persona: dict[str, Any], pack: dict[str, Any], questions: list[dict[
     return parse_answer(raw)
 
 
+def answered_keys(answer: dict[str, Any]) -> set[str]:
+    """
+    Адреса полей, на которые персона ответила.
+
+    ─── Две формы, и обе законны ────────────────────────────────────────────
+    Промпт объявляет `survey_answers` списком пар «вопрос → ответ», но модель
+    возвращает и объект «идентификатор → ответ», а `respondent/run.py`
+    (`_answers_to_map`) обе формы приводит к одной. Первая редакция счётчика
+    читала только список и на объекте показала «закрыто 0 полей из 67» —
+    притом что персона ответила на ВСЕ шестьдесят семь правильными
+    идентификаторами.
+
+    Это был третий дефект в этом же приборе и снова тот же класс: писатель и
+    читатель разошлись в форме. Число «0 из 67» выглядело результатом замера и
+    было артефактом чтения.
+    """
+    raw = answer.get("survey_answers")
+    if isinstance(raw, dict):
+        return {str(k).strip() for k in raw}
+    out: set[str] = set()
+    for pair in raw or []:
+        if isinstance(pair, dict):
+            out.add(str(pair.get("question") or "").strip())
+    return out
+
+
 def coverage(answer: dict[str, Any], fields: list[str]) -> tuple[int, list[str]]:
     """
     Сколько полей закрыто. Адрес матричного поля — `<вопрос>/<строка>`, но
     персона называет только строку: её идентификатор уникален по анкете.
     """
-    said: set[str] = set()
-    for pair in answer.get("survey_answers") or []:
-        if isinstance(pair, dict):
-            said.add(str(pair.get("question") or "").strip())
+    said = answered_keys(answer)
     missing = []
     for field in fields:
         key = field.split("/")[-1]
         if key not in said and field not in said:
             missing.append(field)
     return len(fields) - len(missing), missing
+
+
+def answer_for(answer: dict[str, Any], field: str) -> Any:
+    """Ответ на одно поле, в какой бы из двух форм он ни пришёл."""
+    raw = answer.get("survey_answers")
+    if isinstance(raw, dict):
+        return raw.get(field)
+    for pair in raw or []:
+        if isinstance(pair, dict) and str(pair.get("question") or "").strip() == field:
+            return pair.get("answer")
+    return None
 
 
 def echo_test(pairs: list[tuple[set[str], set[str]]], rounds: int = 10000,
@@ -329,9 +363,8 @@ def live(args: argparse.Namespace, survey: dict[str, Any]) -> None:
 
         own = set((persona["dna"].get("values_and_beliefs") or {}).get("important_values") or [])
         said = {
-            values_by_option.get(str(p.get("answer") or "").strip(), "")
-            for p in (answer.get("survey_answers") or [])
-            if isinstance(p, dict) and str(p.get("question") or "").strip() == "q08-values"
+            values_by_option.get(token.strip(), "")
+            for token in str(answer_for(answer, "q08-values") or "").split(",")
         }
         echo_pairs.append((own, said - {""}))
 

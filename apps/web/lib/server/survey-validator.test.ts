@@ -87,13 +87,31 @@ test("то, что осталось строгим", async (t) => {
     assert.match(r.errors.join("; "), /должен быть type=scale/);
   });
 
-  await t.test("базовый критерий не может иметь чужую шкалу", () => {
-    // 1–5 вместо 1–10 сдвинуло бы среднее вдвое, и заметить это было бы нечем.
+  await t.test("базовые критерии не могут быть на разных шкалах", () => {
+    // Опасность прежняя: «1–5 вместо 1–10 сдвинуло бы среднее вдвое, и заметить
+    // это было бы нечем». Изменилось то, с чем сверяемся: жёсткая шкала 1–10
+    // отменена 17.09.2026 (анкета заказчика на 0–10), поэтому проверяется
+    // согласие критериев между собой. Интегральный индекс удовлетворённости —
+    // среднее долей по пяти критериям, и на разных шкалах он бессмыслен.
     const r = validateSurvey(
-      survey([scale("b1", "Общее", { baseKey: "overall_impression", scaleMax: 5 })]),
+      survey([
+        scale("b1", "Общее", { baseKey: "overall_impression", scaleMin: 0, scaleMax: 10 }),
+        scale("b2", "Сюжет", { baseKey: "plot", scaleMin: 1, scaleMax: 5 }),
+      ]),
     );
     assert.equal(r.valid, false);
-    assert.match(r.errors.join("; "), /шкалу 1–10/);
+    assert.match(r.errors.join("; "), /на одной шкале/);
+  });
+
+  await t.test("одна шкала 0–10 у всех критериев принимается", () => {
+    // Анкета заказчика. Прежняя проверка отвергала её целиком.
+    const r = validateSurvey(
+      survey([
+        scale("b1", "Общее", { baseKey: "overall_impression", scaleMin: 0, scaleMax: 10 }),
+        scale("b2", "Сюжет", { baseKey: "plot", scaleMin: 0, scaleMax: 10 }),
+      ]),
+    );
+    assert.equal(r.valid, true, r.errors.join("; "));
   });
 
   await t.test("baseKey не повторяется", () => {

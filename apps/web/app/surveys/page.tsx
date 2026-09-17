@@ -56,7 +56,12 @@ export default async function SurveysPage() {
           <div className="space-y-2">
             {surveys.map((s) => {
               const custom = s.questions.filter((q) => !q.baseKey).length;
-              const hasWatchedShare = s.questions.some((q) => q.type === "watched_share");
+              // «Доля просмотра» перестала быть типом 17.09.2026 и стала
+              // пресетом шкалы 0–100. Признак ищется по идентификатору
+              // системного вопроса, а не по типу, которого больше нет.
+              const hasWatchedShare = s.questions.some(
+                (q) => q.id === "base-6" || /доля просмотр|часть ролика/i.test(q.label),
+              );
               return (
                 <Link
                   key={s.id}

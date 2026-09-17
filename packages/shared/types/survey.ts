@@ -5,37 +5,13 @@
  * and run json-schema-to-typescript to regenerate this file.
  */
 
-/**
- * Ключи пяти базовых критериев. Именно по ним посчитаны средние в корпусе 165 респондентов — ключ часть контракта с данными, не подпись.
- */
-export type BaseCriterionKey = "overall_impression" | "plot" | "acting" | "music" | "cinematography";
-/**
- * Типы вопросов P1-конструктора. Список закрытый: воркер умеет разбирать ответ только этих пяти форм. Добавление шестого — изменение схемы ответа персоны.
- */
-export type QuestionType = "scale" | "emotions" | "retention" | "recommendation" | "open";
-
-export interface Survey {
-  /**
-   * UUID анкеты. Генерируется базой при INSERT.
-   */
-  id?: string;
-  /**
-   * Название анкеты. Обязательно.
-   */
-  name: string;
-  /**
-   * Список вопросов. Первый блок — пять базовых критериев (P0), за ними — пользовательские (P1).
-   * @minItems 5
-   */
-  questions: Question[];
-  /**
-   * Время создания. Устанавливается базой.
-   */
-  created_at?: string;
+export type Question = {
   [k: string]: unknown;
-}
-
-export interface Question {
+} & {
+  [k: string]: unknown;
+} & {
+  [k: string]: unknown;
+} & {
   /**
    * Идентификатор вопроса. У базовых — base-1..base-5, у пользовательских — uuid или custom-N.
    */
@@ -50,16 +26,470 @@ export interface Question {
   label: string;
   type: QuestionType;
   /**
-   * Нижняя граница шкалы. Осмысленна только при type=scale, но поле обязательное — упрощает валидацию.
+   * Нижняя граница шкалы. Осмысленна и обязательна только при type=scale; у выбора из списка шкалы нет, и требовать её значило бы заставлять конструктор писать числа, которых у вопроса нет.
    */
-  scaleMin: number;
+  scaleMin?: number;
   /**
    * Верхняя граница шкалы. При type=scale должна быть больше scaleMin.
    */
-  scaleMax: number;
+  scaleMax?: number;
   /**
    * Подсказка для персоны — что именно оценивать. Необязательна.
    */
   hint?: string;
-  [k: string]: unknown;
+  /**
+   * Блок верхнего уровня. Даёт двухуровневую шапку выгрузки — «блок / вопрос», — в форме которой заказчик получает свои полевые файлы, и смысловые разделы отчёта.
+   */
+  block?: string;
+  /**
+   * Номер вопроса в анкете заказчика. Нужен, чтобы отчёт и выгрузка называли вопрос так же, как его называет заказчик.
+   */
+  number?: number;
+  /**
+   * Варианты ответа. Закрытый вопрос БЕЗ вариантов — это открытый вопрос: персона ответит своими словами, и доли не сойдутся с закрытым списком.
+   *
+   * @maxItems 100
+   */
+  options?: Option[];
+  /**
+   * Потолок выбора при type=multi_choice. Без него модель выберет столько, сколько захочет, и доли перестанут быть сравнимыми с полевыми волнами.
+   */
+  maxChoices?: number;
+  /**
+   * Варианты, выбираемые только в одиночку: «не испытал никаких эмоций», «затрудняюсь ответить».
+   *
+   * @maxItems 20
+   */
+  exclusiveOptionIds?:
+    | []
+    | [string]
+    | [string, string]
+    | [string, string, string]
+    | [string, string, string, string]
+    | [string, string, string, string, string]
+    | [string, string, string, string, string, string]
+    | [string, string, string, string, string, string, string]
+    | [string, string, string, string, string, string, string, string]
+    | [string, string, string, string, string, string, string, string, string]
+    | [string, string, string, string, string, string, string, string, string, string]
+    | [string, string, string, string, string, string, string, string, string, string, string]
+    | [string, string, string, string, string, string, string, string, string, string, string, string]
+    | [string, string, string, string, string, string, string, string, string, string, string, string, string]
+    | [string, string, string, string, string, string, string, string, string, string, string, string, string, string]
+    | [
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string
+      ]
+    | [
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string
+      ]
+    | [
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string
+      ]
+    | [
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string
+      ]
+    | [
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string
+      ]
+    | [
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string
+      ];
+  /**
+   * Строки матрицы при type=matrix_single.
+   *
+   * @maxItems 200
+   */
+  rows?: MatrixRow[];
+  /**
+   * Темы матрицы. Оператор выбирает темами, а не строками.
+   *
+   * @maxItems 50
+   */
+  themes?: Theme[];
+  /**
+   * Вопрос, выбор тем в котором определяет состав строк этого вопроса. Так вопрос 11 заказчика добавляется по темам вопроса 9.
+   */
+  dependsOnQuestion?: string;
+  /**
+   * Единица выбора оператора. «theme» — тема включается целиком со всеми строками; иначе интегральный показатель восприятия считался бы по разному числу строк и стал бы несравним между прогонами.
+   */
+  selectableBy?: "theme";
+  /**
+   * Пометка для разработчика. Персоне не показывается.
+   */
+  note?: string;
+} & {
+  /**
+   * Идентификатор вопроса. У базовых — base-1..base-5, у пользовательских — uuid или custom-N.
+   */
+  id: string;
+  /**
+   * Задан только у пяти базовых критериев; у пользовательских — отсутствует.
+   */
+  baseKey?: BaseCriterionKey | null;
+  /**
+   * Формулировка вопроса. Подпись менять можно, baseKey — нет.
+   */
+  label: string;
+  type: QuestionType;
+  /**
+   * Нижняя граница шкалы. Осмысленна и обязательна только при type=scale; у выбора из списка шкалы нет, и требовать её значило бы заставлять конструктор писать числа, которых у вопроса нет.
+   */
+  scaleMin?: number;
+  /**
+   * Верхняя граница шкалы. При type=scale должна быть больше scaleMin.
+   */
+  scaleMax?: number;
+  /**
+   * Подсказка для персоны — что именно оценивать. Необязательна.
+   */
+  hint?: string;
+  /**
+   * Блок верхнего уровня. Даёт двухуровневую шапку выгрузки — «блок / вопрос», — в форме которой заказчик получает свои полевые файлы, и смысловые разделы отчёта.
+   */
+  block?: string;
+  /**
+   * Номер вопроса в анкете заказчика. Нужен, чтобы отчёт и выгрузка называли вопрос так же, как его называет заказчик.
+   */
+  number?: number;
+  /**
+   * Варианты ответа. Закрытый вопрос БЕЗ вариантов — это открытый вопрос: персона ответит своими словами, и доли не сойдутся с закрытым списком.
+   *
+   * @maxItems 100
+   */
+  options?: Option[];
+  /**
+   * Потолок выбора при type=multi_choice. Без него модель выберет столько, сколько захочет, и доли перестанут быть сравнимыми с полевыми волнами.
+   */
+  maxChoices?: number;
+  /**
+   * Варианты, выбираемые только в одиночку: «не испытал никаких эмоций», «затрудняюсь ответить».
+   *
+   * @maxItems 20
+   */
+  exclusiveOptionIds?:
+    | []
+    | [string]
+    | [string, string]
+    | [string, string, string]
+    | [string, string, string, string]
+    | [string, string, string, string, string]
+    | [string, string, string, string, string, string]
+    | [string, string, string, string, string, string, string]
+    | [string, string, string, string, string, string, string, string]
+    | [string, string, string, string, string, string, string, string, string]
+    | [string, string, string, string, string, string, string, string, string, string]
+    | [string, string, string, string, string, string, string, string, string, string, string]
+    | [string, string, string, string, string, string, string, string, string, string, string, string]
+    | [string, string, string, string, string, string, string, string, string, string, string, string, string]
+    | [string, string, string, string, string, string, string, string, string, string, string, string, string, string]
+    | [
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string
+      ]
+    | [
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string
+      ]
+    | [
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string
+      ]
+    | [
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string
+      ]
+    | [
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string
+      ]
+    | [
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string,
+        string
+      ];
+  /**
+   * Строки матрицы при type=matrix_single.
+   *
+   * @maxItems 200
+   */
+  rows?: MatrixRow[];
+  /**
+   * Темы матрицы. Оператор выбирает темами, а не строками.
+   *
+   * @maxItems 50
+   */
+  themes?: Theme[];
+  /**
+   * Вопрос, выбор тем в котором определяет состав строк этого вопроса. Так вопрос 11 заказчика добавляется по темам вопроса 9.
+   */
+  dependsOnQuestion?: string;
+  /**
+   * Единица выбора оператора. «theme» — тема включается целиком со всеми строками; иначе интегральный показатель восприятия считался бы по разному числу строк и стал бы несравним между прогонами.
+   */
+  selectableBy?: "theme";
+  /**
+   * Пометка для разработчика. Персоне не показывается.
+   */
+  note?: string;
+};
+/**
+ * Ключи базовых критериев. Именно по ним посчитаны средние в корпусе 165 респондентов — ключ часть контракта с данными, не подпись. Присутствие каждого НЕобязательно; снятый критерий отключает сравнение с корпусом по нему, и об этом говорит конструктор. Присутствующий обязан быть шкалой 1–10, иначе он попал бы в те же средние с другой шкалой.
+ */
+export type BaseCriterionKey = "overall_impression" | "plot" | "acting" | "music" | "cinematography";
+/**
+ * Типы вопроса. Список закрытый: воркер умеет разбирать ответ только этих форм, и добавление типа — изменение схемы ответа персоны, а не правка интерфейса.
+ *
+ * 17.09.2026 прежние шесть сведены к пяти. «Эмоции», «удержание», «рекомендация» и «доля просмотра» были не типами, а ПРЕСЕТАМИ: эмоции — выбор нескольких из готового словаря, удержание — выбор одного из трёх, рекомендация и доля — шкалы. Каждый нёс свою ветку в конструкторе, промпте, правилах QA, агрегате, графиках и выгрузке; свёрнутые, они дают один редьюсер и один график на тип. Пресет живёт в данных анкеты (готовый `options`), а не в перечне типов.
+ */
+export type QuestionType = "scale" | "single_choice" | "multi_choice" | "matrix_single" | "open";
+
+/**
+ * Анкета исследования. Контракт между конструктором анкеты (фронт) и воркером (бэк). Валидируется при INSERT в surveys.questions. Базовые критерии необязательны: владелец вправе снять любое их число и спрашивать своё.
+ */
+export interface Survey {
+  /**
+   * UUID анкеты. Генерируется базой при INSERT.
+   */
+  id?: string;
+  /**
+   * Название анкеты. Обязательно.
+   */
+  name: string;
+  /**
+   * Список вопросов. Базовые критерии, если они есть, идут первыми, за ними пользовательские. Минимум один вопрос: анкета без вопросов означает прогон, в котором персону не о чем спрашивать, а стоит он столько же.
+   *
+   * @minItems 1
+   */
+  questions: [Question, ...Question[]];
+  /**
+   * Время создания. Устанавливается базой.
+   */
+  created_at?: string;
+}
+/**
+ * Вариант ответа закрытого вопроса. Ответ персоны адресует вариант ИДЕНТИФИКАТОРОМ: подпись правят, идентификатор — нет. На подписи держалось бы то самое расхождение «писатель и читатель разошлись по строке», которое в этом репозитории чинили четырежды.
+ */
+export interface Option {
+  /**
+   * Уникален внутри вопроса. Попадает в ответ персоны и в колонку выгрузки.
+   */
+  id: string;
+  /**
+   * Подпись варианта. Её видит персона и читатель отчёта.
+   */
+  label: string;
+  /**
+   * Служебный вариант вроде «Затрудняюсь ответить». В долях по содержательным вариантам не участвует, но остаётся в знаменателе: доли считаются «в % от опрошенных», как подписано у заказчика.
+   */
+  service?: boolean;
+}
+/**
+ * Строка матрицы. Ответ даётся ПО КАЖДОЙ строке, поэтому строка — единица покрытия анкеты, а не вопрос: сорок три подтемы вопроса 9 это сорок три поля, а не одно.
+ */
+export interface MatrixRow {
+  id: string;
+  label: string;
+  /**
+   * Тема, к которой относится строка. По ней оператор включает блок целиком и по ней же считается интегральный показатель.
+   */
+  themeId?: string;
+}
+/**
+ * Тема матрицы. Единица выбора оператора: галочка ставится на теме, и все её строки идут в анкету целиком.
+ */
+export interface Theme {
+  id: string;
+  label: string;
 }

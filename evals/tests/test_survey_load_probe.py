@@ -102,6 +102,27 @@ def test_покрытие_принимает_идентификатор_стро
     assert done == 3
 
 
+def test_покрытие_читает_обе_формы_ответа():
+    """
+    Промпт объявляет список пар, модель возвращает и объект. Счётчик, знающий
+    одну форму, показал «закрыто 0 из 67» на ответе, где закрыты все 67, — и
+    это выглядело результатом замера, а не дефектом чтения.
+    """
+    as_list = {"survey_answers": [{"question": "q01-plot", "answer": "8"}]}
+    as_map = {"survey_answers": {"q01-plot": 8}}
+    assert probe.coverage(as_list, FIELDS)[0] == 1
+    assert probe.coverage(as_map, FIELDS)[0] == 1
+    assert probe.answer_for(as_list, "q01-plot") == "8"
+    assert probe.answer_for(as_map, "q01-plot") == 8
+
+
+def test_полный_ответ_в_форме_объекта_закрывает_все_поля():
+    answer = {"survey_answers": {f.split("/")[-1]: "x" for f in FIELDS}}
+    done, missing = probe.coverage(answer, FIELDS)
+    assert missing == []
+    assert done == 67
+
+
 def test_полный_ответ_закрывает_все_поля():
     answer = {"survey_answers": [
         {"question": f.split("/")[-1], "answer": "x"} for f in FIELDS
