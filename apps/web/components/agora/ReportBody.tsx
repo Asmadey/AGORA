@@ -517,16 +517,28 @@ export function ReportBody({
               Отчёт построен на {view.sampleSize} ответах
               {view.qa.requestioned !== null && view.qa.requestioned > 0 &&
                 ` · ${view.qa.requestioned} переспрошено`}
-              {view.qa.flagged > 0 && ` · ${view.qa.flagged} исключено из агрегата`}
+              {view.excludedByQa > 0 && ` · ${view.excludedByQa} исключено из агрегата`}
             </p>
             <dl className="mt-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
               <div>
                 <dt className="text-xs text-slate">Проверено вердиктов</dt>
                 <dd className="mt-0.5 text-lg tabular-nums">{view.qa.checked}</dd>
               </div>
+              {/*
+                `qa.flagged` — ВСЕ вердикты `regenerate`, любого источника.
+                Из агрегата с 17.09.2026 выбывают только нарушившие
+                детерминированное правило: вердикт судьи помечает карточку и не
+                блокирует (см. `GATING_QA_SOURCES`). Подставлять сюда `flagged`
+                значило бы печатать «33 исключено» там, где не исключён почти
+                никто, — и числа в одной строке перестали бы сходиться.
+              */}
+              <div>
+                <dt className="text-xs text-slate">Помечено проверкой</dt>
+                <dd className="mt-0.5 text-lg tabular-nums">{view.qa.flagged}</dd>
+              </div>
               <div>
                 <dt className="text-xs text-slate">Исключено из агрегата</dt>
-                <dd className="mt-0.5 text-lg tabular-nums">{view.qa.flagged}</dd>
+                <dd className="mt-0.5 text-lg tabular-nums">{view.excludedByQa}</dd>
               </div>
               {view.qa.requestioned !== null && (
                 <div>

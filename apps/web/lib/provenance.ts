@@ -1,4 +1,5 @@
 import type { AnswerView } from "./report-view";
+import { GATING_QA_SOURCES } from "./report-view.ts";
 import type { Criterion } from "./agora-types";
 
 /**
@@ -167,9 +168,18 @@ function displayOf(metric: MetricKey, value: number): string {
 }
 
 export function contributions(metric: MetricKey, answers: AnswerView[]): Provenance {
-  // Забракованные не участвуют — их нет и в агрегате. Считаем их отдельно,
-  // чтобы экран мог сказать, куда они делись, вместо молчаливой пропажи.
-  const surviving = answers.filter((a) => a.qaFlags.length === 0);
+  // Выбывшие не участвуют — их нет и в агрегате. Считаем их отдельно, чтобы
+  // экран мог сказать, куда они делись, вместо молчаливой пропажи.
+  //
+  // Условие ровно то же, что в `analytics/aggregate.py`: выбывает ответ,
+  // нарушивший ДЕТЕРМИНИРОВАННОЕ правило, а не помеченный судьёй. Прежде здесь
+  // стояло `qaFlags.length === 0` — любой флаг исключал, включая субъективный, —
+  // и после разделения источников экран показывал бы вклад по меньшему числу
+  // ответов, чем сама метрика. Расхождение такого рода замечает только тот, кто
+  // сложит числа на экране.
+  const surviving = answers.filter(
+    (a) => !a.qaFlags.some((f) => GATING_QA_SOURCES.has(f.source)),
+  );
   const excluded = answers.length - surviving.length;
 
   const rows: ContributionRow[] = [];
