@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://agora.dev/schemas/survey.schema.json",
   "title": "Survey",
-  "description": "Анкета исследования. Контракт между конструктором анкеты (фронт) и воркером (бэк). Базовые критерии необязательны: владелец вправе снять любое их число и спрашивать своё. Валидируется при INSERT в surveys.questions.",
+  "description": "Анкета исследования. Контракт между конструктором анкеты (фронт) и воркером (бэк). Валидируется при INSERT в surveys.questions. Базовые критерии необязательны: владелец вправе снять любое их число и спрашивать своё.",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -51,13 +51,12 @@
       "type": "string",
       "enum": [
         "scale",
-        "emotions",
-        "retention",
-        "watched_share",
-        "recommendation",
+        "single_choice",
+        "multi_choice",
+        "matrix_single",
         "open"
       ],
-      "description": "Типы вопросов P1-конструктора. Список закрытый: воркер умеет разбирать ответ только этих форм. Добавление типа — изменение схемы ответа персоны, а не правка интерфейса. watched_share — доля просмотренного в процентах, отдельно от retention: тот категориален, и процент из категории не выводится."
+      "description": "Типы вопроса. Список закрытый: воркер умеет разбирать ответ только этих форм, и добавление типа — изменение схемы ответа персоны, а не правка интерфейса.\n\n17.09.2026 прежние шесть сведены к пяти. «Эмоции», «удержание», «рекомендация» и «доля просмотра» были не типами, а ПРЕСЕТАМИ: эмоции — выбор нескольких из готового словаря, удержание — выбор одного из трёх, рекомендация и доля — шкалы. Каждый нёс свою ветку в конструкторе, промпте, правилах QA, агрегате, графиках и выгрузке; свёрнутые, они дают один редьюсер и один график на тип. Пресет живёт в данных анкеты (готовый `options`), а не в перечне типов."
     },
     "Question": {
       "type": "object",
@@ -65,9 +64,7 @@
       "required": [
         "id",
         "label",
-        "type",
-        "scaleMin",
-        "scaleMax"
+        "type"
       ],
       "properties": {
         "id": {
@@ -99,7 +96,7 @@
           "type": "integer",
           "minimum": -100,
           "maximum": 100,
-          "description": "Нижняя граница шкалы. Осмысленна только при type=scale, но поле обязательное — упрощает валидацию."
+          "description": "Нижняя граница шкалы. Осмысленна и обязательна только при type=scale; у выбора из списка шкалы нет, и требовать её значило бы заставлять конструктор писать числа, которых у вопроса нет."
         },
         "scaleMax": {
           "type": "integer",
@@ -111,10 +108,78 @@
           "type": "string",
           "maxLength": 1000,
           "description": "Подсказка для персоны — что именно оценивать. Необязательна."
+        },
+        "block": {
+          "type": "string",
+          "maxLength": 64,
+          "description": "Блок верхнего уровня. Даёт двухуровневую шапку выгрузки — «блок / вопрос», — в форме которой заказчик получает свои полевые файлы, и смысловые разделы отчёта."
+        },
+        "number": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 999,
+          "description": "Номер вопроса в анкете заказчика. Нужен, чтобы отчёт и выгрузка называли вопрос так же, как его называет заказчик."
+        },
+        "options": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Option"
+          },
+          "maxItems": 100,
+          "description": "Варианты ответа. Закрытый вопрос БЕЗ вариантов — это открытый вопрос: персона ответит своими словами, и доли не сойдутся с закрытым списком."
+        },
+        "maxChoices": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 20,
+          "description": "Потолок выбора при type=multi_choice. Без него модель выберет столько, сколько захочет, и доли перестанут быть сравнимыми с полевыми волнами."
+        },
+        "exclusiveOptionIds": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 64
+          },
+          "maxItems": 20,
+          "description": "Варианты, выбираемые только в одиночку: «не испытал никаких эмоций», «затрудняюсь ответить»."
+        },
+        "rows": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/MatrixRow"
+          },
+          "maxItems": 200,
+          "description": "Строки матрицы при type=matrix_single."
+        },
+        "themes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Theme"
+          },
+          "maxItems": 50,
+          "description": "Темы матрицы. Оператор выбирает темами, а не строками."
+        },
+        "dependsOnQuestion": {
+          "type": "string",
+          "maxLength": 64,
+          "description": "Вопрос, выбор тем в котором определяет состав строк этого вопроса. Так вопрос 11 заказчика добавляется по темам вопроса 9."
+        },
+        "selectableBy": {
+          "type": "string",
+          "enum": [
+            "theme"
+          ],
+          "description": "Единица выбора оператора. «theme» — тема включается целиком со всеми строками; иначе интегральный показатель восприятия считался бы по разному числу строк и стал бы несравним между прогонами."
+        },
+        "note": {
+          "type": "string",
+          "maxLength": 1000,
+          "description": "Пометка для разработчика. Персоне не показывается."
         }
       },
       "allOf": [
         {
+          "description": "При type=scale границы обязательны: без них неизвестно, по какой шкале пришёл балл, и среднее посчитается по двум разным шкалам сразу.",
           "if": {
             "properties": {
               "type": {
@@ -126,163 +191,138 @@
             ]
           },
           "then": {
+            "required": [
+              "scaleMin",
+              "scaleMax"
+            ]
+          }
+        },
+        {
+          "description": "Закрытый вопрос обязан нести свои варианты.",
+          "if": {
             "properties": {
-              "scaleMin": {
-                "minimum": -100,
-                "maximum": 100
-              },
-              "scaleMax": {
-                "minimum": -100,
-                "maximum": 100
+              "type": {
+                "enum": [
+                  "single_choice",
+                  "multi_choice",
+                  "matrix_single"
+                ]
               }
             },
-            "description": "При type=scale scaleMax должен быть больше scaleMin (проверяется отдельным constraints блоком ниже)."
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "required": [
+              "options"
+            ],
+            "properties": {
+              "options": {
+                "minItems": 2
+              }
+            }
+          }
+        },
+        {
+          "description": "Матрица обязана нести строки: отвечают по строкам, а не по вопросу.",
+          "if": {
+            "properties": {
+              "type": {
+                "const": "matrix_single"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "required": [
+              "rows"
+            ],
+            "properties": {
+              "rows": {
+                "minItems": 1
+              }
+            }
           }
         }
       ]
-    }
-  },
-  "allOf": [
-    {
-      "description": "Базовая анкета из 5 критериев (P0): ровно пять вопросов с baseKey, каждый с уникальным ключом, все типа scale, шкала 1–10.",
+    },
+    "Option": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "label"
+      ],
+      "description": "Вариант ответа закрытого вопроса. Ответ персоны адресует вариант ИДЕНТИФИКАТОРОМ: подпись правят, идентификатор — нет. На подписи держалось бы то самое расхождение «писатель и читатель разошлись по строке», которое в этом репозитории чинили четырежды.",
       "properties": {
-        "questions": {
-          "contains": {
-            "properties": {
-              "baseKey": {
-                "const": "overall_impression"
-              },
-              "type": {
-                "const": "scale"
-              },
-              "scaleMin": {
-                "const": 1
-              },
-              "scaleMax": {
-                "const": 10
-              }
-            },
-            "required": [
-              "baseKey",
-              "type",
-              "scaleMin",
-              "scaleMax"
-            ]
-          }
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "description": "Уникален внутри вопроса. Попадает в ответ персоны и в колонку выгрузки."
+        },
+        "label": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500,
+          "description": "Подпись варианта. Её видит персона и читатель отчёта."
+        },
+        "service": {
+          "type": "boolean",
+          "description": "Служебный вариант вроде «Затрудняюсь ответить». В долях по содержательным вариантам не участвует, но остаётся в знаменателе: доли считаются «в % от опрошенных», как подписано у заказчика."
         }
       }
     },
-    {
+    "MatrixRow": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "label"
+      ],
+      "description": "Строка матрицы. Ответ даётся ПО КАЖДОЙ строке, поэтому строка — единица покрытия анкеты, а не вопрос: сорок три подтемы вопроса 9 это сорок три поля, а не одно.",
       "properties": {
-        "questions": {
-          "contains": {
-            "properties": {
-              "baseKey": {
-                "const": "plot"
-              },
-              "type": {
-                "const": "scale"
-              },
-              "scaleMin": {
-                "const": 1
-              },
-              "scaleMax": {
-                "const": 10
-              }
-            },
-            "required": [
-              "baseKey",
-              "type",
-              "scaleMin",
-              "scaleMax"
-            ]
-          }
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "label": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500
+        },
+        "themeId": {
+          "type": "string",
+          "maxLength": 64,
+          "description": "Тема, к которой относится строка. По ней оператор включает блок целиком и по ней же считается интегральный показатель."
         }
       }
     },
-    {
+    "Theme": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "label"
+      ],
+      "description": "Тема матрицы. Единица выбора оператора: галочка ставится на теме, и все её строки идут в анкету целиком.",
       "properties": {
-        "questions": {
-          "contains": {
-            "properties": {
-              "baseKey": {
-                "const": "acting"
-              },
-              "type": {
-                "const": "scale"
-              },
-              "scaleMin": {
-                "const": 1
-              },
-              "scaleMax": {
-                "const": 10
-              }
-            },
-            "required": [
-              "baseKey",
-              "type",
-              "scaleMin",
-              "scaleMax"
-            ]
-          }
-        }
-      }
-    },
-    {
-      "properties": {
-        "questions": {
-          "contains": {
-            "properties": {
-              "baseKey": {
-                "const": "music"
-              },
-              "type": {
-                "const": "scale"
-              },
-              "scaleMin": {
-                "const": 1
-              },
-              "scaleMax": {
-                "const": 10
-              }
-            },
-            "required": [
-              "baseKey",
-              "type",
-              "scaleMin",
-              "scaleMax"
-            ]
-          }
-        }
-      }
-    },
-    {
-      "properties": {
-        "questions": {
-          "contains": {
-            "properties": {
-              "baseKey": {
-                "const": "cinematography"
-              },
-              "type": {
-                "const": "scale"
-              },
-              "scaleMin": {
-                "const": 1
-              },
-              "scaleMax": {
-                "const": 10
-              }
-            },
-            "required": [
-              "baseKey",
-              "type",
-              "scaleMin",
-              "scaleMax"
-            ]
-          }
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "label": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500
         }
       }
     }
-  ]
+  },
+  "$comment": "17.09.2026: пять блоков allOf, требовавших присутствия базовых критериев на шкале 1-10, сняты. Они отвергали анкету заказчика (шкала 0-10) целиком и расходились с рукописным валидатором apps/web/lib/server/survey-validator.ts, который базовые критерии уже считал необязательными. Расхождение было записано в его тесте и жило молча: валидатор мягче схемы, поэтому ни один прогон на нём не падал."
 }

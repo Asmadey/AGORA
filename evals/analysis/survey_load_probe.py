@@ -227,6 +227,15 @@ def echo_test(pairs: list[tuple[set[str], set[str]]], rounds: int = 10000,
     if len(pairs) < 5:
         return {"n": len(pairs), "p": None, "note": "мало наблюдений для теста"}
 
+    # Ни одна персона не назвала ни одной ценности — мерить нечего. Перестановки
+    # дадут p = 1.0, и это число прочтётся как «эха нет», хотя данных нет вовсе.
+    if not any(said for _, said in pairs):
+        return {
+            "n": len(pairs),
+            "p": None,
+            "note": "ответов на вопрос 8 нет — эхо НЕ ИЗМЕРЕНО, а не отсутствует",
+        }
+
     def stat(order: list[int]) -> float:
         return statistics.mean(
             len(pairs[i][0] & pairs[j][1]) for i, j in zip(range(len(pairs)), order)
@@ -289,6 +298,10 @@ def live(args: argparse.Namespace, survey: dict[str, Any]) -> None:
 
     parsed = 0
     truncated = 0
+    # Один ответ печатается целиком. Без него «закрыто 0 полей из 67» —
+    # загадка, а не диагноз: неизвестно, ответила ли модель не туда, не тем
+    # ключом или не ответила вовсе.
+    sample_shown = [False]
     missing_total: Counter[str] = Counter()
     closed: list[int] = []
     sizes: list[int] = []
@@ -303,6 +316,12 @@ def live(args: argparse.Namespace, survey: dict[str, Any]) -> None:
         if answer.get("parse_failed"):
             continue
         sizes.append(len(json.dumps(answer, ensure_ascii=False)))
+        if sample_shown[0] is False:
+            sample_shown[0] = True
+            print("  ─ образец разобранного ответа ─")
+            print("  " + json.dumps(answer, ensure_ascii=False, indent=2)[:1400]
+                  .replace("\n", "\n  "))
+            print("  ─ конец образца ─")
         parsed += 1
         done, missing = coverage(answer, fields)
         closed.append(done)
