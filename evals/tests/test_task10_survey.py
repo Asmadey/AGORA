@@ -165,10 +165,42 @@ else:
     check("базовые критерии не прибиты к шкале 1–10", False, "схема не загружена")
 
 # 6. TS types generated from schema
+#
+# `Question` экспортируется как `type`, а не `interface`: у вопроса появились
+# условные требования (шкала только у шкалы, варианты только у закрытого), и
+# json2ts выражает их пересечением, а не интерфейсом. Проверка смотрит на
+# наличие экспорта, а не на ключевое слово — иначе она держалась бы за форму
+# генератора, а не за утверждение «типы собраны из схемы».
 check(
     "TS-типы сгенерированы (survey.ts)",
-    TYPES_PATH.exists() and "export interface Survey" in types_text and "export interface Question" in types_text,
+    TYPES_PATH.exists()
+    and "export interface Survey" in types_text
+    and ("export interface Question" in types_text or "export type Question" in types_text),
 )
+
+# 6-бис. Сгенерированные типы не отстали от схемы
+#
+# Повод конкретный: `packages/shared/types/survey.ts` полтора месяца не знал
+# типа `watched_share`, потому что анкеты не было в `npm run codegen`, — а его
+# докстрока при этом утверждала «только этих пяти форм». Файл, который никто не
+# генерирует, это рукописный файл с надписью «не править руками».
+if schema:
+    generated = set(re.findall(r'"(\w+)"', (
+        re.search(r"export type QuestionType = ([^;]+);", types_text) or re.Match
+    ).group(1))) if "export type QuestionType" in types_text else set()
+    check(
+        "перечень типов в сгенерированном survey.ts совпадает со схемой",
+        generated == QUESTION_TYPES,
+        f"в типах={sorted(generated)}, в схеме={sorted(QUESTION_TYPES)}",
+    )
+    check(
+        "анкета входит в npm run codegen",
+        "codegen:survey" in (REPO / "package.json").read_text("utf-8"),
+        "без этого сгенерированный файл отстанет от схемы молча",
+    )
+else:
+    check("перечень типов в сгенерированном survey.ts совпадает со схемой", False, "схема не загружена")
+    check("анкета входит в npm run codegen", False, "схема не загружена")
 
 # 7. Validator module exists and exports validateSurvey
 check(

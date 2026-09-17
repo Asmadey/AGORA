@@ -19,6 +19,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from typing import Any
 
 __all__ = [
@@ -30,6 +31,8 @@ __all__ = [
     "render_questions",
     "MATRIX_TYPES",
     "CLOSED_TYPES",
+    "FieldAnswer",
+    "parse_field_answer",
 ]
 
 
@@ -190,3 +193,114 @@ def render_questions(survey: Any) -> str:
         blocks.append("\n".join(lines))
 
     return "\n\n".join(blocks) if blocks else "(анкета пуста)"
+
+
+# ─── Разбор ответа ───────────────────────────────────────────────────────────
+
+
+@dataclass(frozen=True)
+class FieldAnswer:
+    """
+    Разобранный ответ на одно поле анкеты.
+
+    Поля разделены намеренно. `missing` — персона не ответила; `error` — она
+    ответила, но не тем. Это разные вещи и разные решения: пропуск лечится
+    переспросом, а чужой идентификатор — правкой промпта или списка.
+
+    Молчаливое проглатывание опаснее обоих. Неразобранный вариант не попадёт ни
+    в одну долю, доли сойдутся к ста процентам по оставшимся, и на графике это
+    будет выглядеть мнением аудитории.
+    """
+
+    value: int | None = None
+    option_ids: list[str] = field(default_factory=list)
+    text: str = ""
+    missing: bool = False
+    error: str = ""
+
+
+def _option_index(question: dict[str, Any]) -> tuple[dict[str, str], set[str]]:
+    """Сопоставление «идентификатор или подпись → идентификатор» и набор служебных."""
+    by_key: dict[str, str] = {}
+    service: set[str] = set()
+    for option in question_options(question):
+        oid = str(option.get("id") or "").strip()
+        if not oid:
+            continue
+        by_key[oid.casefold()] = oid
+        label = str(option.get("label") or "").strip()
+        if label:
+            by_key[label.casefold()] = oid
+        if option.get("service"):
+            service.add(oid)
+    return by_key, service
+
+
+def _tokens(raw: Any) -> list[str]:
+    if isinstance(raw, list):
+        return [str(x).strip() for x in raw if str(x).strip()]
+    return [part.strip() for part in str(raw).split(",") if part.strip()]
+
+
+def parse_field_answer(question: dict[str, Any], raw: Any) -> FieldAnswer:
+    """
+    Приводит ответ персоны к типу вопроса.
+
+    ─── Почему разбор здесь, а не у читателя ────────────────────────────────
+    В этом репозитории ответ персоны уже разбирали по месту в четырёх местах, и
+    каждое расходилось с остальными по-своему: `report-view.ts` до сих пор
+    ищет ответ четырьмя запасными путями, `qa/checks.py` чинили дважды,
+    `content/pack.py` один раз. Разбор в одном месте — единственный способ, при
+    котором расхождение невозможно, а не отложено.
+
+    ─── Почему подпись принимается наравне с идентификатором ────────────────
+    Модель иногда называет вариант словами. Отвергнуть такой ответ значило бы
+    потерять оплаченный ответ из-за формы, а подпись однозначна: сопоставление
+    делается здесь, один раз.
+    """
+    if raw is None or (isinstance(raw, str) and not raw.strip()):
+        return FieldAnswer(missing=True)
+
+    qtype = str(question.get("type") or "open")
+
+    if qtype == "open":
+        return FieldAnswer(text=str(raw).strip())
+
+    if qtype == "scale":
+        try:
+            value = int(str(raw).strip())
+        except (TypeError, ValueError):
+            return FieldAnswer(error=f"балл не разобран: {raw!r}")
+        low = int(question.get("scaleMin", 0))
+        high = int(question.get("scaleMax", 10))
+        if not low <= value <= high:
+            return FieldAnswer(error=f"балл {value} вне шкалы {low}–{high}")
+        return FieldAnswer(value=value)
+
+    by_key, service = _option_index(question)
+    picked: list[str] = []
+    unknown: list[str] = []
+    for token in _tokens(raw):
+        oid = by_key.get(token.casefold())
+        if oid is None:
+            unknown.append(token)
+        elif oid not in picked:
+            picked.append(oid)
+
+    problems: list[str] = []
+    if unknown:
+        problems.append("варианты не из списка: " + ", ".join(unknown))
+
+    cap = question.get("maxChoices") if qtype == "multi_choice" else 1
+    if isinstance(cap, int) and len(picked) > cap:
+        problems.append(
+            f"выбрано {len(picked)} вариантов, потолок — не более {cap}"
+        )
+
+    chosen_service = [oid for oid in picked if oid in service]
+    if chosen_service and len(picked) > 1:
+        problems.append(
+            f"вариант {chosen_service[0]} выбирается только сам по себе, без других"
+        )
+
+    return FieldAnswer(option_ids=picked, error="; ".join(problems))
