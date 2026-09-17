@@ -253,8 +253,27 @@ def live(args: argparse.Namespace, survey: dict[str, Any]) -> None:
         return _skip(refusal)
 
     try:
+        from agent_core.config import ModelConfig
         from agent_core.respondent.run import QwenRespondentClient
-        client = QwenRespondentClient()
+
+        # Настройки БОЕВОГО прогона, а не умолчания библиотеки.
+        #
+        # ─── Почему это не мелочь ────────────────────────────────────────────
+        # Первая редакция собирала клиент без настроек. Умолчание держит
+        # `thinking_roles = {"respondent"}` (`config.py:86`), то есть оставляет
+        # размышление ВКЛЮЧЁННЫМ, а в боевых настройках стоит
+        # `reasoning.thinking = false`. По замеру в `schemas/responses.py`
+        # размышление стоит 4738–4844 токена против 581–622 без него — почти
+        # 5000 из 8000 уходили на рассуждение до первого токена ответа.
+        #
+        # Замер показывал обрывы по потолку и звал поднять потолок. Это был
+        # дефект прибора, а не продукта: прибор мерил другую конфигурацию.
+        # Ровно та ошибка, от которой предостерегает §9 — «одно объяснение на
+        # два падения — это гипотеза, а не вывод».
+        snapshot = json.loads(args.settings) if args.settings else {
+            "reasoning": {"thinking": False},
+        }
+        client = QwenRespondentClient(config=ModelConfig.for_task(snapshot))
     except Exception as exc:  # noqa: BLE001
         return _skip(f"клиент модели не собрался: {type(exc).__name__}: {exc}")
 
@@ -269,15 +288,21 @@ def live(args: argparse.Namespace, survey: dict[str, Any]) -> None:
     }
 
     parsed = 0
+    truncated = 0
     missing_total: Counter[str] = Counter()
     closed: list[int] = []
+    sizes: list[int] = []
     echo_pairs: list[tuple[set[str], set[str]]] = []
 
     print(f"─── Живой замер: {len(personas)} персон, по одному вызову ───")
     for persona in personas:
         answer = ask_one(persona, pack, questions, client)
-        if not answer or answer.get("parse_failed"):
+        if answer is None:
+            truncated += 1
             continue
+        if answer.get("parse_failed"):
+            continue
+        sizes.append(len(json.dumps(answer, ensure_ascii=False)))
         parsed += 1
         done, missing = coverage(answer, fields)
         closed.append(done)
@@ -293,6 +318,12 @@ def live(args: argparse.Namespace, survey: dict[str, Any]) -> None:
 
     print()
     print(f"разобрано ответов:  {parsed} из {len(personas)}")
+    print(f"оборвано потолком:  {truncated}")
+    if sizes:
+        print(
+            f"размер ответа:      {min(sizes)}–{max(sizes)} знаков, "
+            f"медиана {int(statistics.median(sizes))}"
+        )
     if closed:
         rate = statistics.mean(closed) / len(fields)
         print(f"закрыто полей:      {statistics.mean(closed):.1f} из {len(fields)} ({rate:.1%})")
@@ -312,6 +343,14 @@ def main() -> None:
     parser.add_argument("--pack-task", default="", help="task_id прогона, чей пакет материала взять")
     parser.add_argument("-n", type=int, default=20, help="сколько персон опросить")
     parser.add_argument("--seed", type=int, default=20260917)
+    parser.add_argument(
+        "--settings", default="",
+        help=(
+            "снимок настроек прогона в JSON. По умолчанию берутся боевые: "
+            'reasoning.thinking = false. Умолчания библиотеки НЕ годятся — они '
+            "оставляют размышление включённым, и замер меряет не продукт"
+        ),
+    )
     args = parser.parse_args()
 
     survey = load_survey()
