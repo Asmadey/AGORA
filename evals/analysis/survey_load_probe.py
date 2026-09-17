@@ -213,15 +213,19 @@ def answered_keys(answer: dict[str, Any]) -> set[str]:
     Это был третий дефект в этом же приборе и снова тот же класс: писатель и
     читатель разошлись в форме. Число «0 из 67» выглядело результатом замера и
     было артефактом чтения.
+
+    ─── И четвёртый, той же породы ──────────────────────────────────────────
+    Замер 17.09.2026 показал «закрыто 31.9 из 67» — и снова это было чтение, а
+    не модель: тринадцать персон из двадцати ответили на матрицу ВЛОЖЕННЫМ
+    объектом под идентификатором вопроса, а прибор искал сорок три поля рядом.
+
+    Отсюда правило, которое стоило четырёх ошибок подряд: прибор не разбирает
+    ответ сам. Он зовёт `_answers_to_map` — тот же код, которым ответ читает
+    продукт. Свой разбор в приборе означает, что прибор меряет себя.
     """
-    raw = answer.get("survey_answers")
-    if isinstance(raw, dict):
-        return {str(k).strip() for k in raw}
-    out: set[str] = set()
-    for pair in raw or []:
-        if isinstance(pair, dict):
-            out.add(str(pair.get("question") or "").strip())
-    return out
+    from agent_core.respondent.run import _answers_to_map
+
+    return {str(k).strip() for k in _answers_to_map(answer.get("survey_answers"))}
 
 
 def coverage(answer: dict[str, Any], fields: list[str]) -> tuple[int, list[str]]:
@@ -242,14 +246,10 @@ def coverage(answer: dict[str, Any], fields: list[str]) -> tuple[int, list[str]]
 
 
 def answer_for(answer: dict[str, Any], field: str) -> Any:
-    """Ответ на одно поле, в какой бы из двух форм он ни пришёл."""
-    raw = answer.get("survey_answers")
-    if isinstance(raw, dict):
-        return raw.get(field)
-    for pair in raw or []:
-        if isinstance(pair, dict) and str(pair.get("question") or "").strip() == field:
-            return pair.get("answer")
-    return None
+    """Ответ на одно поле — через тот же разбор, что у продукта."""
+    from agent_core.respondent.run import _answers_to_map
+
+    return _answers_to_map(answer.get("survey_answers")).get(field)
 
 
 def echo_test(pairs: list[tuple[set[str], set[str]]], rounds: int = 10000,
