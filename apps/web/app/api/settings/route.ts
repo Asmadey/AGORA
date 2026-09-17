@@ -105,6 +105,10 @@ function rowToSettings(row: SettingsRow): TenantSettings {
       typeof stored.requestionCap === "number" && Number.isInteger(stored.requestionCap)
         ? stored.requestionCap
         : DEFAULT_SETTINGS.requestionCap,
+    personaAttempts:
+      typeof stored.personaAttempts === "number" && Number.isInteger(stored.personaAttempts)
+        ? stored.personaAttempts
+        : DEFAULT_SETTINGS.personaAttempts,
     endpoint: typeof stored.endpoint === "string" ? stored.endpoint : "",
     // Только маска. Сам ключ не покидает сервер ни в одном ответе: даже
     // владельцу — потому что ответ уезжает в браузер, в его историю и в любой
@@ -220,6 +224,7 @@ export async function PUT(request: Request) {
             reasoning: value.reasoning,
             judgeReasoning: value.judgeReasoning,
             requestionCap: value.requestionCap,
+            personaAttempts: value.personaAttempts,
             endpoint: value.endpoint,
           }),
           encryptedKey,

@@ -195,6 +195,11 @@ export interface TenantSettings {
    * 0 — не переспрашивать.
    */
   requestionCap: number;
+  /**
+   * Сколько раз пробовать собрать связную персону, считая первую попытку.
+   * 1 — не пересоздавать. Ноль незаконен: «не проверять вовсе» — другое решение.
+   */
+  personaAttempts: number;
   /** Адрес провайдера. Пустая строка — брать из окружения сервера. */
   endpoint: string;
   /**
@@ -221,6 +226,9 @@ export const DEFAULT_SETTINGS: TenantSettings = {
   reasoning: DEFAULT_REASONING,
   judgeReasoning: DEFAULT_REASONING,
   requestionCap: 15,
+  // Три — прежняя константа MAX_ATTEMPTS воркера. Другое умолчание поменяло бы
+  // поведение продукта заодно с появлением ручки.
+  personaAttempts: 3,
   endpoint: "",
   apiKeyMask: "не задан",
 };
@@ -244,6 +252,21 @@ export const COST_CAP_BOUNDS = { min: 100, max: 5000, step: 100 } as const;
  * `RequestionConfig.MAX` воркера: два перечня в двух языках расходятся молча.
  */
 export const REQUESTION_CAP_BOUNDS = { min: 0, max: 100, step: 1 } as const;
+
+/**
+ * ─── Попытки пересоздания персоны ──────────────────────────────────────────
+ *
+ * Замер на боевом 17.09.2026, три набора, 70 персон: 43 прошли проверку
+ * связности с первой попытки, 14 со второй, 13 с третьей, четверо не прошли.
+ * Пересоздание спасло 23 из 27, и стоило это 220 вызовов модели вместо 140 —
+ * 57 % накладных.
+ *
+ * Минимум единица, а не ноль: счёт идёт попыткам, и одна означает «проверить и
+ * оставить как есть». Ноль означал бы «не проверять вовсе» — другое решение и
+ * другая ручка. Верхняя граница совпадает с `PersonaAttemptsConfig.MAX`
+ * воркера: два перечня в двух языках расходятся молча.
+ */
+export const PERSONA_ATTEMPTS_BOUNDS = { min: 1, max: 5, step: 1 } as const;
 
 /**
  * Похоже на хост: точка есть, пробелов и `@` нет.
@@ -437,6 +460,23 @@ export function parseSettings(input: unknown): { ok: true; value: TenantSettings
     }
   }
 
+  let personaAttempts = DEFAULT_SETTINGS.personaAttempts;
+  if (raw.personaAttempts !== undefined) {
+    const value = raw.personaAttempts;
+    if (
+      typeof value !== "number" ||
+      !Number.isInteger(value) ||
+      value < PERSONA_ATTEMPTS_BOUNDS.min ||
+      value > PERSONA_ATTEMPTS_BOUNDS.max
+    ) {
+      errors.push(
+        `personaAttempts: целое в диапазоне ${PERSONA_ATTEMPTS_BOUNDS.min}–${PERSONA_ATTEMPTS_BOUNDS.max}`,
+      );
+    } else {
+      personaAttempts = value;
+    }
+  }
+
   let endpoint = "";
   if (raw.endpoint !== undefined) {
     if (typeof raw.endpoint !== "string" || raw.endpoint.length > 500) {
@@ -462,6 +502,7 @@ export function parseSettings(input: unknown): { ok: true; value: TenantSettings
       reasoning,
       judgeReasoning,
       requestionCap,
+      personaAttempts,
       endpoint,
       // Маска приходит с сервера и на вход не принимается: сам ключ едет
       // отдельным полем `apiKey`, а обратно не возвращается никогда.
@@ -481,6 +522,7 @@ export function settingsEqual(a: TenantSettings, b: TenantSettings): boolean {
     a.whisperModel === b.whisperModel &&
     a.defaultReplication === b.defaultReplication &&
     a.requestionCap === b.requestionCap &&
+    a.personaAttempts === b.personaAttempts &&
     a.endpoint === b.endpoint &&
     a.models.text === b.models.text &&
     a.models.vision === b.models.vision &&

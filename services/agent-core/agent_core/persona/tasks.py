@@ -116,9 +116,13 @@ def generate_audience(self: Any, payload: dict[str, Any]) -> dict[str, Any]:
     # считается, значение можно сменить, и тогда часть аудитории получилась бы
     # под одним разбросом формулировок, а часть под другим — внутри набора,
     # который потом сравнивают как целое.
-    from ..config import TemperatureConfig
+    from ..config import PersonaAttemptsConfig, TemperatureConfig
 
     temperatures = TemperatureConfig.for_task(payload.get("settings_snapshot"))
+    # Число попыток — из того же снимка, что и температуры: пока задача стоит в
+    # очереди, настройку можно сменить, и тогда часть персон пересоздана по одному
+    # правилу, часть по другому — внутри одного набора.
+    attempts = PersonaAttemptsConfig.for_task(payload.get("settings_snapshot")).attempts
 
     # ── Обогащение с прогрессом ──────────────────────────────────────────────
     #
@@ -238,6 +242,7 @@ def generate_audience(self: Any, payload: dict[str, Any]) -> dict[str, Any]:
                     ),
                     regenerate=regenerate,
                     verbatim_pool=_judge_pool(gen.dist.verbatims),
+                    max_attempts=attempts,
                 )
                 personas = validation.personas
                 names = validated_names

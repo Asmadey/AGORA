@@ -12,6 +12,7 @@ import { cn } from "@/lib/utils";
 import {
   DEFAULT_SETTINGS,
   COST_CAP_BOUNDS,
+  PERSONA_ATTEMPTS_BOUNDS,
   REQUESTION_CAP_BOUNDS,
   REPLICATION_VALUES,
   TEMPERATURE_BOUNDS,
@@ -266,6 +267,45 @@ export default function SettingsPage() {
             />
             <span className="w-28 shrink-0 text-right font-mono text-sm tabular-nums">
               {draft.requestionCap === 0 ? "выключен" : `${draft.requestionCap} отв.`}
+            </span>
+          </div>
+        </section>
+
+        {/*
+          Рядом с переспросом ответов — и это соседство не косметическое.
+          Механизма два, они делают одно и то же на разных уровнях: один
+          переспрашивает забракованный ОТВЕТ, другой пересоздаёт забракованную
+          ПЕРСОНУ. У первого настройка была с самого начала, у второго число
+          попыток было прибито константой MAX_ATTEMPTS = 3 в воркере, и увидеть
+          его можно было только в коде.
+        */}
+        <section className="rounded-lg border border-hairline bg-card p-6">
+          <h2 className="text-sm font-semibold">Пересоздание персоны</h2>
+          <p className="mt-1 text-xs leading-relaxed text-slate">
+            Персона, не прошедшая проверку связности, создаётся заново с другим
+            seed. Здесь — сколько попыток на персону, считая первую. Каждая
+            попытка целиком оплачивается: новая генерация, новое обогащение,
+            новая проверка. Замер на боевом: из 70 персон 43 прошли с первой
+            попытки, 14 со второй, 13 с третьей, четверо не прошли и остались в
+            наборе с пометкой. Пересоздание спасло 23 из 27 и стоило 57 %
+            сверх минимума. Единица означает «не пересоздавать»: проверка
+            выполняется, замены не происходит.
+          </p>
+          <div className="mt-4 flex items-center gap-4">
+            <input
+              type="range"
+              min={PERSONA_ATTEMPTS_BOUNDS.min}
+              max={PERSONA_ATTEMPTS_BOUNDS.max}
+              step={PERSONA_ATTEMPTS_BOUNDS.step}
+              value={draft.personaAttempts}
+              onChange={(e) => patch({ personaAttempts: Number(e.target.value) })}
+              className="flex-1"
+              aria-label="Попыток пересоздания персоны"
+            />
+            <span className="w-28 shrink-0 text-right font-mono text-sm tabular-nums">
+              {draft.personaAttempts === 1
+                ? "без замен"
+                : `${draft.personaAttempts} попытки`}
             </span>
           </div>
         </section>
