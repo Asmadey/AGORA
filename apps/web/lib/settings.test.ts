@@ -1,7 +1,13 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { DEFAULT_SETTINGS, normalizeEndpoint, parseSettings } from "./settings.ts";
+import {
+  DEFAULT_SETTINGS,
+  normalizeEndpoint,
+  parseSettings,
+  PERSONA_ATTEMPTS_BOUNDS,
+  settingsEqual,
+} from "./settings.ts";
 
 /**
  * Endpoint провайдера: что принимается, что чинится, а что отвергается.
@@ -145,5 +151,89 @@ describe("потолок переспроса", () => {
     // исполняет другое. Граница та же, что в RequestionConfig.MAX.
     const parsed = parseSettings({ ...base, requestionCap: 101 });
     assert.ok(!parsed.ok);
+  });
+});
+
+describe("число попыток пересоздания персоны", () => {
+  /**
+   * ─── Зачем настройка ──────────────────────────────────────────────────────
+   * Замер на боевом 17.09.2026 по `personas.validation`, три набора, 70 персон:
+   * 43 прошли проверку связности с первой попытки, 14 со второй, 13 с третьей,
+   * четверо не прошли вовсе. Пересоздание СПАСЛО 23 из 27 — механизм работает.
+   *
+   * Стоит он при этом дорого: 220 вызовов модели вместо 140, то есть 57 %
+   * накладных, и увидеть это можно было только запросом к базе. Число попыток
+   * было прибито константой `MAX_ATTEMPTS = 3` в `persona/validate.py`, тогда
+   * как у соседнего механизма — переспроса ОТВЕТОВ — настройка была. Два
+   * похожих механизма с непохожей судьбой; эта правка убирает асимметрию.
+   *
+   * Сама по себе она ничего не улучшает, и это сказано вслух: крутить попытки
+   * почти бесполезно, доля успеха на попытку держится около 50–70 %. Настоящий
+   * рычаг — первая попытка.
+   */
+  const base = {
+    costCap: "auto",
+    costCapValue: 500,
+    whisperModel: "gigaam-v3-e2e-rnnt",
+    defaultReplication: 1,
+  };
+
+  it("умолчание совпадает с прежней константой воркера", () => {
+    // Три — то, по чему отработали все существующие наборы. Другое умолчание
+    // поменяло бы поведение продукта заодно с появлением ручки.
+    assert.equal(DEFAULT_SETTINGS.personaAttempts, 3);
+  });
+
+  it("значение принимается", () => {
+    const parsed = parseSettings({ ...base, personaAttempts: 2 });
+    assert.ok(parsed.ok);
+    if (parsed.ok) assert.equal(parsed.value.personaAttempts, 2);
+  });
+
+  it("единица законна — это «не пересоздавать»", () => {
+    // Счёт идёт попыткам, а не пересозданиям: 1 — одна проверка и никаких
+    // замен. Ноль означал бы «не проверять вовсе», а это другое решение и
+    // другая ручка.
+    const parsed = parseSettings({ ...base, personaAttempts: 1 });
+    assert.ok(parsed.ok);
+    if (parsed.ok) assert.equal(parsed.value.personaAttempts, 1);
+  });
+
+  it("ноль отвергается: попыток не бывает меньше одной", () => {
+    const parsed = parseSettings({ ...base, personaAttempts: 0 });
+    assert.ok(!parsed.ok);
+    if (!parsed.ok) assert.match(parsed.errors.join(" "), /personaAttempts/);
+  });
+
+  it("отсутствие поля — это умолчание, а не отказ", () => {
+    // Настройки, сохранённые до появления поля, не содержат его вовсе.
+    const parsed = parseSettings(base);
+    assert.ok(parsed.ok);
+    if (parsed.ok) assert.equal(parsed.value.personaAttempts, DEFAULT_SETTINGS.personaAttempts);
+  });
+
+  it("дробное, строка и null отвергаются с внятной претензией", () => {
+    for (const bad of [1.5, "3", null, -2]) {
+      const parsed = parseSettings({ ...base, personaAttempts: bad });
+      assert.ok(!parsed.ok, `принято непригодное: ${JSON.stringify(bad)}`);
+      if (!parsed.ok) assert.match(parsed.errors.join(" "), /personaAttempts/);
+    }
+  });
+
+  it("выше потолка отвергается, а не обрезается", () => {
+    const parsed = parseSettings({ ...base, personaAttempts: PERSONA_ATTEMPTS_BOUNDS.max + 1 });
+    assert.ok(!parsed.ok);
+    if (!parsed.ok) assert.match(parsed.errors.join(" "), /personaAttempts/);
+  });
+
+  it("сдвиг ползунка виден сравнению настроек", () => {
+    // `settingsEqual` включает кнопку «Сохранить» и сторожит уход со страницы.
+    // Поле, которого в нём нет, двигается — и пропадает молча: кнопка остаётся
+    // серой, подпись под ней говорит «Изменений нет». Ровно это и случилось при
+    // первой редакции правки, нашло ревью.
+    const a = { ...DEFAULT_SETTINGS };
+    const b = { ...DEFAULT_SETTINGS, personaAttempts: DEFAULT_SETTINGS.personaAttempts + 1 };
+    assert.ok(!settingsEqual(a, b), "изменение personaAttempts не замечено сравнением");
+    assert.ok(settingsEqual(a, { ...DEFAULT_SETTINGS }));
   });
 });

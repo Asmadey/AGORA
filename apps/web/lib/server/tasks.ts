@@ -204,15 +204,27 @@ export async function buildSettingsSnapshot(
   // в карточке одна модель, а считала его другая.
   const provider = pickProvider(row?.provider_config);
   const requestionCap = pickRequestionCap(row?.provider_config);
-  if (!row) return { costCap: "auto", temperatures, requestionCap, ...provider };
+  // Число попыток пересоздания персоны пиннится наравне с остальным: сменив его,
+  // пока задача стоит в очереди, команда получила бы набор, где часть персон
+  // пересоздана по одному правилу, часть по другому.
+  const personaAttempts = pickPersonaAttempts(row?.provider_config);
+  if (!row) return { costCap: "auto", temperatures, requestionCap, personaAttempts, ...provider };
   return row.cost_cap_calls === null
-    ? { costCap: "auto", whisperModel: row.whisper_model, temperatures, requestionCap, ...provider }
+    ? {
+        costCap: "auto",
+        whisperModel: row.whisper_model,
+        temperatures,
+        requestionCap,
+        personaAttempts,
+        ...provider,
+      }
     : {
         costCap: "hard",
         costCapValue: row.cost_cap_calls,
         whisperModel: row.whisper_model,
         temperatures,
         requestionCap,
+        personaAttempts,
         ...provider,
       };
 }
@@ -231,6 +243,13 @@ export async function buildSettingsSnapshot(
  * можно сменить, и тогда часть забракованных ответов переспрошена, часть нет —
  * внутри одного прогона, который потом читают как целое.
  */
+function pickPersonaAttempts(providerConfig: unknown): number {
+  const stored = (providerConfig ?? {}) as { personaAttempts?: unknown };
+  return typeof stored.personaAttempts === "number" && Number.isInteger(stored.personaAttempts)
+    ? stored.personaAttempts
+    : DEFAULT_SETTINGS.personaAttempts;
+}
+
 function pickRequestionCap(providerConfig: unknown): number {
   const stored = (providerConfig ?? {}) as { requestionCap?: unknown };
   return typeof stored.requestionCap === "number" && Number.isInteger(stored.requestionCap)
