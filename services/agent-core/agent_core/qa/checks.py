@@ -27,7 +27,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from ..survey import question_label, survey_questions
+from ..survey import question_label, question_rows, survey_questions
 
 #: Допуск к длительности ролика. Секунда, а не ноль: таймкод последней сцены
 #: округляется при склейке, и ссылка на 01:40 при длительности 99.6 с — это
@@ -308,6 +308,24 @@ def consistency_reasons(answer: dict[str, Any], survey: dict[str, Any] | None = 
 
         field = TYPED_IN_PERCEPTION.get(qtype)
         if field and perception.get(field) is not None:
+            continue
+
+        # Матрица закрывается ПОСТРОЧНО. `render_questions` печатает её строка
+        # за строкой, промпт просит ответ на каждую, и все читатели ниже по
+        # течению — `survey_stats`, `excel_export`, проба нагрузки — адресуют
+        # ответ идентификатором строки. Искать здесь идентификатор вопроса
+        # значило бы третий раз повторить то же расхождение, что уже было с
+        # `scores` и с `perception`: правило ищет не там, где лежит ответ.
+        #
+        # Цена больше прежней: анкета заказчика стоит на двух матрицах, и
+        # покрытие не прошёл бы ни один ответ — `surviving()` выбросила бы
+        # выборку целиком.
+        rows = question_rows(question)
+        if rows:
+            for row in rows:
+                rid = str(row.get("id") or "")
+                if rid and _norm(rid) not in given_keys:
+                    missing.append(f"{qid}/{rid}" if qid else rid)
             continue
 
         if not answered_directly:

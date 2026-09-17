@@ -236,10 +236,51 @@ def _option_index(question: dict[str, Any]) -> tuple[dict[str, str], set[str]]:
     return by_key, service
 
 
-def _tokens(raw: Any) -> list[str]:
+def _chunks(raw: Any) -> list[str]:
+    """Ответ как пришёл: список — поэлементно, строка — одним куском."""
     if isinstance(raw, list):
         return [str(x).strip() for x in raw if str(x).strip()]
-    return [part.strip() for part in str(raw).split(",") if part.strip()]
+    text = str(raw).strip()
+    return [text] if text else []
+
+
+def _resolve(chunk: str, by_key: dict[str, str]) -> tuple[list[str], list[str]]:
+    """
+    Разбор перечисления через запятую, когда запятая есть и внутри подписи.
+
+    ─── Почему не простой split ─────────────────────────────────────────────
+    Шесть из тринадцати эмоций анкеты заказчика названы парой: «Восхищение,
+    восторг», «Тревога, страх». Промпт при этом велит перечислять выбранное
+    через запятую — разделитель ответа совпадает с символом внутри подписи.
+    Разбиение по запятой теряло такой ответ целиком и называло обе половины
+    «вариантами не из списка», хотя персона выполнила инструкцию буквально.
+
+    Правило: из каждой позиции берётся САМОЕ ДЛИННОЕ сочетание соседних
+    кусков, которое есть в списке вариантов. «Восхищение, восторг, Гордость» —
+    это `e-1` и `e-3`, а «Гордость, Надежда» — `e-3` и `e-5`, потому что такой
+    пары в списке нет.
+
+    Правило однозначно ровно пока ни одна половина парной подписи не
+    совпадает с отдельным вариантом. В анкете заказчика это выполнено
+    (проверено 17.09.2026), и держит это `test_customer_survey.py`: если
+    заказчик пришлёт вариант «Восхищение» рядом с «Восхищение, восторг»,
+    тест покраснеет до того, как разбор начнёт угадывать.
+    """
+    parts = [part.strip() for part in chunk.split(",") if part.strip()]
+    picked: list[str] = []
+    unknown: list[str] = []
+    i = 0
+    while i < len(parts):
+        for j in range(len(parts), i, -1):
+            oid = by_key.get(", ".join(parts[i:j]).casefold())
+            if oid is not None:
+                picked.append(oid)
+                i = j
+                break
+        else:
+            unknown.append(parts[i])
+            i += 1
+    return picked, unknown
 
 
 def parse_field_answer(question: dict[str, Any], raw: Any) -> FieldAnswer:
@@ -280,12 +321,10 @@ def parse_field_answer(question: dict[str, Any], raw: Any) -> FieldAnswer:
     by_key, service = _option_index(question)
     picked: list[str] = []
     unknown: list[str] = []
-    for token in _tokens(raw):
-        oid = by_key.get(token.casefold())
-        if oid is None:
-            unknown.append(token)
-        elif oid not in picked:
-            picked.append(oid)
+    for chunk in _chunks(raw):
+        found, missed = _resolve(chunk, by_key)
+        picked.extend(oid for oid in found if oid not in picked)
+        unknown.extend(missed)
 
     problems: list[str] = []
     if unknown:
