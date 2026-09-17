@@ -39,6 +39,7 @@ from collections.abc import Callable, Iterable
 from typing import Any
 
 from ..survey import parse_field_answer, question_rows, survey_questions
+from .aggregate import surviving
 
 #: Целевая аудитория заказчика. Границы включительные.
 #:
@@ -241,8 +242,17 @@ def _nps(questions: list[dict[str, Any]], per_question: dict[str, Any]) -> float
 
 
 def _tally_scope(
-    questions: list[dict[str, Any]], answers: list[dict[str, Any]]
+    questions: list[dict[str, Any]], answers: list[dict[str, Any]], base: int
 ) -> tuple[dict[str, Any], dict[str, Any]]:
+    """
+    Подсчёт по одному охвату.
+
+    `base` — сколько персон в охвате опрашивали. Он кладётся рядом с `n` в
+    каждый результат намеренно: заказчик подписывает доли «в % от опрошенных»,
+    а считаются они от ОТВЕТИВШИХ. При полной анкете это одно и то же, при
+    замеренных 40 % пропусков — расходится вдвое. Выбирать знаменатель за
+    читателя нельзя, поэтому в данных стоят оба числа.
+    """
     by_field: dict[str, list[Any]] = {}
     for answer in answers:
         for key, value in _answers_of(answer).items():
@@ -261,6 +271,11 @@ def _tally_scope(
         else:
             per_question[qid] = _choice(q, by_field.get(qid, []))
 
+    for stats in per_question.values():
+        stats["base"] = base
+        for row in (stats.get("rows") or {}).values():
+            row["base"] = base
+
     indices = {
         "satisfaction": _satisfaction(questions, per_question),
         "perception": _perception(questions, per_question),
@@ -271,7 +286,7 @@ def _tally_scope(
 
 def _suppressed(stats: dict[str, Any], n: int) -> dict[str, Any]:
     """Срез ниже порога: числа убираются, размер остаётся."""
-    out = {k: (None if k not in {"n", "themeId"} else v) for k, v in stats.items()}
+    out = {k: (None if k not in {"n", "base", "themeId"} else v) for k, v in stats.items()}
     out["n"] = n
     out["below_threshold"] = True
     return out
@@ -284,6 +299,7 @@ def survey_tally(
     *,
     min_segment: int = 20,
     cut: Callable[[dict[str, Any]], bool] = in_target,
+    qa_flags: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """
     Все показатели Приложения 2 — по всей аудитории и по срезу.
@@ -291,8 +307,19 @@ def survey_tally(
     `min_segment` — порог показа долей в срезе; состав аудитории его не
     признаёт. `cut` вынесен параметром: срез 14–35 — умолчание заказчика, но
     механизм общий, и следующий разрез стоит одной строки.
+
+    ─── Гейтинг ────────────────────────────────────────────────────────────
+    Отбор выбывших делает `aggregate.surviving`, а не своя копия правила.
+    Политика владельца 17.09.2026: судья информирует, детерминированные правила
+    гейтят — балл вне шкалы в среднее не положишь, а субъективный вердикт судьи
+    в трёх случаях из четырёх оказывался дефектом правила, а не качеством.
+
+    Своя копия этого условия означала бы два числа в одном отчёте, посчитанные
+    по разным выборкам, и разошлись бы они молча.
     """
     qs = survey_questions(questions)
+    total_answers = len(answers)
+    answers = surviving(list(answers), qa_flags)
     by_persona = {str(p.get("id")): p for p in personas}
 
     target_ids = {pid for pid, p in by_persona.items() if cut(p)}
@@ -300,8 +327,8 @@ def survey_tally(
         a for a in answers if str(a.get("persona_id")) in target_ids
     ]
 
-    total_q, total_i = _tally_scope(qs, answers)
-    target_q, target_i = _tally_scope(qs, target_answers)
+    total_q, total_i = _tally_scope(qs, answers, len(personas))
+    target_q, target_i = _tally_scope(qs, target_answers, len(target_ids))
     target_size = len(target_ids)
     below = target_size < min_segment
 
@@ -330,6 +357,7 @@ def survey_tally(
         audience[key] = dict(sorted(counts.items()))
 
     return {
+        "excluded_by_qa": total_answers - len(answers),
         "questions": questions_out,
         "indices": {
             name: {"total": total_i[name], "target": None if below else target_i[name]}

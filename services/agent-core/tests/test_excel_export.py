@@ -214,3 +214,39 @@ def test_лист_о_прогоне_называет_состав_и_верси�
     )
     assert "0052" in text
     assert "персон" in text
+
+
+# ─── Гейтинг QA ──────────────────────────────────────────────────────────────
+
+
+def test_ответ_нарушивший_правило_в_свёртку_не_идёт():
+    """
+    Выгрузка «сырая», но не любая: балл вне шкалы 0–10 — это брак, а не мнение,
+    и в усреднение по повторам он попадать не должен. Отбор тот же, что в
+    отчёте (`aggregate.surviving`), иначе таблица и отчёт разойдутся молча.
+    """
+    answers = [
+        answer("p0", {"q01-plot": 8}, replication=0),
+        answer("p0", {"q01-plot": 2}, replication=1),
+    ]
+    flags = [{"persona_id": "p0", "replication": 1, "verdict": "regenerate", "source": "rule"}]
+    ws = build_workbook(
+        THEMED, answers, [PERSONAS[0]], meta={}, blocks=BLOCKS, qa_flags=flags,
+    )["Ответы"]
+    head = [c.value for c in ws[2]]
+    plot = [q for q in THEMED if q["number"] == 1][0]
+    assert ws.cell(row=3, column=head.index(plot["label"]) + 1).value == 8
+
+
+def test_вердикт_судьи_из_выгрузки_не_выбрасывает():
+    answers = [
+        answer("p0", {"q01-plot": 8}, replication=0),
+        answer("p0", {"q01-plot": 2}, replication=1),
+    ]
+    flags = [{"persona_id": "p0", "replication": 1, "verdict": "regenerate", "source": "judge"}]
+    ws = build_workbook(
+        THEMED, answers, [PERSONAS[0]], meta={}, blocks=BLOCKS, qa_flags=flags,
+    )["Ответы"]
+    head = [c.value for c in ws[2]]
+    plot = [q for q in THEMED if q["number"] == 1][0]
+    assert ws.cell(row=3, column=head.index(plot["label"]) + 1).value == 5, "среднее 8 и 2"

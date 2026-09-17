@@ -263,3 +263,73 @@ def test_состав_аудитории_показывается_без_пор�
     assert cities == {"Барнаул": 1, "Москва": 1}
     assert out["audience"]["total"] == 2
     assert out["audience"]["target"] == 1, "в срез 14–35 попадает один"
+
+
+# ─── Гейтинг QA ──────────────────────────────────────────────────────────────
+
+
+def test_ответ_нарушивший_правило_не_идёт_в_расчёт():
+    """
+    Политика владельца 17.09.2026: судья информирует, правила гейтят. Ответ,
+    помеченный ДЕТЕРМИНИРОВАННЫМ правилом (`source: "rule"`), из агрегата
+    выбывает — балл вне шкалы в среднее не положишь.
+
+    До этой проверки `survey_stats` считал по всем ответам подряд, хотя рядом,
+    в `aggregate.py`, для этого уже жила `surviving()`. Расхождение было бы
+    невидимым: два числа в одном отчёте, посчитанные по разным выборкам.
+    """
+    answers = [answer("p0", {"q01-plot": 10}), answer("p1", {"q01-plot": 0})]
+    personas = [persona("p0", 30), persona("p1", 30)]
+    flags = [{"persona_id": "p1", "replication": 0, "verdict": "regenerate", "source": "rule"}]
+    out = survey_tally(QUESTIONS, answers, personas, min_segment=1, qa_flags=flags)
+    plot = out["questions"]["q01-plot"]["total"]
+    assert plot["n"] == 1
+    assert plot["mean"] == 10.0
+
+
+def test_вердикт_судьи_из_расчёта_не_выбрасывает():
+    """
+    `source: "judge"` информирует. Замер 17.09.2026: три четверти отбраковок
+    судьи оказались дефектом правила, а не качеством ответа.
+    """
+    answers = [answer("p0", {"q01-plot": 10}), answer("p1", {"q01-plot": 0})]
+    personas = [persona("p0", 30), persona("p1", 30)]
+    flags = [{"persona_id": "p1", "replication": 0, "verdict": "regenerate", "source": "judge"}]
+    out = survey_tally(QUESTIONS, answers, personas, min_segment=1, qa_flags=flags)
+    assert out["questions"]["q01-plot"]["total"]["n"] == 2
+
+
+def test_число_выбывших_названо_в_результате():
+    """Читатель обязан знать, на скольких ответах стоит вывод."""
+    answers = [answer("p0", {"q01-plot": 10}), answer("p1", {"q01-plot": 0})]
+    personas = [persona("p0", 30), persona("p1", 30)]
+    flags = [{"persona_id": "p1", "replication": 0, "verdict": "regenerate", "source": "rule"}]
+    out = survey_tally(QUESTIONS, answers, personas, min_segment=1, qa_flags=flags)
+    assert out["excluded_by_qa"] == 1
+
+
+def test_рядом_с_числом_ответивших_стоит_число_опрошенных():
+    """
+    Заказчик подписывает доли «в % от опрошенных». Мы считаем их от
+    ОТВЕТИВШИХ — при полной анкете это одно и то же, а при замеренных 40 %
+    пропусков расходится вдвое.
+
+    Выбирать знаменатель за читателя нельзя, поэтому в результате стоят оба
+    числа: `n` — сколько ответили на этот вопрос, `base` — сколько персон
+    вообще опрашивали. Доля «в % от опрошенных» получается делением на `base`
+    и считается там, где решают, какую из двух показывать.
+    """
+    answers = [answer("p0", {"q01-plot": 10}), answer("p1", {})]
+    personas = [persona("p0", 30), persona("p1", 30)]
+    out = survey_tally(QUESTIONS, answers, personas, min_segment=1)
+    plot = out["questions"]["q01-plot"]["total"]
+    assert plot["n"] == 1, "ответил один"
+    assert plot["base"] == 2, "опрашивали двоих"
+
+
+def test_знаменатель_среза_это_размер_среза():
+    answers = [answer(f"p{i}", {"q01-plot": 8}) for i in range(3)]
+    personas = [persona("p0", 20), persona("p1", 25), persona("p2", 60)]
+    out = survey_tally(QUESTIONS, answers, personas, min_segment=1)
+    assert out["questions"]["q01-plot"]["total"]["base"] == 3
+    assert out["questions"]["q01-plot"]["target"]["base"] == 2

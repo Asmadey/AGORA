@@ -41,6 +41,7 @@ from collections import Counter
 from typing import Any
 
 from ..survey import parse_field_answer, question_options, question_rows, survey_questions
+from .aggregate import surviving
 
 #: Параметры аудитории, стоящие слева до вопросов. Пары «подпись → поле DNA».
 #:
@@ -188,6 +189,7 @@ def build_workbook(
     *,
     meta: dict[str, Any] | None = None,
     blocks: dict[str, str] | None = None,
+    qa_flags: list[dict[str, Any]] | None = None,
 ) -> Any:
     """
     Книга из двух листов: «Ответы» и «О прогоне».
@@ -201,6 +203,13 @@ def build_workbook(
 
     qs = survey_questions(questions)
     columns = _columns(qs, blocks or block_labels(questions))
+
+    # Выгрузка «сырая», но не любая: балл вне шкалы 0–10 — брак, а не мнение, и
+    # в усреднение по повторам ему попадать нечего. Отбор тот же, что в отчёте
+    # (`aggregate.surviving`): своя копия правила означала бы, что таблица и
+    # отчёт считают по разным выборкам, и разойдутся они молча.
+    total_answers = len(answers)
+    answers = surviving(list(answers), qa_flags)
 
     by_persona: dict[str, list[dict[str, Any]]] = {}
     for a in answers:
@@ -262,6 +271,7 @@ def build_workbook(
         ("Дата выгрузки", info.get("exported_at") or "—"),
         ("Персон", len(personas)),
         ("Ответов", len(answers)),
+        ("Выбыло по правилам QA", total_answers - len(answers)),
         ("Вопросов в анкете", len(qs)),
         ("Полей к ответу", len(columns)),
         ("Версия анкеты", info.get("survey_version") or "—"),
