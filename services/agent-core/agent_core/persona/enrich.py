@@ -51,6 +51,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
 
+from ..prompt_text import body_of
 from .portraits import portrait_for
 
 DEFAULT_MODEL = "qwen3.6"
@@ -329,6 +330,17 @@ def render_prompt(
     целиком (``{{skeleton_json}}``), и разложенным по удобным полям: модель
     заметно лучше держится фактов, когда видит их и списком, и в структуре.
     """
+    # Служебная шапка снимается здесь — в единственном месте, где шаблон
+    # превращается в промпт. Тогда покрыт и шаблон с диска, и переданный
+    # аргументом. «Переменные: {{skeleton_json}}, {{age}}, …» — документация
+    # формата для ЧЕЛОВЕКА, и подстановка в неё отправляла модели весь скелет
+    # вторым экземпляром, до единой инструкции. Замер рендера 17.09.2026:
+    # значение каждой черты доезжало ПЯТЬ раз, портрет — два. Ровно то, ради
+    # чего написан `prompt_text.body_of` (по трассе прогона 0051 около 1,16 млн
+    # токенов из 2,8 уходило на такой повтор) — этот модуль просто забыли
+    # внести в список читателей. `body_of` идемпотентна, повторный вызов
+    # безопасен.
+    template = body_of(template)
     demo = persona.get("demographics", {})
     values = persona.get("values_and_beliefs", {}).get("important_values", [])
     lifestyle = persona.get("lifestyle_and_interests", {})
@@ -341,7 +353,14 @@ def render_prompt(
         путает. Перевод имён развёл бы список и JSON молча.
         """
         data = persona.get(block) or {}
-        return "; ".join(f"{k}: {v}" for k, v in data.items()) or "не задано"
+
+        def show(value: Any) -> str:
+            # Список иначе уедет питоновским repr: `preferred_genres:
+            # ['драма', 'комедия']` — кавычки и скобки модель читает как часть
+            # значения, а не как перечисление.
+            return ", ".join(str(x) for x in value) if isinstance(value, list) else str(value)
+
+        return "; ".join(f"{k}: {show(v)}" for k, v in data.items()) or "не задано"
 
     return (
         template
