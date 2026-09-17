@@ -155,3 +155,41 @@ def test_пропущенная_строка_матрицы_названа_по�
     assert reasons, "пропущенная строка обязана быть замечена"
     assert "t1-2" in " ".join(reasons)
     assert "t1-1" not in " ".join(reasons), "отвеченная строка в пропуски не попадает"
+
+
+# ─── Шкала базовых критериев берётся из анкеты, а не из памяти ──────────────
+#
+# Решение владельца 17.09.2026: базовые критерии живут на шкале 0–10. Правило
+# согласованности при этом продолжало требовать 1–10 и браковало каждый ответ,
+# где персона поставила ноль:
+#
+#     балл overall_impression=0 вне шкалы 1–10
+#
+# Ноль на шкале 0–10 — законная и самая информативная оценка: «совсем не
+# понравилось». Забракованный по этой причине ответ выбывает из агрегата
+# правилом (`source: "rule"`), то есть самые низкие оценки уходили бы из
+# отчёта СИСТЕМАТИЧЕСКИ, а средний балл поднимался бы сам собой.
+
+ZERO_TEN = [
+    {"id": "base-1", "baseKey": "overall_impression", "label": "Общее впечатление",
+     "type": "scale", "scaleMin": 0, "scaleMax": 10},
+]
+
+
+def _zero_answer(score: int) -> dict:
+    return {
+        "scores": {"overall_impression": score},
+        "survey_answers": {},
+        "verbatims": {"why_impression": "Скучно с самого начала на 00:10"},
+        "perception": {},
+    }
+
+
+def test_ноль_на_шкале_ноль_десять_законен():
+    reasons = consistency_reasons(_zero_answer(0), ZERO_TEN)
+    assert not any("вне шкалы" in r for r in reasons), reasons
+
+
+def test_балл_выше_границы_анкеты_всё_ещё_брак():
+    reasons = consistency_reasons(_zero_answer(11), ZERO_TEN)
+    assert any("вне шкалы" in r for r in reasons), reasons

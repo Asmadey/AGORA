@@ -323,11 +323,11 @@ check(
 print("\n== Поведенческий уровень (unit-тесты схемы) ==")
 
 BASE_QUESTIONS_VALID = [
-    {"id": "base-1", "baseKey": "overall_impression", "label": "Общее впечатление", "type": "scale", "scaleMin": 1, "scaleMax": 10},
-    {"id": "base-2", "baseKey": "plot", "label": "Сюжет", "type": "scale", "scaleMin": 1, "scaleMax": 10},
-    {"id": "base-3", "baseKey": "acting", "label": "Актёрская игра", "type": "scale", "scaleMin": 1, "scaleMax": 10},
-    {"id": "base-4", "baseKey": "music", "label": "Музыка", "type": "scale", "scaleMin": 1, "scaleMax": 10},
-    {"id": "base-5", "baseKey": "cinematography", "label": "Операторская работа", "type": "scale", "scaleMin": 1, "scaleMax": 10},
+    {"id": "base-1", "baseKey": "overall_impression", "label": "Общее впечатление", "type": "scale", "scaleMin": 0, "scaleMax": 10},
+    {"id": "base-2", "baseKey": "plot", "label": "Сюжет", "type": "scale", "scaleMin": 0, "scaleMax": 10},
+    {"id": "base-3", "baseKey": "acting", "label": "Актёрская игра", "type": "scale", "scaleMin": 0, "scaleMax": 10},
+    {"id": "base-4", "baseKey": "music", "label": "Музыка", "type": "scale", "scaleMin": 0, "scaleMax": 10},
+    {"id": "base-5", "baseKey": "cinematography", "label": "Операторская работа", "type": "scale", "scaleMin": 0, "scaleMax": 10},
 ]
 
 REQUIRED_BASE_KEYS = {"overall_impression", "plot", "acting", "music", "cinematography"}
@@ -436,13 +436,19 @@ def validate_survey_python(doc):
                 # Ключ критерия остаётся контрактом с данными — по этим пяти
                 # ключам посчитаны средние 165 респондентов корпуса. Меняется
                 # шкала, не ключ.
-                if (
-                    not isinstance(scale_min, int)
-                    or not isinstance(scale_max, int)
-                    or scale_min >= scale_max
-                ):
+                # Ровно 0–10, как в `survey-validator.ts`.
+                #
+                # Правило переписывалось в этом файле дважды за день. Стояло
+                # «ровно 1–10» — отвергало анкету заказчика. Стало «любая
+                # шкала» — пропускало анкету на 1–5, для которой пороги
+                # расчёта (доля 8–10, промоутеры 9–10) дают ноль и минус
+                # единицу, то есть правдоподобные неверные числа. Решение
+                # владельца 17.09.2026: базовому критерию разрешена одна
+                # шкала. Своя шкала остаётся у вопроса БЕЗ baseKey.
+                if (scale_min, scale_max) != (BASE_SCALE_MIN, BASE_SCALE_MAX):
                     errors.append(
-                        f"questions[{i}]: у базового критерия должна быть шкала, "
+                        f"questions[{i}]: базовый критерий должен быть на шкале "
+                        f"{BASE_SCALE_MIN}–{BASE_SCALE_MAX}, "
                         f"получено {scale_min}–{scale_max}"
                     )
 
@@ -454,10 +460,19 @@ def validate_survey_python(doc):
     return errors
 
 
-# B1: Базовая анкета из 5 критериев 1–10 валидна
+# Шкала базовых критериев берётся ИЗ ВАЛИДАТОРА, а не объявляется здесь заново.
+# Переписанная константа — ровно тот способ, которым реплика разошлась с
+# оригиналом в прошлый раз.
+_validator_src = (REPO / "apps" / "web" / "lib" / "server" / "survey-validator.ts").read_text(
+    "utf-8"
+)
+BASE_SCALE_MIN = int(re.search(r"BASE_SCALE_MIN\s*=\s*(-?\d+)", _validator_src).group(1))
+BASE_SCALE_MAX = int(re.search(r"BASE_SCALE_MAX\s*=\s*(-?\d+)", _validator_src).group(1))
+
+# B1: Базовая анкета из 5 критериев 0–10 валидна
 errors = validate_survey_python({"name": "Базовая", "questions": BASE_QUESTIONS_VALID})
 check(
-    "базовая анкета из 5 критериев 1–10 валидна",
+    "базовая анкета из 5 критериев 0–10 валидна",
     len(errors) == 0,
     f"errors={errors[:3]}" if errors else "",
 )
@@ -534,11 +549,12 @@ check(
     f"errors={errors[:3]}",
 )
 
-# B4: У базового критерия должна быть ШКАЛА, но не обязательно 1–10
+# B4: вырожденная шкала отвергается отдельной проверкой
 #
-# Прежняя проверка требовала ровно 1–10 и отвергала 2–10. Анкета заказчика
-# пришла на 0–10, требование снято. Осталось то, без чего балл нельзя положить
-# в среднее: границы есть и верхняя больше нижней.
+# Проверка живёт своей жизнью и после привязки базовых критериев к 0–10:
+# `scaleMax > scaleMin` относится к ЛЮБОЙ шкале, включая пользовательские
+# вопросы без `baseKey`, которым своя шкала разрешена. Здесь она подана на
+# базовом критерии просто потому, что такой набор уже собран рядом.
 broken_scale = [
     {**q, "scaleMin": 10 if q["baseKey"] == "overall_impression" else 1, "scaleMax": 10}
     for q in BASE_QUESTIONS_VALID

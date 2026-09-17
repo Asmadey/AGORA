@@ -195,6 +195,30 @@ def _int_or_none(value: Any) -> int | None:
     return int(value)
 
 
+#: Шкала базовых критериев по умолчанию — когда анкеты рядом нет.
+#:
+#: Ноль–десять, потому что это шкала, на которой работает продукт с 17.09.2026;
+#: `survey-validator.ts` другой у базового критерия не допускает. Умолчание
+#: нужно ровно для вызовов без анкеты (их в тестах и в старых артефактах
+#: хватает), а не как второе мнение о том, какая шкала верна.
+DEFAULT_SCORE_MIN = 0
+DEFAULT_SCORE_MAX = 10
+
+
+def _score_bounds(survey: Any) -> dict[str, tuple[int, int]]:
+    """Границы шкалы по ключу базового критерия, как их объявила анкета."""
+    out: dict[str, tuple[int, int]] = {}
+    for question in survey_questions(survey):
+        key = question.get("baseKey")
+        if not key:
+            continue
+        low = question.get("scaleMin")
+        high = question.get("scaleMax")
+        if isinstance(low, int) and isinstance(high, int) and low < high:
+            out[str(key)] = (low, high)
+    return out
+
+
 def consistency_reasons(answer: dict[str, Any], survey: dict[str, Any] | None = None) -> list[str]:
     """
     Внутренние противоречия ответа. Пустой список — правила ничего не нашли.
@@ -208,12 +232,26 @@ def consistency_reasons(answer: dict[str, Any], survey: dict[str, Any] | None = 
     scores = answer.get("scores") if isinstance(answer.get("scores"), dict) else {}
     perception = answer.get("perception") if isinstance(answer.get("perception"), dict) else {}
 
+    # Границы берутся из АНКЕТЫ, а не из памяти правила.
+    #
+    # Здесь стояло `1 <= value <= 10`. Базовые критерии переехали на шкалу 0–10
+    # (решение владельца 17.09.2026), и правило начало браковать каждый ответ с
+    # нулём — то есть «совсем не понравилось», самую информативную оценку на
+    # этой шкале. Выбывает такой ответ по правилу, а не по мнению судьи, то
+    # есть из агрегата уходит совсем; систематически уходили бы только низкие
+    # оценки, и средний балл отчёта полз бы вверх сам собой.
+    #
+    # Расхождение того же класса, что уже чинили в этом файле трижды: одна
+    # сторона контракта изменилась, вторая осталась и продолжила выглядеть
+    # исправной.
+    bounds = _score_bounds(survey)
     for field in _SCORE_FIELDS:
         value = _int_or_none(scores.get(field))
+        low, high = bounds.get(field, (DEFAULT_SCORE_MIN, DEFAULT_SCORE_MAX))
         if scores.get(field) is not None and value is None:
             reasons.append(f"балл {field} не число: {scores.get(field)!r}")
-        elif value is not None and not 1 <= value <= 10:
-            reasons.append(f"балл {field}={value} вне шкалы 1–10")
+        elif value is not None and not low <= value <= high:
+            reasons.append(f"балл {field}={value} вне шкалы {low}–{high}")
 
     nps = _int_or_none(perception.get("recommendation_nps_1_to_10"))
     if perception.get("recommendation_nps_1_to_10") is not None and nps is None:
@@ -223,8 +261,11 @@ def consistency_reasons(answer: dict[str, Any], survey: dict[str, Any] | None = 
 
     overall = _int_or_none(scores.get("overall_impression"))
     stance = retention_stance(perception.get("retention_intent"))
+    overall_low, overall_high = bounds.get(
+        "overall_impression", (DEFAULT_SCORE_MIN, DEFAULT_SCORE_MAX)
+    )
 
-    if overall is not None and 1 <= overall <= 10:
+    if overall is not None and overall_low <= overall <= overall_high:
         if overall >= HIGH_SCORE and stance == "stop":
             reasons.append(
                 f"впечатление {overall}/10 при намерении прекратить просмотр "

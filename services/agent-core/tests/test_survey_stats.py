@@ -333,3 +333,42 @@ def test_знаменатель_среза_это_размер_среза():
     out = survey_tally(QUESTIONS, answers, personas, min_segment=1)
     assert out["questions"]["q01-plot"]["total"]["base"] == 3
     assert out["questions"]["q01-plot"]["target"]["base"] == 2
+
+
+# ─── Неразобранный ответ не голосует ─────────────────────────────────────────
+#
+# Персона, назвавшая два варианта там, где разрешён один, не выразила мнения —
+# она нарушила форму. Прежде такой ответ попадал в подсчёт целиком: `errors`
+# рос, но росли и оба счётчика, и обе доли выходили по 100 %.
+#
+# Это тот же класс промаха, что проглоченный вариант не из списка, только с
+# обратным знаком: там голос терялся, здесь он удваивается. И выглядит это
+# на графике как единодушие аудитории.
+
+
+def test_ответ_с_ошибкой_формы_в_доли_не_идёт():
+    question = {
+        "id": "q", "type": "multi_choice", "maxChoices": 1,
+        "options": [{"id": "a", "label": "A"}, {"id": "b", "label": "B"}],
+    }
+    answers = [answer("p0", {"q": "a, b"})]
+    personas = [persona("p0", 30)]
+    out = survey_tally([question], answers, personas, min_segment=1)
+    stats = out["questions"]["q"]["total"]
+    assert stats["errors"] == 1, "нарушение формы обязано остаться видимым"
+    assert stats["n"] == 0, "ответивших нет: форма нарушена"
+    assert stats["counts"] == {"a": 0, "b": 0}
+    assert stats["base"] == 1, "опрашивали одного — знаменатель не меняется"
+
+
+def test_исправный_ответ_рядом_с_битым_считается():
+    question = {
+        "id": "q", "type": "multi_choice", "maxChoices": 1,
+        "options": [{"id": "a", "label": "A"}, {"id": "b", "label": "B"}],
+    }
+    answers = [answer("p0", {"q": "a, b"}), answer("p1", {"q": "a"})]
+    personas = [persona("p0", 30), persona("p1", 30)]
+    stats = survey_tally([question], answers, personas, min_segment=1)["questions"]["q"]["total"]
+    assert stats["n"] == 1
+    assert stats["counts"] == {"a": 1, "b": 0}
+    assert stats["shares"]["a"] == 1.0, "доля считается от ответивших по форме"
