@@ -38,7 +38,7 @@
 
     python3 evals/analysis/survey_load_probe.py --live --pack-task <uuid> -n 20
         Живая часть: N персон, по одному вызову модели на персону. Нужны
-        MONGO_URL и доступ к модели; без них — честный SKIP, а не выдуманный
+        доступ к Mongo и к модели; без них — честный SKIP, а не выдуманный
         результат (§9).
 
 Внутри образа воркера путь к пакету материала берётся из Mongo по task_id
@@ -49,7 +49,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import random
 import statistics
 import sys
@@ -136,15 +135,30 @@ def _skip(reason: str) -> None:
     print("Статическая часть выше посчитана и от среды не зависит.")
 
 
-def load_pack(task_id: str) -> dict[str, Any] | None:
+def load_pack(task_id: str) -> tuple[dict[str, Any] | None, str]:
+    """
+    Пакет материала из Mongo. Возвращает (пакет, причина отказа).
+
+    ─── Почему здесь НЕ проверяется переменная окружения ────────────────────
+    Первая редакция спрашивала `MONGO_URL`, а `agent_core/mongo.py` читает
+    `MONGODB_URL`. Замер уходил в SKIP на сервере, где база доступна, — то есть
+    инструмент, написанный против семейства дефектов «писатель и читатель
+    разошлись по имени», сам в него и попал.
+
+    Второго имени переменной здесь больше нет: доступность проверяется
+    попыткой, а имя знает ровно один модуль.
+    """
     try:
         from agent_core.analytics.store import CONTENT_PACKS
         from agent_core.mongo import mongo_db
+
+        doc = mongo_db()[CONTENT_PACKS].find_one({"task_id": task_id})
     except Exception as exc:  # noqa: BLE001
-        print(f"  (Mongo недоступен: {type(exc).__name__}: {exc})")
-        return None
-    doc = mongo_db()[CONTENT_PACKS].find_one({"task_id": task_id})
-    return (doc or {}).get("pack")
+        return None, f"Mongo недоступна — {type(exc).__name__}: {exc}"
+    pack = (doc or {}).get("pack")
+    if not pack:
+        return None, f"в content_packs нет пакета для task_id={task_id}"
+    return pack, ""
 
 
 def make_personas(n: int, seed: int) -> list[dict[str, Any]]:
@@ -234,12 +248,9 @@ def echo_test(pairs: list[tuple[set[str], set[str]]], rounds: int = 10000,
 
 
 def live(args: argparse.Namespace, survey: dict[str, Any]) -> None:
-    if not os.environ.get("MONGO_URL"):
-        return _skip("нет MONGO_URL — пакет материала брать неоткуда")
-
-    pack = load_pack(args.pack_task)
+    pack, refusal = load_pack(args.pack_task)
     if not pack:
-        return _skip(f"в content_packs нет пакета для task_id={args.pack_task}")
+        return _skip(refusal)
 
     try:
         from agent_core.respondent.run import QwenRespondentClient
