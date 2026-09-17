@@ -52,12 +52,15 @@ test("среднее по критерию считается по тем же �
   assert.equal(out.rows[0].value, 8, "строки идут от большего к меньшему");
 });
 
-test("забракованные QA в число не входят — как и в агрегате воркера", () => {
+test("нарушившие ПРАВИЛО в число не входят — как и в агрегате воркера", () => {
+  // «Таймкод не совпал» ловит детерминированная проверка `grounding_reasons`:
+  // ссылка за пределы длительности ролика — объективный брак, и в среднее его
+  // не положишь.
   const answers = [
     answer({ personaId: "a", scores: { overall_impression: 10, plot: null, acting: null, music: null, cinematography: null } }),
     answer({
       personaId: "b",
-      qaFlags: [{ kind: "grounding", confidence: 0.95, reasons: ["таймкод не совпал"] }],
+      qaFlags: [{ kind: "grounding", confidence: 0.95, reasons: ["таймкод не совпал"], source: "rule" }],
       scores: { overall_impression: 2, plot: null, acting: null, music: null, cinematography: null },
     }),
   ];
@@ -65,6 +68,26 @@ test("забракованные QA в число не входят — как �
   assert.equal(out.computed, 10);
   assert.equal(out.rows.length, 1);
   assert.equal(out.excluded, 1);
+});
+
+test("помеченные СУДЬЁЙ считаются — QA информирует, а не блокирует", () => {
+  // Решение владельца 17.09.2026. Вердикт судьи субъективен и ошибается в трёх
+  // случаях из четырёх (`0ba9e30`), поэтому он остаётся пометкой на карточке, а
+  // ответ участвует в числе. Условие здесь обязано совпадать с
+  // `analytics/aggregate.py`: иначе экран покажет вклад по меньшему числу
+  // ответов, чем сама метрика, и заметит это только тот, кто их сложит.
+  const answers = [
+    answer({ personaId: "a", scores: { overall_impression: 10, plot: null, acting: null, music: null, cinematography: null } }),
+    answer({
+      personaId: "b",
+      qaFlags: [{ kind: "consistency", confidence: 0.8, reasons: ["по смыслу не вяжется"], source: "judge" }],
+      scores: { overall_impression: 2, plot: null, acting: null, music: null, cinematography: null },
+    }),
+  ];
+  const out = contributions("overall_impression", answers);
+  assert.equal(out.rows.length, 2, "ответ с вердиктом судьи выпал из числа");
+  assert.equal(out.excluded, 0);
+  assert.equal(out.computed, 6, "среднее считается по обоим ответам");
 });
 
 test("NPS: промоутеры 9–10, критики 1–6, середина не считается ни за кого", () => {
