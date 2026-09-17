@@ -62,6 +62,7 @@ sys.path.insert(0, str(REPO / "services" / "agent-core"))
 
 from agent_core.survey import (
     answerable_fields,
+    parse_field_answer,
     question_rows,
     render_questions,
     survey_questions,
@@ -319,7 +320,14 @@ def live(args: argparse.Namespace, survey: dict[str, Any]) -> None:
         snapshot = json.loads(args.settings) if args.settings else {
             "reasoning": {"thinking": False},
         }
-        client = QwenRespondentClient(config=ModelConfig.for_task(snapshot))
+        schema = None
+        if getattr(args, "schema", False):
+            from agent_core.respondent.answer_schema import answer_json_schema
+
+            schema = answer_json_schema(survey["questions"])
+        client = QwenRespondentClient(
+            config=ModelConfig.for_task(snapshot), answer_schema=schema,
+        )
     except Exception as exc:  # noqa: BLE001
         return _skip(f"клиент модели не собрался: {type(exc).__name__}: {exc}")
 
@@ -344,7 +352,8 @@ def live(args: argparse.Namespace, survey: dict[str, Any]) -> None:
     sizes: list[int] = []
     echo_pairs: list[tuple[set[str], set[str]]] = []
 
-    print(f"─── Живой замер: {len(personas)} персон, по одному вызову ───")
+    mode = "С ГРАММАТИКОЙ" if getattr(args, "schema", False) else "БЕЗ ГРАММАТИКИ"
+    print(f"─── Живой замер [{mode}]: {len(personas)} персон, по одному вызову ───")
     for persona in personas:
         answer = ask_one(persona, pack, questions, client)
         if answer is None:
@@ -365,10 +374,17 @@ def live(args: argparse.Namespace, survey: dict[str, Any]) -> None:
         missing_total.update(missing)
 
         own = set((persona["dna"].get("values_and_beliefs") or {}).get("important_values") or [])
-        said = {
-            values_by_option.get(token.strip(), "")
-            for token in str(answer_for(answer, "q08-values") or "").split(",")
-        }
+        # Разбор — общим парсером, а не делением по запятой.
+        #
+        # Своё деление здесь было третьим в репозитории и ломалось об те же
+        # подписи с запятой, что и остальные два. С грамматикой ответ вдобавок
+        # приходит списком, а не строкой, — `parse_field_answer` знает обе
+        # формы, а самодельное деление не знает ни одной надёжно.
+        q08 = next((q for q in questions if q["number"] == 8), None)
+        said = set()
+        if q08 is not None:
+            parsed_q8 = parse_field_answer(q08, answer_for(answer, "q08-values"))
+            said = {values_by_option.get(oid, "") for oid in parsed_q8.option_ids}
         echo_pairs.append((own, said - {""}))
 
     print()
@@ -398,6 +414,14 @@ def main() -> None:
     parser.add_argument("--pack-task", default="", help="task_id прогона, чей пакет материала взять")
     parser.add_argument("-n", type=int, default=20, help="сколько персон опросить")
     parser.add_argument("--seed", type=int, default=20260917)
+    parser.add_argument(
+        "--schema", action="store_true",
+        help=(
+            "передать модели грамматику ответа (`respondent/answer_schema.py`). "
+            "Без флага — как было до 17.09.2026. Замер имеет смысл ТОЛЬКО парой: "
+            "два прогона одного кода на одних и тех же персонах и одном пакете"
+        ),
+    )
     parser.add_argument(
         "--settings", default="",
         help=(
