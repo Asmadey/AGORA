@@ -42,7 +42,7 @@ from pathlib import Path
 from typing import Any, Protocol
 
 from ..prompt_text import body_of
-from ..survey import question_label, survey_questions
+from ..survey import question_label, render_questions, survey_questions
 from ..tracing import submit_in_context
 from .diversity import diversity_report
 
@@ -248,12 +248,19 @@ def _render_questions(survey: Any) -> str:
     это знание живёт. Раньше разбор был здесь по месту, и после его починки
     ровно тот же дефект нашёлся в `qa/checks.py`: заплатка не уменьшает число
     мест, она только отодвигает встречу со следующим.
+
+    ─── Почему тело переехало в survey.py ───────────────────────────────────
+    Прежняя строка `- [id] (тип) формулировка` годилась, пока все вопросы были
+    шкалой или свободным текстом. У анкеты заказчика девять вопросов из
+    пятнадцати — выбор из закрытого списка, и без списка это открытый вопрос:
+    персона назовёт эмоцию своими словами, ответ разберётся, отчёт соберётся —
+    и не сойдётся с тринадцатью строками заказчика.
+
+    Обёртка оставлена намеренно: по ней названа причина падения в докстроке
+    `test_survey_contract.py`, и она же держит запрет читать анкету мимо
+    `agent_core.survey`.
     """
-    lines = []
-    for q in survey_questions(survey):
-        label = question_label(q)
-        lines.append(f"- [{q.get('id', '?')}] ({q.get('type', 'открытый')}) {label}".rstrip())
-    return "\n".join(lines) if lines else "(анкета пуста)"
+    return render_questions(survey)
 
 
 def _asked_questions(user_prompt: str, survey: Any) -> list[dict[str, Any]]:
