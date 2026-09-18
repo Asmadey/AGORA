@@ -4,7 +4,8 @@ import { useEffect, useState } from "react";
 import { Loader2, ExternalLink } from "lucide-react";
 import Link from "next/link";
 
-import { SurveyBuilder, BASE_QUESTIONS } from "@/components/agora/SurveyBuilder";
+import { SurveyBuilder } from "@/components/agora/SurveyBuilder";
+import { BASE_QUESTIONS } from "@/lib/survey-composition";
 import {
   DRAFT_SURVEY_ID,
   questionsDiffer,

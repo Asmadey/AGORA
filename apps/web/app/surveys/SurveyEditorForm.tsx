@@ -3,7 +3,8 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 
-import { SurveyBuilder, BASE_QUESTIONS } from "@/components/agora/SurveyBuilder";
+import { SurveyBuilder } from "@/components/agora/SurveyBuilder";
+import { BASE_QUESTIONS } from "@/lib/survey-composition";
 import { ErrorState } from "@/components/agora/States";
 import type { SurveyQuestion } from "@/lib/agora-types";
 
