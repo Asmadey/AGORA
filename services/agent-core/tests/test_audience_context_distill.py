@@ -58,3 +58,20 @@ def test_task_distills_before_constructing_generation_config(monkeypatch):
 
     assert seen["text"] == "raw file"
     assert config.audience_context == "# distilled"
+
+
+def test_binary_context_is_loaded_by_worker_before_generation_config(monkeypatch):
+    monkeypatch.setattr(
+        tasks,
+        "_load_context_file_portrait",
+        lambda file_id, tenant_id: f"# distilled {file_id} for {tenant_id}",
+    )
+
+    config = generator.GenerationConfig(
+        **tasks._prepare_generation_config(
+            {"size": 1, "seed": 1, "audience_context_file_id": "file-1"},
+            "tenant-1",
+        )
+    )
+
+    assert config.audience_context == "# distilled file-1 for tenant-1"

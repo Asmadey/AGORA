@@ -81,6 +81,8 @@ export interface AudienceCriteria {
   education: EducationLevel[];
   /** Дистиллируется воркером до генерации; не меняет заземлённые доли. */
   audienceContext?: string;
+  /** Строка audience_context_files для pdf/xls/xlsx; читается только воркером. */
+  audienceContextFileId?: string;
 }
 
 export const DEFAULT_CRITERIA: AudienceCriteria = {
@@ -147,6 +149,24 @@ export function parseAudienceChoice(
     }
   }
 
+  let audienceContextFileId: string | undefined;
+  if (raw.audienceContextFileId !== undefined) {
+    if (
+      typeof raw.audienceContextFileId !== "string" ||
+      !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+        raw.audienceContextFileId,
+      )
+    ) {
+      errors.push("audienceContextFileId: ожидается uuid либо отсутствие");
+    } else {
+      audienceContextFileId = raw.audienceContextFileId;
+    }
+  }
+
+  if (audienceContext && audienceContextFileId) {
+    errors.push("audienceContext и audienceContextFileId нельзя передавать вместе");
+  }
+
   const size = raw.size;
   if (
     typeof size !== "number" ||
@@ -194,6 +214,7 @@ export function parseAudienceChoice(
         genders: genders as Gender[],
         education: education as EducationLevel[],
         ...(audienceContext ? { audienceContext } : {}),
+        ...(audienceContextFileId ? { audienceContextFileId } : {}),
       },
     },
   };
@@ -219,6 +240,9 @@ export function toGenerationConfig(
     education: criteria.education,
     ...(criteria.audienceContext
       ? { audience_context: normalizeContext(criteria.audienceContext) }
+      : {}),
+    ...(criteria.audienceContextFileId
+      ? { audience_context_file_id: criteria.audienceContextFileId }
       : {}),
   };
 }

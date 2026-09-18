@@ -36,6 +36,8 @@ from __future__ import annotations
 
 import json
 import os
+import tempfile
+from pathlib import Path
 from typing import Any
 
 from ..celery_app import app
@@ -49,18 +51,110 @@ from ..portraits.distill import distill_context_file, load_prompt_template
 PROGRESS_EVERY = 5
 
 
-def _prepare_generation_config(raw_config: dict[str, Any]) -> dict[str, Any]:
-    """Distill an uploaded context before constructing ``GenerationConfig``."""
-    context_file = raw_config.get("audience_context")
+def _mark_context_file_failed(file_id: str, tenant_id: str, reason: str) -> None:
+    """Record a loud extraction failure without hiding the original reason."""
+    try:
+        _update(
+            tenant_id,
+            "UPDATE audience_context_files SET status='failed' WHERE id = %s::uuid",
+            (file_id,),
+        )
+    except Exception:
+        # The persona set still receives the extraction error. A secondary DB
+        # failure must not replace it with a misleading generic message.
+        pass
+
+
+def _load_context_file_portrait(file_id: str, tenant_id: str) -> str:
+    """Download, extract, distill, and persist one tenant-owned context file."""
+    import psycopg
+
+    from ..db import tenant_scope
+
+    dsn = os.environ.get("DATABASE_URL")
+    if not dsn:
+        raise ValueError("DATABASE_URL не задан: файл контекста нельзя прочитать")
+
+    with psycopg.connect(dsn) as conn, tenant_scope(conn, tenant_id) as cur:
+        cur.execute(
+            "SELECT f.s3_key, f.filename, f.status, p.body_md "
+            "FROM audience_context_files f "
+            "LEFT JOIN audience_portraits p ON p.id = f.portrait_id "
+            "WHERE f.id = %s::uuid",
+            (file_id,),
+        )
+        row = cur.fetchone()
+
+    if not row:
+        raise ValueError("файл контекста не найден или недоступен этому арендатору")
+    key, filename, status, existing_portrait = row
+    if status == "failed":
+        raise ValueError("файл контекста ранее не прошёл разбор")
+    if status == "distilled" and isinstance(existing_portrait, str) and existing_portrait.strip():
+        return existing_portrait.strip()
+
+    from ..portraits.extract import extract_context_text
+    from ..storage import Boto3S3
+
+    with tempfile.TemporaryDirectory(prefix="agora-context-") as directory:
+        # Имя пришло из БД, но не должно становиться путём за пределами
+        # временного каталога даже при ручной порче строки.
+        source = Path(directory) / Path(str(filename)).name
+        Boto3S3().download(str(key), source)
+        extracted = extract_context_text(source)
+
+    try:
+        template = load_prompt_template()
+        portrait = distill_context_file(extracted, prompt_template=template)
+    except Exception as exc:  # noqa: BLE001 - the file must become failed, not empty
+        raise ValueError(f"дистилляция файла не удалась: {type(exc).__name__}: {exc}") from exc
+    if not portrait.strip():
+        raise ValueError("portrait.distill вернул пустой портрет для файла контекста")
+
+    # A separate short transaction keeps the S3/model work out of a database
+    # transaction and makes status visible to the UI as soon as it is durable.
+    with psycopg.connect(dsn) as conn, tenant_scope(conn, tenant_id) as cur:
+        cur.execute(
+            "INSERT INTO audience_portraits (tenant_id, name, body_md, source) "
+            "VALUES (app.current_tenant(), %s, %s, 'context_file') RETURNING id",
+            (f"Контекст: {filename}", portrait),
+        )
+        portrait_id = cur.fetchone()[0]
+        cur.execute(
+            "UPDATE audience_context_files SET portrait_id=%s::uuid, status='distilled' "
+            "WHERE id=%s::uuid",
+            (portrait_id, file_id),
+        )
+    return portrait
+
+
+def _prepare_generation_config(
+    raw_config: dict[str, Any],
+    tenant_id: str | None = None,
+) -> dict[str, Any]:
+    """Distill text or a worker-side file before constructing ``GenerationConfig``."""
+    file_id = raw_config.get("audience_context_file_id")
+    clean = {key: value for key, value in raw_config.items() if key != "audience_context_file_id"}
+    if isinstance(file_id, str) and file_id.strip():
+        if not tenant_id:
+            raise ValueError("tenant_id обязателен для чтения файла контекста")
+        try:
+            clean["audience_context"] = _load_context_file_portrait(file_id, tenant_id)
+        except Exception as exc:  # noqa: BLE001 - status and set must both fail visibly
+            _mark_context_file_failed(file_id, tenant_id, str(exc))
+            raise ValueError(f"разбор файла контекста не удался: {exc}") from exc
+        return clean
+
+    context_file = clean.get("audience_context")
     if not isinstance(context_file, str) or not context_file.strip():
-        return raw_config
+        return clean
 
     try:
         context_prompt = load_prompt_template()
     except FileNotFoundError:
         context_prompt = None
     return {
-        **raw_config,
+        **clean,
         "audience_context": distill_context_file(
             context_file,
             prompt_template=context_prompt,
@@ -117,7 +211,7 @@ def generate_audience(self: Any, payload: dict[str, Any]) -> dict[str, Any]:
         # Контекст файла не должен ехать сырым в persona.generate. Сначала
         # пропускаем context_file через существующий portrait.distill (#24),
         # затем передаём короткий портрет отдельным ключом генератора.
-        raw_config = _prepare_generation_config(raw_config)
+        raw_config = _prepare_generation_config(raw_config, tenant_id)
         config = GenerationConfig(**raw_config)
         # Слепок корпуса, снятый при создании аудитории, — главнее файла в
         # образе. Файл остаётся запасным путём для наборов, созданных до того,
