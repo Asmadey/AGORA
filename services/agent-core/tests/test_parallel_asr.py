@@ -145,6 +145,61 @@ def test_both_halves_overlap_in_time(monkeypatch):
     assert update["speaker_turns"] == [
         {"start": 0.0, "end": 1.0, "speaker": "SPEAKER_00"}
     ]
+    assert not any("по очереди" in item for item in update.get("degraded", []))
+
+
+def _large_v3_state():
+    return {
+        **STATE,
+        "settings_snapshot": {"whisperModel": "large-v3"},
+    }
+
+
+def _run_sequential_with_available(monkeypatch, available):
+    import importlib
+
+    _patch(monkeypatch, _Slow(0.01, [_Segment(0.0, 1.0, "речь")]), _Slow(0.01, []))
+    monkeypatch.setattr(
+        importlib.import_module("agent_core.asr.budget"),
+        "available_mb",
+        available,
+    )
+    return nodes.transcribe_and_diarize(_large_v3_state())
+
+
+def test_memory_report_uses_decision_sample(monkeypatch):
+    update = _run_sequential_with_available(monkeypatch, lambda: 3319.0)
+
+    message = update["degraded"][-1]
+    assert "на момент решения" in message
+    assert "3319 МБ" in message
+
+
+def test_memory_report_lists_all_budget_parts(monkeypatch):
+    update = _run_sequential_with_available(monkeypatch, lambda: 3319.0)
+
+    message = update["degraded"][-1]
+    assert "large-v3" in message
+    assert "5100 МБ" in message
+    assert "2500 МБ" in message
+    assert "1024 МБ" in message
+    assert "8624 МБ" in message
+
+
+def test_memory_report_uses_one_memory_sample(monkeypatch):
+    samples = iter((3319.0, 14000.0))
+    calls = []
+
+    def changing_available():
+        calls.append(True)
+        return next(samples)
+
+    update = _run_sequential_with_available(monkeypatch, changing_available)
+
+    message = update["degraded"][-1]
+    assert calls == [True]
+    assert "3319 МБ" in message
+    assert "14000 МБ" not in message
 
 
 def test_diarization_failure_still_degrades_instead_of_failing(monkeypatch):

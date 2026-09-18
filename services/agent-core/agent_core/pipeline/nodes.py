@@ -472,7 +472,8 @@ def transcribe_and_diarize(state: PipelineState) -> dict[str, Any]:
         (state.get("settings_snapshot") or {}).get("whisperModel")
     ).whisper_model
 
-    if budget.can_run_together(model):
+    available = budget.available_mb()
+    if budget.can_run_together(model, available):
         with ThreadPoolExecutor(max_workers=2, thread_name_prefix="asr") as pool:
             # Контекст трассы переносится в оба потока: иначе спан, открытый
             # внутри распознавания, окажется корнем собственной трассы, а не
@@ -501,13 +502,16 @@ def transcribe_and_diarize(state: PipelineState) -> dict[str, Any]:
         except DiarizationUnavailable as exc:
             turns = []
             degraded.append(f"diarize: {exc}")
-        need = (
-            budget.TRANSCRIBE_PEAK_MB.get(model, budget.UNKNOWN_PEAK_MB)
-            + budget.DIARIZE_PEAK_MB
+        transcribe_peak = budget.TRANSCRIBE_PEAK_MB.get(
+            model, budget.UNKNOWN_PEAK_MB
         )
+        need = transcribe_peak + budget.DIARIZE_PEAK_MB + budget.HEADROOM_MB
         degraded.append(
-            f"расшифровка и диаризация выполнены по очереди: вместе они просят "
-            f"{need} МБ, а свободно {budget.available_mb():.0f} МБ"
+            f"расшифровка и диаризация выполнены по очереди: "
+            f"пик расшифровки {model} {transcribe_peak} МБ, "
+            f"пик диаризации {budget.DIARIZE_PEAK_MB} МБ, "
+            f"запас {budget.HEADROOM_MB} МБ — всего {need} МБ, "
+            f"а на момент решения свободно было {available:.0f} МБ"
         )
 
     update: dict[str, Any] = {
