@@ -85,7 +85,12 @@ def persona(idx: int, *, marker: str | None = None) -> dict:
         "big_five": {"openness": 3, "conscientiousness": 3, "extraversion": 3,
                      "agreeableness": 3, "neuroticism": 3},
         "values_and_beliefs": {
-            "important_values": ["Семья", marker or "Здоровье"],
+            # Маркер сюда НЕ кладётся: с 18.09.2026 список ценностей персоне на
+            # опросе не показывают. Он перечислял ей её же ценности ровно там,
+            # где спрашивают про ценности материала, и вопрос 8 анкеты заказчика
+            # получал их обратно — 89 % названных ценностей были собственными
+            # ценностями персоны при случайном уровне 29 % (прогон 0093).
+            "important_values": ["Семья", "Здоровье"],
             "worldview": "прагматическая", "political_orientation": "аполитичен",
             "religious_attitude": "нерелигиозен",
         },
@@ -93,7 +98,12 @@ def persona(idx: int, *, marker: str | None = None) -> dict:
         "communication_style": {"tone": "спокойный"},
         "decision_making": {"style": "взвешенный"},
         "technology_usage": {"devices": ["смартфон"]},
-        "lifestyle_and_interests": {"hobbies": ["бег"], "work_status": "работает"},
+        # Маркер изоляции живёт здесь: поле доезжает до промпта, и проверяемое
+        # свойство — «маркер одной персоны не попадает в промпт другой» — от
+        # смены носителя не меняется.
+        "lifestyle_and_interests": {
+            "hobbies": ["бег", marker or "плавание"], "work_status": "работает",
+        },
         "narrative": f"Портрет персоны номер {idx}, достаточно длинный для схемы валидации.",
         "seed": 42,
     }
