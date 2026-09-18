@@ -27,6 +27,9 @@ const SCALE = {
 
 const CLOSED = new Set(["single_choice", "multi_choice", "matrix_single"]);
 
+/** Типы, у которых варианты лежат у самого вопроса, а не у его строк. */
+const FLAT_CLOSED = new Set(["single_choice", "multi_choice"]);
+
 /**
  * Свежий идентификатор с заданным префиксом.
  *
@@ -68,6 +71,7 @@ export function draftForType(
 
   delete next.options;
   delete next.rows;
+  delete next.themes;
   delete next.maxChoices;
   delete next.scaleMin;
   delete next.scaleMax;
@@ -80,6 +84,23 @@ export function draftForType(
 
   if (!CLOSED.has(type)) return next;
 
+  if (type === "matrix_single") {
+    // Матрица заводится темой с вопросом внутри, а не голой строкой. Вопрос без
+    // темы в отчёте не с чем группировать: интегральный показатель восприятия
+    // считается по темам, и такая строка молча выпала бы из него.
+    //
+    // Общего списка вариантов у неё нет: он лежит у КАЖДОГО вопроса. Общий был
+    // перенесён сюда из частного случая вопроса 9 заказчика, где один список
+    // действительно повторяется на сорока трёх подтемах; у своей матрицы
+    // оператора вопросы внутри темы разные, и общий склеил бы их в один.
+    const themes = question.themes ?? [];
+    next.themes = themes.length > 0 ? [...themes] : [{ id: freeId("t", themes), label: "" }];
+
+    const rows = question.rows ?? [];
+    next.rows = rows.length > 0 ? rows.map(seedRowOptions) : [];
+    return next.rows.length > 0 ? next : addRowTo(next, next.themes[0].id);
+  }
+
   const kept = question.options ?? [];
   const options: SurveyOption[] = [...kept];
   while (options.length < SEEDED_OPTIONS) {
@@ -89,19 +110,16 @@ export function draftForType(
 
   if (type === "multi_choice") next.maxChoices = question.maxChoices ?? options.length;
 
-  if (type === "matrix_single") {
-    // Матрица заводится темой с вопросом внутри, а не голой строкой. Вопрос без
-    // темы в отчёте не с чем группировать: интегральный показатель восприятия
-    // считается по темам, и такая строка молча выпала бы из него.
-    const themes = question.themes ?? [];
-    next.themes = themes.length > 0 ? [...themes] : [{ id: freeId("t", themes), label: "" }];
-
-    const rows = question.rows ?? [];
-    next.rows =
-      rows.length > 0 ? [...rows] : [{ id: freeId("r", rows), label: "", themeId: next.themes[0].id }];
-  }
-
   return next;
+}
+
+/** Пустой вопрос матрицы, в котором нечего заполнить, не отличается от сломанного. */
+function seedRowOptions(row: SurveyRow): SurveyRow {
+  const options: SurveyOption[] = [...(row.options ?? [])];
+  while (options.length < SEEDED_OPTIONS) {
+    options.push({ id: freeId("o", options), label: "" });
+  }
+  return { ...row, options, maxChoices: row.maxChoices ?? 1 };
 }
 
 export function addOption(question: SurveyQuestion): SurveyQuestion {
@@ -127,7 +145,7 @@ export function setOptionLabel(
 
 export function addRow(question: SurveyQuestion): SurveyQuestion {
   const rows: SurveyRow[] = [...(question.rows ?? [])];
-  rows.push({ id: freeId("r", rows), label: "" });
+  rows.push(seedRowOptions({ id: freeId("r", rows), label: "" }));
   return { ...question, rows };
 }
 
@@ -167,7 +185,7 @@ export function draftIssues(question: SurveyQuestion): string[] {
     }
   }
 
-  if (CLOSED.has(question.type)) {
+  if (FLAT_CLOSED.has(question.type)) {
     const options = question.options ?? [];
     if (options.length < 2) issues.push("закрытому вопросу нужно не меньше двух вариантов");
     if (options.some((o) => o.label.trim().length === 0)) {
@@ -175,12 +193,26 @@ export function draftIssues(question: SurveyQuestion): string[] {
     }
   }
 
-  if (question.type === "matrix_single" && (question.rows?.length ?? 0) < 1) {
-    issues.push("матрице нужна хотя бы одна строка");
-  }
-
-  if (question.type === "matrix_single" && (question.rows ?? []).some((r) => !r.label.trim())) {
-    issues.push("у каждого вопроса матрицы должна быть подпись");
+  if (question.type === "matrix_single") {
+    const rows = question.rows ?? [];
+    if (rows.length < 1) issues.push("матрице нужна хотя бы одна строка");
+    if (rows.some((r) => !r.label.trim())) {
+      issues.push("у каждого вопроса матрицы должна быть подпись");
+    }
+    if (rows.some((r) => rowOptions(question, r).length < 2)) {
+      issues.push("закрытому вопросу нужно не меньше двух вариантов");
+    }
+    if (rows.some((r) => rowOptions(question, r).some((o) => !o.label.trim()))) {
+      issues.push("у каждого варианта должна быть подпись");
+    }
+    const overCap = rows.filter((r) => (r.maxChoices ?? 1) > rowOptions(question, r).length);
+    if (overCap.length > 0) {
+      issues.push(
+        `у вопроса «${overCap[0].label || "без подписи"}» разрешено ` +
+          `${overCap[0].maxChoices} ответов, а вариантов ` +
+          `${rowOptions(question, overCap[0]).length}`,
+      );
+    }
   }
 
   if (question.type === "matrix_single") {
@@ -249,7 +281,7 @@ export function removeTheme(question: SurveyQuestion, id: string): SurveyQuestio
 /** Вопрос внутрь конкретной темы. */
 export function addRowTo(question: SurveyQuestion, themeId: string): SurveyQuestion {
   const rows: SurveyRow[] = [...(question.rows ?? [])];
-  rows.push({ id: freeId("r", rows), label: "", themeId });
+  rows.push(seedRowOptions({ id: freeId("r", rows), label: "", themeId }));
   return { ...question, rows };
 }
 
@@ -259,23 +291,86 @@ export function rowsOfTheme(question: SurveyQuestion, themeId: string): SurveyRo
 }
 
 /**
- * Длина общего списка вариантов.
+ * Варианты ответа одного вопроса матрицы.
  *
- * Список один на всю матрицу — так же, как у заказчика в вопросе 9
- * («поднималась / не поднималась / затрудняюсь»). Поэтому поле ввода стоит один
- * раз у списка, а не у каждого вопроса: у каждого оно обещало бы, что у
- * вопросов списки разные.
- *
- * Ниже двух не опускается: закрытому вопросу нужно не меньше двух вариантов, и
- * поле ввода не должно уметь собрать анкету, которую сервер отвергнет. Уже
- * введённые подписи сохраняются — укорачивание режет с конца.
+ * Свои, а без своих — общие у вопроса. Второе оставляет вопрос 9 заказчика
+ * ровно таким, каким он был: один список на сорок три подтемы. То же правило
+ * записано у воркера (`survey.py:row_options`), и сходство не случайно —
+ * промпт, схема ответа, расчёт долей и выгрузка обязаны видеть один и тот же
+ * список, иначе персоне предложат одно, а посчитают другое.
  */
-export function setOptionCount(question: SurveyQuestion, count: number): SurveyQuestion {
-  const target = Math.max(SEEDED_OPTIONS, Math.floor(count) || SEEDED_OPTIONS);
-  let options = [...(question.options ?? [])];
+export function rowOptions(question: SurveyQuestion, row: SurveyRow): SurveyOption[] {
+  return row.options && row.options.length > 0 ? row.options : (question.options ?? []);
+}
 
-  while (options.length > target) options = options.slice(0, -1);
-  while (options.length < target) options.push({ id: freeId("o", options), label: "" });
+function patchRow(
+  question: SurveyQuestion,
+  rowId: string,
+  patch: (row: SurveyRow) => SurveyRow,
+): SurveyQuestion {
+  return {
+    ...question,
+    rows: (question.rows ?? []).map((r) => (r.id === rowId ? patch(r) : r)),
+  };
+}
 
-  return { ...question, options };
+/** Прижимает потолок выбора к тому, что есть: обещать больше нечем. */
+function cappedTo(row: SurveyRow): SurveyRow {
+  const total = row.options?.length ?? 0;
+  const cap = Math.min(Math.max(1, Math.floor(row.maxChoices ?? 1)), Math.max(1, total));
+  return { ...row, maxChoices: cap };
+}
+
+export function addRowOption(question: SurveyQuestion, rowId: string): SurveyQuestion {
+  return patchRow(question, rowId, (row) => {
+    const options = [...(row.options ?? [])];
+    options.push({ id: freeId("o", options), label: "" });
+    return { ...row, options };
+  });
+}
+
+/**
+ * Удаление варианта опускает потолок следом за ним.
+ *
+ * Иначе потолок пережил бы вариант, на который был рассчитан: «до трёх» при
+ * двух оставшихся — это обещание, которого анкета не выполнит, собранное в два
+ * шага вместо одного.
+ */
+export function removeRowOption(
+  question: SurveyQuestion,
+  rowId: string,
+  optionId: string,
+): SurveyQuestion {
+  return patchRow(question, rowId, (row) =>
+    cappedTo({ ...row, options: (row.options ?? []).filter((o) => o.id !== optionId) }),
+  );
+}
+
+export function setRowOptionLabel(
+  question: SurveyQuestion,
+  rowId: string,
+  optionId: string,
+  label: string,
+): SurveyQuestion {
+  return patchRow(question, rowId, (row) => ({
+    ...row,
+    options: (row.options ?? []).map((o) => (o.id === optionId ? { ...o, label } : o)),
+  }));
+}
+
+/**
+ * Сколько вариантов персона выбирает в этом вопросе.
+ *
+ * Больше, чем добавлено вариантов, задать нельзя: «до трёх» при двух вариантах
+ * анкета не выполнит, а в отчёте это не будет видно — доли сойдутся по тем
+ * двум, что есть, и будут выглядеть так же уверенно.
+ */
+export function setRowMaxChoices(
+  question: SurveyQuestion,
+  rowId: string,
+  count: number,
+): SurveyQuestion {
+  return patchRow(question, rowId, (row) =>
+    cappedTo({ ...row, maxChoices: Number.isFinite(count) ? Math.floor(count) : 1 }),
+  );
 }

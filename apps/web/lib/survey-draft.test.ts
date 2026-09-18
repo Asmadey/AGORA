@@ -6,16 +6,20 @@ import { newQuestionDraft } from "./survey-composition.ts";
 import {
   addOption,
   addRow,
+  addRowOption,
   addRowTo,
   addTheme,
   draftForType,
   draftIssues,
   removeOption,
   removeRow,
+  removeRowOption,
   removeTheme,
-  setOptionCount,
+  rowOptions,
   setOptionLabel,
   setRowLabel,
+  setRowMaxChoices,
+  setRowOptionLabel,
   setThemeLabel,
 } from "./survey-draft.ts";
 
@@ -52,8 +56,17 @@ test("смена типа готовит вопрос к заполнению, �
   assert.equal(single.scaleMax, undefined);
 
   const matrix = draft("matrix_single");
-  assert.ok((matrix.options?.length ?? 0) >= 2);
   assert.ok((matrix.rows?.length ?? 0) >= 1, "матрице нужна хотя бы одна строка");
+  assert.ok(
+    (matrix.rows![0].options?.length ?? 0) >= 2,
+    "варианты живут у вопроса матрицы, а не у матрицы целиком",
+  );
+  assert.equal(
+    matrix.options,
+    undefined,
+    "общий список вариантов у своей матрицы оператора не заводится: у вопросов " +
+      "внутри темы они разные, и общий склеил бы их в один",
+  );
 
   const open = draft("open");
   assert.equal(open.options, undefined, "у открытого вопроса вариантов нет");
@@ -65,6 +78,7 @@ test("возврат к шкале восстанавливает границы
 
   assert.equal(back.options, undefined);
   assert.equal(back.rows, undefined);
+  assert.equal(back.themes, undefined);
   assert.equal(typeof back.scaleMin, "number");
   assert.equal(typeof back.scaleMax, "number");
 });
@@ -105,6 +119,11 @@ test("подписи правятся, а идентификаторы — не�
 test("строки матрицы добавляются и удаляются по тем же правилам", () => {
   let q = addRow(draft("matrix_single"));
   assert.equal(q.rows?.length, 2);
+  assert.ok(
+    (q.rows![1].options?.length ?? 0) >= 2,
+    "новый вопрос матрицы приходит пустым: заполнить его нечем, а на вид он " +
+      "не отличается от сломанного",
+  );
 
   const removed = q.rows![1].id;
   q = removeRow(q, removed);
@@ -206,35 +225,117 @@ test("удаление темы уносит её вопросы", () => {
   );
 });
 
-test("число вариантов растит и укорачивает общий список, не трогая подписи", () => {
+test("у каждого вопроса темы свой список вариантов", () => {
+  /**
+   * Общий список был перенесён на матрицу вообще из частного случая вопроса 9
+   * заказчика, где он действительно один на сорок три подтемы. У своей матрицы
+   * оператора вопросы внутри темы разные: «Гордость за страну» отвечается
+   * «поднималась / не поднималась», а «Что запомнилось» — «финал / музыка».
+   * Общий список предложил бы персоне музыку там, где спрашивают про гордость.
+   */
   let m = draft("matrix_single");
-  m = setOptionLabel(m, m.options![0].id, "Да");
-  m = setOptionLabel(m, m.options![1].id, "Нет");
+  m = addTheme(m);
+  const [first, second] = m.rows!;
 
-  m = setOptionCount(m, 3);
-  assert.equal(m.options?.length, 3);
-  assert.equal(m.options![0].label, "Да", "правка числа стёрла уже введённую подпись");
+  m = setRowOptionLabel(m, first.id, first.options![0].id, "Поднималась");
+  m = setRowOptionLabel(m, second.id, second.options![0].id, "Финал");
 
-  m = setOptionCount(m, 2);
-  assert.equal(m.options?.length, 2);
-  assert.equal(m.options![1].label, "Нет");
+  assert.equal(rowOptions(m, m.rows![0])[0].label, "Поднималась");
+  assert.equal(rowOptions(m, m.rows![1])[0].label, "Финал", "правка задела чужой вопрос");
 });
 
-test("число вариантов не опускается ниже двух", () => {
-  const m = setOptionCount(draft("matrix_single"), 1);
+test("варианты вопроса добавляются и удаляются, не задевая соседний вопрос", () => {
+  let m = draft("matrix_single");
+  m = addRowTo(m, m.themes![0].id);
+  const [first, second] = m.rows!;
+
+  m = addRowOption(m, second.id);
+  assert.equal(rowOptions(m, m.rows![1]).length, 3);
+  assert.equal(rowOptions(m, m.rows![0]).length, 2, "добавление задело соседний вопрос");
+
+  const doomed = rowOptions(m, m.rows![1])[2].id;
+  m = removeRowOption(m, second.id, doomed);
+  m = addRowOption(m, second.id);
+  assert.notEqual(
+    rowOptions(m, m.rows![1]).at(-1)!.id,
+    doomed,
+    "идентификатор удалённого варианта переиспользован",
+  );
+  assert.equal(rowOptions(m, m.rows![0]).length, 2);
+  void first;
+});
+
+test("сколько вариантов нельзя задать больше, чем их добавлено", () => {
+  /**
+   * Поле «сколько вариантов» — это обещание персоне, а не подпись. Потолок «до
+   * трёх» при двух добавленных вариантах анкета не выполнит, и заметить это в
+   * отчёте будет нечем: доли сойдутся по тем двум, что есть.
+   */
+  let m = draft("matrix_single");
+  const row = m.rows![0];
+
+  m = setRowMaxChoices(m, row.id, 5);
+  assert.equal(m.rows![0].maxChoices, 2, "потолок не прижат к числу вариантов");
+
+  m = addRowOption(m, row.id);
+  m = setRowMaxChoices(m, row.id, 3);
+  assert.equal(m.rows![0].maxChoices, 3);
+
+  m = setRowMaxChoices(m, row.id, 0);
+  assert.equal(m.rows![0].maxChoices, 1, "ноль ответов означает вопрос без ответа");
+});
+
+test("удаление варианта опускает потолок следом за ним", () => {
+  /**
+   * Иначе потолок пережил бы вариант, на который был рассчитан: «до трёх» при
+   * двух оставшихся — та же невыполнимая анкета, только собранная в два шага.
+   */
+  let m = draft("matrix_single");
+  const row = m.rows![0];
+  m = addRowOption(m, row.id);
+  m = setRowMaxChoices(m, row.id, 3);
+
+  m = removeRowOption(m, row.id, rowOptions(m, m.rows![0])[2].id);
+  assert.equal(m.rows![0].maxChoices, 2);
+});
+
+test("вопрос матрицы без вариантов и без подписей назван причиной", () => {
+  const named = (q: SurveyQuestion) => ({ ...q, label: "Вопрос" });
+  let m = named(draft("matrix_single"));
+  m = setThemeLabel(m, m.themes![0].id, "Патриотизм");
+  m = setRowLabel(m, m.rows![0].id, "Гордость за страну");
+
   assert.ok(
-    (m.options?.length ?? 0) >= 2,
-    "закрытому вопросу нужно не меньше двух вариантов — поле ввода не должно " +
-      "уметь собрать анкету, которую сервер отвергнет",
+    draftIssues(m).some((r) => /подпис/i.test(r)),
+    "вариант без подписи должен называться причиной",
+  );
+
+  const row = m.rows![0];
+  m = setRowOptionLabel(m, row.id, row.options![0].id, "Поднималась");
+  m = setRowOptionLabel(m, row.id, row.options![1].id, "Не поднималась");
+  assert.deepEqual(draftIssues(m), []);
+
+  const bare = removeRowOption(m, row.id, row.options![1].id);
+  assert.ok(
+    draftIssues(bare).some((r) => /двух вариантов/i.test(r)),
+    "вопрос с одним вариантом — это не выбор, и сервер такую анкету отвергнет",
   );
 });
+
+/** Подписать варианты одного вопроса матрицы: без подписей жалуется валидатор. */
+function fillRow(question: SurveyQuestion, rowId: string): SurveyQuestion {
+  const row = question.rows!.find((r) => r.id === rowId)!;
+  return row.options!.reduce(
+    (acc, option, i) => setRowOptionLabel(acc, rowId, option.id, i === 0 ? "Да" : "Нет"),
+    question,
+  );
+}
 
 test("тема без вопросов и тема без подписи названы причинами", () => {
   const named = (q: SurveyQuestion) => ({ ...q, label: "Вопрос" });
   let m = named(draft("matrix_single"));
   m = setRowLabel(m, m.rows![0].id, "Строка");
-  m = setOptionLabel(m, m.options![0].id, "Да");
-  m = setOptionLabel(m, m.options![1].id, "Нет");
+  m = fillRow(m, m.rows![0].id);
 
   assert.ok(
     draftIssues(m).some((r) => /подпис.*тем|тем.*подпис/i.test(r)),
@@ -252,6 +353,7 @@ test("тема без вопросов и тема без подписи наз�
   let second = addTheme(withLabel);
   second = setThemeLabel(second, second.themes![1].id, "Пустая");
   second = setRowLabel(second, second.rows!.at(-1)!.id, "Вопрос");
+  second = fillRow(second, second.rows!.at(-1)!.id);
   assert.deepEqual(draftIssues(second), [], "тема с вопросом не должна ни на что жаловаться");
 
   const emptied = removeRow(second, second.rows!.at(-1)!.id);
@@ -269,8 +371,9 @@ test("собранная деревом матрица принимается в
   let m: SurveyQuestion = { ...draft("matrix_single"), label: "Темы проекта" };
   m = setThemeLabel(m, m.themes![0].id, "Патриотизм");
   m = setRowLabel(m, m.rows![0].id, "Гордость за страну");
-  m = setOptionLabel(m, m.options![0].id, "Поднималась");
-  m = setOptionLabel(m, m.options![1].id, "Не поднималась");
+  const row = m.rows![0];
+  m = setRowOptionLabel(m, row.id, row.options![0].id, "Поднималась");
+  m = setRowOptionLabel(m, row.id, row.options![1].id, "Не поднималась");
 
   assert.deepEqual(draftIssues(m), []);
 

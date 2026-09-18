@@ -40,7 +40,13 @@ import statistics
 from collections import Counter
 from typing import Any
 
-from ..survey import parse_field_answer, question_options, question_rows, survey_questions
+from ..survey import (
+    parse_field_answer,
+    question_rows,
+    row_max_choices,
+    row_options,
+    survey_questions,
+)
 from .aggregate import surviving
 
 #: Параметры аудитории, стоящие слева до вопросов. Пары «подпись → поле DNA».
@@ -128,6 +134,11 @@ def _columns(
     Одна колонка на поле, кроме мультивыбора: там их столько, сколько
     разрешено ответов. У матрицы колонка на строку, и подписью идёт текст
     строки — именно он стоит в файле заказчика, а не формулировка вопроса.
+
+    Строка матрицы, которой разрешено несколько ответов, занимает столько же
+    колонок, сколько ответов: второй выбор, не получивший своей колонки, просто
+    не доехал бы до файла, и потеря была бы не видна — в ячейке стоял бы
+    законный первый вариант.
     """
     names = labels or {}
     out: list[dict[str, Any]] = []
@@ -137,13 +148,15 @@ def _columns(
         block = names.get(block_id, block_id)
         if qtype == "matrix_single":
             for row in question_rows(q):
-                out.append({
-                    "block": block,
-                    "label": str(row.get("label") or ""),
-                    "field": str(row.get("id")),
-                    "question": q,
-                    "slot": 0,
-                })
+                for slot in range(row_max_choices(q, row)):
+                    out.append({
+                        "block": block,
+                        "label": str(row.get("label") or ""),
+                        "field": str(row.get("id")),
+                        "question": q,
+                        "row": row,
+                        "slot": slot,
+                    })
             continue
         slots = int(q.get("maxChoices") or 1) if qtype == "multi_choice" else 1
         for slot in range(slots):
@@ -161,7 +174,9 @@ def question_label_of(question: dict[str, Any]) -> str:
     return str(question.get("label") or question.get("text") or "").strip()
 
 
-def _cell(question: dict[str, Any], raw: Any, slot: int) -> Any:
+def _cell(
+    question: dict[str, Any], raw: Any, slot: int, row: dict[str, Any] | None = None
+) -> Any:
     """
     Значение одной ячейки.
 
@@ -169,7 +184,7 @@ def _cell(question: dict[str, Any], raw: Any, slot: int) -> Any:
     записать им «не ответил» значило бы утянуть среднее вниз на величину,
     которой никто не называл.
     """
-    parsed = parse_field_answer(question, raw)
+    parsed = parse_field_answer(question, raw, row)
     qtype = str(question.get("type") or "open")
 
     if qtype == "scale":
@@ -177,7 +192,7 @@ def _cell(question: dict[str, Any], raw: Any, slot: int) -> Any:
     if qtype == "open":
         return parsed.text or None
 
-    labels = {str(o.get("id")): str(o.get("label")) for o in question_options(question)}
+    labels = {str(o.get("id")): str(o.get("label")) for o in row_options(question, row)}
     picked = [labels.get(oid, oid) for oid in parsed.option_ids]
     return picked[slot] if slot < len(picked) else None
 
@@ -258,7 +273,11 @@ def build_workbook(
 
         for j, column in enumerate(columns, start=offset + 1):
             raw = _collapse(raw_by_field.get(column["field"], []))
-            ws.cell(row=r, column=j, value=_cell(column["question"], raw, column["slot"]))
+            ws.cell(
+                row=r,
+                column=j,
+                value=_cell(column["question"], raw, column["slot"], column.get("row")),
+            )
 
     ws.freeze_panes = ws.cell(row=HEADER_ROWS + 1, column=offset + 1)
     for i in range(1, offset + 1):

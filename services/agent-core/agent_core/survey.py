@@ -103,6 +103,40 @@ def question_rows(question: dict[str, Any]) -> list[dict[str, Any]]:
     return [r for r in raw if isinstance(r, dict)] if isinstance(raw, list) else []
 
 
+def row_options(question: dict[str, Any], row: dict[str, Any] | None) -> list[dict[str, Any]]:
+    """
+    Варианты ответа строки матрицы: свои, а если своих нет — общие у вопроса.
+
+    Оба случая живые. У вопроса 9 заказчика список один на все сорок три
+    подтемы («поднималась / не поднималась / затрудняюсь»), и повторять его у
+    каждой строки значило бы сорок три раза записать одно и то же. У своей
+    матрицы оператора вопросы внутри темы разные, и общий список склеил бы их:
+    персоне предложили бы варианты чужого вопроса, а её ответ разобрался бы
+    против них же — молча и с правдоподобным результатом.
+
+    Порядок «своё, иначе общее», а не слияние: слияние дало бы вопросу варианты,
+    которых оператор ему не назначал.
+    """
+    raw = (row or {}).get("options")
+    if isinstance(raw, list):
+        own = [o for o in raw if isinstance(o, dict)]
+        if own:
+            return own
+    return question_options(question)
+
+
+def row_max_choices(question: dict[str, Any], row: dict[str, Any] | None) -> int:
+    """
+    Сколько вариантов персона выбирает в этой строке. По умолчанию — ровно один.
+
+    Единица по умолчанию, а не «сколько угодно»: матрица заказчика отвечается по
+    одному варианту на строку, и молчаливое разрешение выбрать больше сделало бы
+    доли по строке несравнимыми с его полевыми волнами.
+    """
+    cap = (row or {}).get("maxChoices")
+    return cap if isinstance(cap, int) and cap >= 1 else 1
+
+
 def answerable_fields(survey: Any) -> list[str]:
     """
     Адреса всего, на что персона обязана ответить.
@@ -177,16 +211,25 @@ def render_questions(survey: Any) -> str:
             head = f"[{qid}] выбери не более {cap} вариантов" if cap \
                 else f"[{qid}] выбери один или несколько вариантов"
         elif qtype in MATRIX_TYPES:
-            head = f"[{qid}] ответь по каждой строке, по одному варианту на строку"
+            head = (
+                f"[{qid}] ответь по каждой строке; варианты и число ответов указаны у строки"
+                if any(isinstance(r.get("options"), list) and r.get("options") for r in rows)
+                else f"[{qid}] ответь по каждой строке, по одному варианту на строку"
+            )
         else:
             head = f"[{qid}] ответь текстом"
 
         lines = [head, label]
 
-        if options and qtype in MATRIX_TYPES:
+        # Свой список хотя бы у одной строки означает, что общего списка у этой
+        # матрицы нет: печатать его сверху значило бы предложить персоне
+        # варианты, которых у конкретной строки не спрашивают.
+        own_lists = any(isinstance(r.get("options"), list) and r.get("options") for r in rows)
+
+        if options and qtype in MATRIX_TYPES and not own_lists:
             lines.append("Варианты для каждой строки:")
             lines.extend(_option_line(i + 1, o, exclusive) for i, o in enumerate(options))
-        elif options:
+        elif options and qtype not in MATRIX_TYPES:
             lines.extend(_option_line(i + 1, o, exclusive) for i, o in enumerate(options))
 
         if rows:
@@ -202,6 +245,17 @@ def render_questions(survey: Any) -> str:
                     lines.append(f"  {themes[theme_id]}")
                     current = theme_id
                 lines.append(f"    [{row.get('id')}] {str(row.get('label') or '').strip()}")
+                if not own_lists:
+                    continue
+                cap = row_max_choices(question, row)
+                lines.append(
+                    "      выбери ровно один вариант:" if cap == 1
+                    else f"      выбери не более {cap} вариантов:"
+                )
+                lines.extend(
+                    "  " + _option_line(i + 1, o, exclusive)
+                    for i, o in enumerate(row_options(question, row))
+                )
 
         blocks.append("\n".join(lines))
 
@@ -232,11 +286,11 @@ class FieldAnswer:
     error: str = ""
 
 
-def _option_index(question: dict[str, Any]) -> tuple[dict[str, str], set[str]]:
+def _option_index(options: list[dict[str, Any]]) -> tuple[dict[str, str], set[str]]:
     """Сопоставление «идентификатор или подпись → идентификатор» и набор служебных."""
     by_key: dict[str, str] = {}
     service: set[str] = set()
-    for option in question_options(question):
+    for option in options:
         oid = str(option.get("id") or "").strip()
         if not oid:
             continue
@@ -296,7 +350,9 @@ def _resolve(chunk: str, by_key: dict[str, str]) -> tuple[list[str], list[str]]:
     return picked, unknown
 
 
-def parse_field_answer(question: dict[str, Any], raw: Any) -> FieldAnswer:
+def parse_field_answer(
+    question: dict[str, Any], raw: Any, row: dict[str, Any] | None = None
+) -> FieldAnswer:
     """
     Приводит ответ персоны к типу вопроса.
 
@@ -331,7 +387,10 @@ def parse_field_answer(question: dict[str, Any], raw: Any) -> FieldAnswer:
             return FieldAnswer(error=f"балл {value} вне шкалы {low}–{high}")
         return FieldAnswer(value=value)
 
-    by_key, service = _option_index(question)
+    # Варианты берутся у СТРОКИ, когда она названа: у своей матрицы оператора
+    # списки у вопросов внутри темы разные, и разбор против общего принял бы
+    # чужой вариант как свой — без отказа и с правдоподобной долей на графике.
+    by_key, service = _option_index(row_options(question, row))
     picked: list[str] = []
     unknown: list[str] = []
     for chunk in _chunks(raw):
@@ -343,7 +402,10 @@ def parse_field_answer(question: dict[str, Any], raw: Any) -> FieldAnswer:
     if unknown:
         problems.append("варианты не из списка: " + ", ".join(unknown))
 
-    cap = question.get("maxChoices") if qtype == "multi_choice" else 1
+    if qtype in MATRIX_TYPES:
+        cap = row_max_choices(question, row)
+    else:
+        cap = question.get("maxChoices") if qtype == "multi_choice" else 1
     if isinstance(cap, int) and len(picked) > cap:
         problems.append(
             f"выбрано {len(picked)} вариантов, потолок — не более {cap}"
