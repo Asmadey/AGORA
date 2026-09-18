@@ -22,9 +22,31 @@ from collections import Counter
 from pathlib import Path
 from typing import Any
 
-REPO_ROOT = Path(__file__).resolve().parents[4]
-DEFAULT_CORPUS_PATH = REPO_ROOT / "data" / "grounding" / "unified_respondent_sessions.json"
-DEFAULT_PROMPT_PATH = REPO_ROOT / "prompts" / "portrait.distill.md"
+from ..paths import find_data_file, find_repo_file
+
+#: Корпус и промпт ищутся через `agent_core.paths`, а не арифметикой по
+#: `parents[N]`.
+#:
+#: Раскладок две и они разной глубины: в репозитории модуль лежит по пути
+#: services/agent-core/agent_core/portraits/distill.py, в образе воркера — по
+#: /app/agent_core/portraits/distill.py. Фиксированное `parents[4]` не просто
+#: промахивалось мимо каталога: у короткого пути четвёртого предка НЕТ, и
+#: обращение к нему бросает IndexError прямо при импорте.
+#:
+#: Пока `distill` звали только из веба и из CLI, это молчало. Первый же импорт
+#: из `persona/tasks.py` положил воркера на боевом в цикл перезапуска — celery
+#: не смог загрузить модуль задач.
+#:
+#: `paths.py` для того и заведён: в его шапке сказано, что приём уже дважды
+#: написан по месту и потому должен жить один раз. Это была третья копия.
+DEFAULT_CORPUS_PATH = (
+    find_data_file("grounding/unified_respondent_sessions.json")
+    or Path("data/grounding/unified_respondent_sessions.json")
+)
+DEFAULT_PROMPT_PATH = (
+    find_repo_file("prompts/portrait.distill.md")
+    or Path("prompts/portrait.distill.md")
+)
 
 AGE_GROUPS = ["14-17", "18-24", "25-34", "35-44", "45-59", "60+"]
 GEOS = ["столицы", "центры субъектов", "иные НП"]
