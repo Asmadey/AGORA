@@ -23,10 +23,28 @@ from functools import lru_cache
 from pathlib import Path
 from statistics import mean
 
-REPO = Path(__file__).resolve().parents[4]
-DATASET = REPO / "data" / "grounding" / "unified_respondent_sessions.json"
-META = REPO / "data" / "grounding" / "corpus.meta.json"
-SCHEMA = REPO / "packages" / "shared" / "schemas" / "respondent-session.schema.json"
+from ..paths import find_data_file, find_repo_file
+
+#: Пути ищутся через `agent_core.paths`, а не арифметикой по `parents[N]`.
+#:
+#: `parents[4]` верно ровно для раскладки репозитория. В образе воркера пакет
+#: лежит в /app/agent_core/…, четвёртого предка у такого пути нет, и обращение
+#: к нему бросает IndexError ПРИ ИМПОРТЕ — то есть роняет процесс целиком, а не
+#: одно чтение. Ровно так воркер ушёл в цикл перезапуска 18.09.2026, когда
+#: `portraits/distill.py` с той же арифметикой впервые импортировали из
+#: `persona/tasks.py`.
+#:
+#: Здесь это пока молчало только потому, что модуль не импортировался в образе
+#: на короткой глубине. Молчащий той же природы дефект лучше снять заодно.
+DATASET = (
+    find_data_file("grounding/unified_respondent_sessions.json")
+    or Path("data/grounding/unified_respondent_sessions.json")
+)
+META = find_data_file("grounding/corpus.meta.json") or Path("data/grounding/corpus.meta.json")
+SCHEMA = (
+    find_repo_file("packages/shared/schemas/respondent-session.schema.json")
+    or Path("packages/shared/schemas/respondent-session.schema.json")
+)
 
 #: Пять базовых критериев. Порядок фиксирован — по нему считается калибровка.
 CORE_SCORES = ("overall_impression", "plot", "acting", "music", "cinematography")
