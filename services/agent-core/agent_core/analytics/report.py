@@ -77,6 +77,7 @@ class QwenAnalystClient:
         )
 
     def complete(self, *, system: str, user: str) -> str:
+        from ..schemas.responses import MAX_TOKENS, content_of
         from ..tracing import llm_client
 
         # Клиент выдаётся agent_core.tracing: там он оборачивается для
@@ -98,10 +99,31 @@ class QwenAnalystClient:
                 {"role": "user", "content": user},
             ],
             temperature=self.temperature,
+            # Грамматика JSON, а не просьба «возвращай только JSON».
+            #
+            # Прогон 0093 остался без нарратива: модель написала внутри строки
+            # сырую двойную кавычку — «… им «понятна» (idea_comprehension:
+            # "понятно"…», — строка на ней закончилась, и разбор упёрся в слово
+            # там, где ждал запятую. Просьба в системном промпте этого не
+            # удерживает: она выполняется через раз и незаметно.
+            #
+            # `json_object`, а не `json_schema`: `rationales` — словарь с
+            # произвольными ключами метрик, и строгая схема с закрытым составом
+            # полей (assert_strict) описать его не может, не переписав контракт
+            # отчёта. Режим проверен на боевом endpoint 18.09.2026 — та же
+            # кавычка приезжает экранированной.
+            response_format={"type": "json_object"},
+            # Потолок ставится ВМЕСТЕ с грамматикой, а не рядом: грамматика без
+            # потолка уводит модель в генерацию до предела контекста — замер и
+            # причина в MAX_TOKENS.
+            max_tokens=MAX_TOKENS["analyst"],
             # Размышление выключено: см. ModelConfig.thinking — замер и причина.
             extra_body=self.config.extra_body("analytics"),
         )
-        return (response.choices[0].message.content or "").strip()
+        # Через content_of, а не напрямую: обрыв по потолку обязан приходить
+        # обрывом. Иначе он неотличим от битого JSON — ровно та путаница,
+        # из-за которой причину отказа 0093 пришлось искать в трассе LangFuse.
+        return content_of(response, role="analyst")
 
 
 #: Незаполненный плейсхолдер шаблона. Имена — те же, что понимает промпт-студия

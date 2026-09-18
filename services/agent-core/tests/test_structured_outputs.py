@@ -176,7 +176,16 @@ def test_every_schema_has_a_token_ceiling():
     """
     from agent_core.schemas.responses import MAX_TOKENS
 
-    assert set(MAX_TOKENS) == {"frame_analysis", "respondent", "judge", "persona_validation"}
+    assert set(MAX_TOKENS) == {
+        "frame_analysis",
+        "respondent",
+        "judge",
+        "persona_validation",
+        # Аналитик добавлен 18.09.2026: он был единственной ролью без потолка и
+        # без грамматики, и прогон 0093 потерял нарратив на неэкранированной
+        # кавычке внутри строки JSON.
+        "analyst",
+    }
     for role, ceiling in MAX_TOKENS.items():
         assert 200 <= ceiling <= 16000, f"{role}: потолок {ceiling} вне разумного"
 
@@ -196,6 +205,12 @@ def test_every_schema_has_a_token_ceiling():
     assert "respondent" in default_thinking, (
         "у респондента выключили размышление — потолок в MAX_TOKENS можно снижать"
     )
+    # Аналитик в сравнение не входит намеренно. Утверждение здесь про
+    # РАЗМЫШЛЕНИЕ: у респондента оно включено и считается теми же токенами
+    # вывода, поэтому его потолок обязан кратно превышать потолки ролей,
+    # которые просто пишут ответ. Аналитик размышления не ведёт — у него
+    # большой потолок по другой причине (длинный документ), и включённый в этот
+    # максимум он сравнивал бы величины, у которых разный смысл.
     assert MAX_TOKENS["respondent"] >= 3 * max(
         MAX_TOKENS["frame_analysis"], MAX_TOKENS["judge"], MAX_TOKENS["persona_validation"]
     ), "потолок респондента обязан вмещать рассуждение, а не только ответ"
