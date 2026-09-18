@@ -4,6 +4,7 @@ import { ClipboardList } from "lucide-react";
 import { PageHeader } from "@/components/AppShell";
 import { Chip } from "@/components/agora/Primitives";
 import { EmptyState } from "@/components/agora/States";
+import { surveyComposition } from "@/lib/survey-composition";
 import { withTenant } from "@/lib/server/db";
 import { requireSession } from "@/lib/server/guard";
 import { listSurveys } from "@/lib/server/surveys";
@@ -55,7 +56,7 @@ export default async function SurveysPage() {
         ) : (
           <div className="space-y-2">
             {surveys.map((s) => {
-              const custom = s.questions.filter((q) => !q.baseKey).length;
+              const { custom } = surveyComposition(s.questions);
               return (
                 <Link
                   key={s.id}
