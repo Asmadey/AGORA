@@ -149,9 +149,7 @@ def test_judge_actually_sees_corpus_lines(monkeypatch):
     import json
     from contextlib import nullcontext
 
-    import psycopg
-
-    from agent_core import db, tracing
+    from agent_core import tracing
     from agent_core.persona import enrich, tasks
 
     seen: list[str] = []
@@ -166,14 +164,24 @@ def test_judge_actually_sees_corpus_lines(monkeypatch):
                 return json.dumps({"consistent": True, "confidence": 1.0, "issues": []})
             return "Описание проверяемой персоны. " * 20
 
-    class Cursor:
-        def execute(self, sql, params):  # noqa: ARG002
-            return None
-
-    monkeypatch.setenv("DATABASE_URL", "postgresql://test.invalid/test")
-    monkeypatch.setattr(psycopg, "connect", lambda *a, **kw: nullcontext())
-    monkeypatch.setattr(db, "tenant_scope", lambda *a: nullcontext(Cursor()))
-    monkeypatch.setattr(tasks, "_update", lambda *a: None)
+    monkeypatch.setattr(
+        tasks,
+        "_begin_generation",
+        lambda *args: {
+            "size": 2,
+            "generation_config": {"size": 2, "seed": 7, "use_llm": True},
+            "seed": 7,
+            "corpus_snapshot_id": None,
+            "status": "generating",
+            "generated_count": 0,
+            "previous_status": "generating",
+        },
+    )
+    monkeypatch.setattr(
+        tasks,
+        "_write_persona_batch",
+        lambda tenant_id, set_id, **kwargs: len(kwargs["personas"]),
+    )
     monkeypatch.setattr(tasks, "_load_portraits", lambda *a: {})
     monkeypatch.setattr(tracing, "run", lambda **kw: nullcontext())
     monkeypatch.setattr(enrich, "QwenTextClient", Judge)

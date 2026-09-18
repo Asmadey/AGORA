@@ -39,6 +39,27 @@ def tcp(host: str, port: int, timeout: float = 6.0) -> str | None:
         return str(e)
 
 
+def check_persona_sets(conn: object) -> bool:
+    """Остановить пересборку, если воркер сейчас генерирует аудиторию."""
+    with conn.cursor() as cur:  # type: ignore[union-attr]
+        cur.execute(
+            "SELECT count(*) FROM persona_sets WHERE status = 'generating'"
+        )
+        (generating,) = cur.fetchone()
+
+    if generating:
+        report(
+            "persona_sets",
+            "fail",
+            f"найдено {generating} набор(ов) со статусом generating; "
+            "дождитесь завершения или остановите генерацию перед пересборкой",
+        )
+        return False
+    else:
+        report("persona_sets", "ok", "активной генерации нет")
+        return True
+
+
 def check_postgres() -> None:
     url = os.environ.get("DATABASE_URL") or os.environ.get("POSTGRES_ADMIN_URL")
     if not url:
@@ -62,9 +83,12 @@ def check_postgres() -> None:
             user, db, tables = cur.fetchone()
             cur.execute("SELECT count(*) FROM pg_policies WHERE schemaname='public'")
             (policies,) = cur.fetchone()
+            persona_sets_ok = check_persona_sets(conn)
         detail = f"{user}@{db} · таблиц {tables} · политик RLS {policies}"
         if tables == 0:
             return report("postgres", "fail", detail + " — схема не применена, см. infra/postgres/migrate.sh")
+        if not persona_sets_ok:
+            return report("postgres", "fail", detail + " — есть активная генерация аудитории")
         report("postgres", "ok", detail)
     except Exception as e:  # noqa: BLE001 — печатаем причину как есть, она информативна
         report("postgres", "fail", str(e).strip().splitlines()[0])
