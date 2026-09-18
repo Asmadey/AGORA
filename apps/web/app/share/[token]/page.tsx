@@ -6,6 +6,7 @@ import { Timeline } from "@/components/agora/Timeline";
 import { audienceNote } from "@/lib/audience-note";
 import { researchTitle } from "@/lib/research-title";
 import { parseScope } from "@/lib/share-scope";
+import { loadTimelineDuration } from "@/lib/server/content-pack";
 
 /**
  * Отчёт по публичной ссылке (#29) — без входа в систему.
@@ -114,6 +115,9 @@ export default async function SharedReportPage({
   const scope = parseScope(grant.scope);
   const view = parseReport(envelope.report);
 
+  const videoDurationSec =
+    scope === "full" ? await loadTimelineDuration(session, grant.task_id) : null;
+
   // Карточки персон нужны и как содержимое секции, и как основание раскрытия
   // под метриками. В режиме «только сводка» ни то, ни другое не показывается,
   // поэтому и читать их незачем: лишняя выборка на мегабайты ради данных,
@@ -157,6 +161,7 @@ export default async function SharedReportPage({
         runId={grant.task_id}
         qaNote={qaNote}
         scope={scope}
+        videoDurationSec={videoDurationSec}
         // Материал берётся маршрутом под токеном: у гостя нет сессии, и
         // внутренний /api/tasks/[id]/timeline ему ответит отказом.
         timeline={<Timeline runId={grant.task_id} src={`/share/${token}/timeline`} />}

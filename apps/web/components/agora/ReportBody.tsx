@@ -8,6 +8,16 @@ import { MetricInfo } from "@/components/agora/MetricInfo";
 import { CRITERIA, CRITERIA_LABELS } from "@/lib/agora-types";
 import { contributions, type MetricKey } from "@/lib/provenance";
 import {
+  formatAxisTimecode,
+  formatTimecode,
+  parseTimecode,
+  riskMarkerOpacity,
+  riskMarkerScale,
+  riskPointPosition,
+  segmentBarPercent,
+  segmentDimensionLabel,
+} from "@/lib/report-charts";
+import {
   matrixPairs,
   optionPairs,
   surveyBlocks,
@@ -67,10 +77,10 @@ export interface ReportBodyProps {
   /** Дерево сырого отчёта. Только внутренняя страница: наружу оно не идёт. */
   rawReport?: ReactNode;
   /**
-   * Длительность прогона. `null` на публичной странице — не «не записана», а
-   * «не показываем»: карточка просто не рисуется, а прочерк утверждал бы, что
-   * замера нет.
+   * Длительность ролика из пакета материала. `null` — замер не сохранён, и
+   * диаграмма точек риска обязана остаться списком без выдуманной шкалы.
    */
+  videoDurationSec?: number | null;
 }
 
 /** Виды проверки QA в человеческих словах. Ключи — из agent_core/qa/run.py. */
@@ -395,6 +405,99 @@ function SurveySection({ survey }: { survey: SurveyView }) {
   );
 }
 
+function RiskChart({
+  points,
+  durationSec,
+}: {
+  points: ReportView["riskPoints"];
+  durationSec: number;
+}) {
+  const maxPersonas = Math.max(...points.map((point) => point.personas), 1);
+  const durationLabel = formatAxisTimecode(durationSec);
+
+  return (
+    <div
+      className="mt-5"
+      role="group"
+      aria-label={`Шкала ролика от 0:00 до ${durationLabel}. Размер и насыщенность отметки показывают число персон`}
+    >
+      <p className="mb-2 text-xs text-slate">
+        Положение в ролике · 0:00 - {durationLabel}. Размер и насыщенность отметки - число персон
+      </p>
+      <div className="relative h-10 px-2">
+        <div className="absolute inset-x-2 top-1/2 h-1 -translate-y-1/2 rounded-full bg-secondary" />
+        {points.map((point) => {
+          const seconds = point.seconds ?? parseTimecode(point.timecode);
+          const position = seconds === null ? null : riskPointPosition(seconds, durationSec);
+          if (position === null) return null;
+          const scale = riskMarkerScale(point.personas, maxPersonas);
+          return (
+            <a
+              key={`${point.timecode}-${point.note}-${point.personas}`}
+              href={`#t=${seconds}`}
+              className="absolute top-1/2 block -translate-x-1/2 -translate-y-1/2 rounded-full bg-brand-blue ring-2 ring-background transition-transform hover:scale-110 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-blue"
+              style={{
+                left: `${position}%`,
+                width: `${scale}rem`,
+                height: `${scale}rem`,
+                opacity: riskMarkerOpacity(point.personas, maxPersonas),
+              }}
+              title={`${point.timecode}: ${point.note || "сцена не указана"} · ${point.personas} персон`}
+              aria-label={`${point.timecode}: ${point.note || "сцена не указана"}, ${point.personas} персон`}
+            />
+          );
+        })}
+      </div>
+      <div className="flex justify-between px-2 text-[11px] tabular-nums text-slate">
+        <span>0:00</span>
+        <span>{durationLabel}</span>
+      </div>
+    </div>
+  );
+}
+
+function SegmentDimensionChart({ dimension }: { dimension: ReportView["segments"][number] }) {
+  return (
+    <div className="min-w-[260px] flex-1">
+      <h3 className="mb-3 text-xs uppercase tracking-wide text-slate">{dimension.label}</h3>
+      <div className="space-y-4">
+        {dimension.rows.map((row) => {
+          const bar = segmentBarPercent(row.overall);
+          return (
+            <div key={row.value} className="rounded-lg border border-hairline bg-card p-4">
+              <div className="flex items-baseline justify-between gap-2">
+                <Chip tone="solid">{row.value}</Chip>
+                <span className="text-xl font-semibold tabular-nums">
+                  {fmt(row.overall, 1)}
+                </span>
+              </div>
+              <div className="mt-3">
+                <div className="relative h-2 overflow-hidden rounded-full bg-secondary">
+                  {bar !== null && (
+                    <div className="h-full rounded-full bg-brand-blue" style={{ width: `${bar}%` }} />
+                  )}
+                </div>
+                <div className="mt-1 flex justify-between text-[10px] tabular-nums text-slate">
+                  <span>0</span>
+                  <span>10</span>
+                </div>
+              </div>
+              <dl className="mt-3 space-y-1 text-sm text-slate">
+                <Row label="NPS" value={fmt(row.nps, 0)} />
+                <Row
+                  label="Досмотрят"
+                  value={row.retentionRate === null ? "—" : `${row.retentionRate.toFixed(0)}%`}
+                />
+                <Row label="Персон" value={String(row.personas)} />
+              </dl>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 export function ReportBody({
   view,
   answers,
@@ -404,6 +507,7 @@ export function ReportBody({
   scope,
   timeline,
   rawReport,
+  videoDurationSec = null,
 }: ReportBodyProps) {
   const show = (section: Parameters<typeof showsSection>[1]) => showsSection(scope, section);
 
@@ -652,6 +756,14 @@ export function ReportBody({
             <p className="mt-0.5 text-xs text-slate">
               Моменты, названные теми, кто не стал бы досматривать
             </p>
+            {videoDurationSec !== null && videoDurationSec > 0 && (
+              <RiskChart points={view.riskPoints} durationSec={videoDurationSec} />
+            )}
+            {videoDurationSec === null || videoDurationSec <= 0 ? (
+              <p className="mt-4 text-xs text-slate">
+                Шкала недоступна: длительность ролика не сохранена в пакете материала.
+              </p>
+            ) : null}
             <div className="mt-4 flex flex-wrap gap-2">
               {view.riskPoints.map((p) => (
                 <TimecodeRef
@@ -676,49 +788,9 @@ export function ReportBody({
               </p>
             ) : (
               <>
-                {/*
-                  Все плашки на одном уровне и с ОДИНАКОВЫМ зазором в 15 пикселей —
-                  и между значениями внутри измерения, и между самими измерениями.
-
-                  Сетка из равных колонок здесь не годится: у «Возраста» одно
-                  значение, у «Пола» два, и колонка под одну плашку оставляла
-                  пустоту шириной со вторую. Зазор при этом переставал быть
-                  зазором — глаз читал его как границу раздела.
-
-                  Поэтому ряд, а не сетка: плашки одной ширины идут подряд и
-                  переносятся, когда кончается строка. Подпись измерения стоит над
-                  своей группой и уезжает вместе с ней.
-                */}
-                <div className="flex flex-wrap gap-[15px]">
+                <div className="flex flex-wrap gap-6">
                   {view.segments.map((dim) => (
-                    <div key={dim.key}>
-                      <h3 className="mb-2 text-xs uppercase tracking-wide text-slate">
-                        {dim.label}
-                      </h3>
-                      <div className="flex flex-wrap gap-[15px]">
-                        {dim.rows.map((row) => (
-                          <div
-                            key={row.value}
-                            className="w-[240px] rounded-lg border border-hairline bg-card p-5"
-                          >
-                            <div className="flex items-baseline justify-between gap-2">
-                              <Chip tone="solid">{row.value}</Chip>
-                              <span className="text-2xl font-semibold tabular-nums">
-                                {fmt(row.overall, 1)}
-                              </span>
-                            </div>
-                            <dl className="mt-3 space-y-1 text-sm text-slate">
-                              <Row label="NPS" value={fmt(row.nps, 0)} />
-                              <Row
-                                label="Досмотрят"
-                                value={row.retentionRate === null ? "—" : `${row.retentionRate.toFixed(0)}%`}
-                              />
-                              <Row label="Персон" value={String(row.personas)} />
-                            </dl>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
+                    <SegmentDimensionChart key={dim.key} dimension={dim} />
                   ))}
                 </div>
 
@@ -726,9 +798,9 @@ export function ReportBody({
                     читается как потерянные данные. */}
                 {view.suppressedSegments.length > 0 && (
                   <p className="mt-4 text-xs text-slate">
-                    Скрыто как слишком малые:{" "}
+                    Скрыто как слишком малые (порог: {view.minSegmentPersonas} персон):{" "}
                     {view.suppressedSegments
-                      .map((s) => `${s.value} (${s.personas})`)
+                      .map((s) => `${segmentDimensionLabel(s.dimension)}: ${s.value} (${s.personas})`)
                       .join(", ")}
                   </p>
                 )}

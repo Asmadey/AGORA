@@ -1,4 +1,5 @@
 import { CRITERIA, type Criterion } from "./agora-types.ts";
+import { formatTimecode } from "./report-charts.ts";
 
 /**
  * Разбор отчёта в то, что рисует экран (задача #21).
@@ -59,7 +60,7 @@ export interface ReportView {
   themes: { title: string; agreement: string; summary: string; quotes: Quote[] }[];
   strengths: string[];
   weaknesses: string[];
-  riskPoints: { timecode: string; note: string; personas: number }[];
+  riskPoints: { timecode: string; note: string; personas: number; seconds?: number }[];
   segments: SegmentDimension[];
   suppressedSegments: SuppressedSegment[];
   minSegmentPersonas: number;
@@ -685,12 +686,14 @@ export function parseReport(raw: Record<string, unknown>): ReportView {
     riskPoints: (Array.isArray(raw.retention_risk_points) ? raw.retention_risk_points : [])
       .flatMap((rawPoint) => {
         const p = obj(rawPoint);
-        const timecode = str(p.timecode);
+        const seconds = num(p.timestamp_sec);
+        const timecode = seconds !== null ? formatTimecode(seconds) : str(p.timecode);
         if (!timecode) return [];
         return [{
           timecode,
           note: str(p.scene) ?? str(p.note) ?? "",
           personas: num(p.personas) ?? 0,
+          ...(seconds !== null ? { seconds } : {}),
         }];
       }),
     segments,
