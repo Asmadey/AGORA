@@ -118,6 +118,32 @@ export async function loadTimeline(
   };
 }
 
+/**
+ * Длительность без загрузки сцен и без подписывания кадров.
+ *
+ * Страница отчёта использует её для шкалы точек риска, а сам Timeline всё
+ * равно читает полный пакет позже на клиенте. Отсутствие или нулевая запись
+ * означает, что честную ось построить нельзя.
+ */
+export async function loadTimelineDuration(
+  session: SessionUser,
+  taskId: string,
+): Promise<number | null> {
+  try {
+    const coll = await collection(CONTENT_PACKS);
+    const doc = await coll.findOne(
+      { tenant_id: session.tenantId, task_id: taskId },
+      { projection: { _id: 0, "pack.duration_sec": 1 } },
+    );
+    const duration = num((doc?.pack as Record<string, unknown> | undefined)?.duration_sec);
+    return duration > 0 ? duration : null;
+  } catch {
+    // Отчёт всё равно полезен без оси: список точек остаётся, а отсутствие
+    // пакета не должно превращать готовый отчёт в ошибку страницы.
+    return null;
+  }
+}
+
 export function safePresign(key: string): string | null {
   try {
     return createPresignedGetUrl(key);

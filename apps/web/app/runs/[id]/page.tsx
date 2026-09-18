@@ -13,7 +13,7 @@ import { getTask, taskNumber, loadRunTiming } from "@/lib/server/tasks";
 import { notFound } from "next/navigation";
 import { resolveRun } from "@/lib/server/run-ref";
 import { runSlug } from "@/lib/run-slug";
-import { safePresign } from "@/lib/server/content-pack";
+import { loadTimelineDuration, safePresign } from "@/lib/server/content-pack";
 import { DownloadMenu } from "@/components/agora/DownloadMenu";
 import { audienceNote } from "@/lib/audience-note";
 import { researchTitle } from "@/lib/research-title";
@@ -77,13 +77,16 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
   }
 
   const view = parseReport(envelope.report);
-  const { items } = await loadReportPersonas(session, id, { limit: FIRST_PAGE });
+  const [{ items }, timing, task, videoDurationSec] = await Promise.all([
+    loadReportPersonas(session, id, { limit: FIRST_PAGE }),
+    withTenant(tenantId, (client) => loadRunTiming(client, id)),
+    withTenant(tenantId, (client) => getTask(client, id)),
+    loadTimelineDuration(session, id),
+  ]);
   const answers = items.map(parseAnswer);
-  const timing = await withTenant(tenantId, (client) => loadRunTiming(client, id));
   // Номер — для человека, идентификатор — для ссылки. Заголовок «Исследование
   // e81feb92-97a2-43ad-8112-de7503699c60» нельзя ни произнести, ни запомнить, а
   // сослаться на прогон в разговоре нужно каждый день.
-  const task = await withTenant(tenantId, (client) => getTask(client, id));
   // Ценностей аудитории страница больше не считает: плитку заняли ответы на
   // вопрос 8 анкеты (решение владельца 17.09.2026), а они приходят в отчёте.
   // Запрос к набору персон ради плитки, которой нет, — это лишний поход в базу
@@ -165,6 +168,7 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
           runId={id}
           qaNote={qaNote}
           scope="full"
+          videoDurationSec={videoDurationSec}
           timeline={<Timeline runId={id} processingSec={timing?.totalSec ?? null} />}
           rawReport={
             /*

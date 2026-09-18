@@ -92,6 +92,42 @@ test("сегменты разбираются по измерениям, скр�
   assert.equal(view.minSegmentPersonas, 5);
 });
 
+test("точки риска читаются в форме, которую пишет воркер", () => {
+  const view = parseReport({
+    retention_risk_points: Array.from({ length: 10 }, (_, i) => ({
+      timestamp_sec: i * 10,
+      personas: i + 1,
+      scene: `Сцена ${i + 1}`,
+    })),
+  });
+
+  assert.equal(view.riskPoints.length, 10);
+  assert.deepEqual(view.riskPoints[0], {
+    timecode: "0:00",
+    note: "Сцена 1",
+    personas: 1,
+    seconds: 0,
+  });
+  assert.deepEqual(view.riskPoints[9], {
+    timecode: "1:30",
+    note: "Сцена 10",
+    personas: 10,
+    seconds: 90,
+  });
+});
+
+test("старый строковый таймкод точки риска остаётся читаемым", () => {
+  const view = parseReport({
+    retention_risk_points: [{ timecode: "2:05", scene: "Старая сцена", personas: 3 }],
+  });
+
+  assert.deepEqual(view.riskPoints, [{
+    timecode: "2:05",
+    note: "Старая сцена",
+    personas: 3,
+  }]);
+});
+
 test("разброс берётся только полным", () => {
   // Полоса на шкале рисуется по четырём числам. Три из четырёх дали бы полосу,
   // построенную на подставленном значении, — а выглядит она как измеренная.
