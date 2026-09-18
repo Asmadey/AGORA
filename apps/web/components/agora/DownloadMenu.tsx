@@ -3,6 +3,7 @@
 import { ChevronDown, Download } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
+import { excelFileName, excelHref } from "@/lib/excel-download";
 import { cn } from "@/lib/utils";
 
 /**
@@ -17,6 +18,12 @@ import { cn } from "@/lib/utils";
  * В шапке уже пять действий. Три ссылки рядом с ними превратили бы её в восемь
  * равнозначных кнопок, среди которых «Удалить» перестаёт выделяться, — а это
  * единственное действие, которое нельзя отменить.
+ *
+ * ─── Почему Excel стоит первым ─────────────────────────────────────────────
+ * Это единственный формат, который забирают, чтобы РАБОТАТЬ с данными:
+ * положить рядом с прошлой волной и сравнить колонка в колонку. Отчёт в JSON
+ * забирают, чтобы отдать разработчику, — читать его глазами нельзя, и до
+ * появления книги оператор, пришедший за таблицей, уносил именно дерево JSON.
  *
  * ─── Ссылка на ролик ───────────────────────────────────────────────────────
  * Подписывается на час и приходит готовой из серверного компонента. Она уедет в
@@ -74,6 +81,14 @@ export function DownloadMenu({
           role="menu"
           className="absolute right-0 z-20 mt-1 min-w-[14rem] overflow-hidden rounded-md border border-hairline bg-card py-1 shadow-lg"
         >
+          <a
+            href={excelHref(runId)}
+            download={excelFileName(runId)}
+            role="menuitem"
+            className={item}
+          >
+            Ответы · Excel
+          </a>
           <a href={`/api/tasks/${runId}/transcript`} role="menuitem" className={item}>
             Расшифровка · txt
           </a>
