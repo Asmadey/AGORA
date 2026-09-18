@@ -54,6 +54,17 @@ test("NaN и Infinity — не числа", () => {
   assert.equal(view.nps, null);
 });
 
+test("старый снимок с emotional_index безопасно читается", () => {
+  // Старые снимки содержат уже удалённое поле, но оно не должно ломать разбор
+  // или менять оставшиеся метрики.
+  const view = parseReport({
+    aggregate: { nps: 42, emotional_index: 8 },
+    rationales: { emotional_index: "старое обоснование" },
+  });
+  assert.equal(view.nps, 42);
+  assert.equal(view.rationales.emotional_index, "старое обоснование");
+});
+
 test("разрез не считали — это не пустой разрез", () => {
   assert.equal(parseReport({ aggregate: {} }).hasSegments, false);
   assert.equal(parseReport({ aggregate: { segment_breakdown: {} } }).hasSegments, true);
