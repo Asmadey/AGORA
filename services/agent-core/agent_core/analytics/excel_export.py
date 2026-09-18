@@ -49,11 +49,11 @@ from ..survey import (
 )
 from .aggregate import surviving
 
-#: Параметры аудитории, стоящие слева до вопросов. Пары «подпись → поле DNA».
-#:
-#: Состав и порядок повторяют полевой файл заказчика; `geo` и `children`
-#: добавлены потому, что в его других выгрузках они есть, а у нас они всегда
-#: заполнены.
+#: Параметры аудитории. Первые четыре стоят слева, как в полевом файле
+#: заказчика, чтобы блок вопросов совпадал колонка в колонку при сравнении
+#: выгрузок. `geo` и `children` стоят справа после вопросов: они заполнены и
+#: нужны для срезов, поэтому удалять их нельзя, но перенос влево сдвинет весь
+#: вопросный блок и сделает два файла нечитаемыми рядом.
 AUDIENCE_COLUMNS: tuple[tuple[str, str], ...] = (
     ("Населенный пункт", "city"),
     ("ID респондента", "id"),
@@ -234,13 +234,19 @@ def build_workbook(
     ws = wb.active
     ws.title = "Ответы"
 
-    offset = len(AUDIENCE_COLUMNS)
-    for i, (label, _) in enumerate(AUDIENCE_COLUMNS, start=1):
+    left_audience = AUDIENCE_COLUMNS[:4]
+    right_audience = AUDIENCE_COLUMNS[4:]
+    offset = len(left_audience)
+    for i, (label, _) in enumerate(left_audience, start=1):
         ws.cell(row=2, column=i, value=label)
 
     for j, column in enumerate(columns, start=offset + 1):
         ws.cell(row=1, column=j, value=column["block"])
         ws.cell(row=2, column=j, value=column["label"])
+
+    right_offset = offset + len(columns)
+    for i, (label, _) in enumerate(right_audience, start=right_offset + 1):
+        ws.cell(row=2, column=i, value=label)
 
     # Объединения по блоку и по вопросу — верхняя строка файла заказчика
     # объединена по всему блоку, вторая по колонкам одного вопроса.
@@ -262,7 +268,7 @@ def build_workbook(
             start = end + 1
 
     for r, persona in enumerate(personas, start=HEADER_ROWS + 1):
-        for i, (_, key) in enumerate(AUDIENCE_COLUMNS, start=1):
+        for i, (_, key) in enumerate(left_audience, start=1):
             ws.cell(row=r, column=i, value=_audience_value(persona, key))
 
         replications = by_persona.get(str(persona.get("id")), [])
@@ -279,8 +285,11 @@ def build_workbook(
                 value=_cell(column["question"], raw, column["slot"], column.get("row")),
             )
 
+        for i, (_, key) in enumerate(right_audience, start=right_offset + 1):
+            ws.cell(row=r, column=i, value=_audience_value(persona, key))
+
     ws.freeze_panes = ws.cell(row=HEADER_ROWS + 1, column=offset + 1)
-    for i in range(1, offset + 1):
+    for i in range(1, right_offset + len(right_audience) + 1):
         ws.column_dimensions[get_column_letter(i)].width = 18
 
     about = wb.create_sheet("О прогоне")

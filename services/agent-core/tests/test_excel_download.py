@@ -143,9 +143,14 @@ def test_render_workbook_отдаёт_открываемый_xlsx() -> None:
     assert ws.cell(row=2, column=1).value == "Населенный пункт"
     assert ws.cell(row=3, column=1).value == "Москва"
     assert ws.cell(row=4, column=1).value == "Казань"
-    # Шапка блока — подпись, а не идентификатор: заказчик читает верхнюю строку
-    # глазами, и «b1» вместо «Оценки проекта» делает две выгрузки несравнимыми.
-    assert ws.cell(row=1, column=len(_audience()) + 1).value == "Оценки проекта"
+    # Вопросы начинаются сразу после четырёх левых параметров. `geo` и
+    # `children` находятся справа от блока вопросов и не участвуют в смещении.
+    left_audience = _audience()[:4]
+    assert ws.cell(row=1, column=len(left_audience) + 1).value == "Оценки проекта"
+    assert ws.cell(row=2, column=ws.max_column - 1).value == "Тип населённого пункта"
+    assert ws.cell(row=2, column=ws.max_column).value == "Наличие детей"
+    assert ws.cell(row=3, column=ws.max_column - 1).value == "центры субъектов"
+    assert ws.cell(row=3, column=ws.max_column).value == "Нет детей"
 
 
 def test_флаги_qa_доезжают_из_карточек() -> None:
