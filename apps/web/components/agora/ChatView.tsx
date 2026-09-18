@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { Loader2, Send, BarChart3, User } from "lucide-react";
 
 import { cn } from "@/lib/utils";
+import { Markdown } from "@/components/agora/Markdown";
 import { TypingAnimation } from "@/components/ui/typing-animation";
 import {
   parseChatEvent,
@@ -187,17 +188,32 @@ export function ChatView({
                 {m.role === "assistant" && (
                   <p className="mb-1.5 text-xs font-medium text-slate">{who}</p>
                 )}
-                <p className="whitespace-pre-wrap">
-                  {m.content}
-                  {streaming && !m.content && m.role === "assistant" && (
-                    /*
-                      Шаг конвейера, когда он известен, и «Думаю» — когда нет.
-                      Заменить шаг словом «Думаю» значило бы обменять сведения
-                      на анимацию: «ищу сцены» говорит больше.
-                    */
-                    <TypingAnimation text={step ?? "Думаю"} className="text-slate" />
-                  )}
-                </p>
+                {/*
+                  Ответ модели — размеченный текст, и рисуется он разметкой.
+                  Прежде здесь стоял один `whitespace-pre-wrap` на обе роли, и
+                  ответ выезжал на экран со звёздочками: `**эмоциональный
+                  триггер**` вместо жирного, `*   ` в начале строки вместо
+                  пункта списка. Замерено на боевом, прогон 0092.
+
+                  Реплика человека остаётся сырым текстом намеренно. Человек
+                  пишет вопрос, а не документ: разбор его звёздочек означал бы,
+                  что `5 * 3` в вопросе про цифры превращается в курсив.
+                */}
+                {m.role === "assistant" ? (
+                  <div>
+                    <Markdown text={m.content} />
+                    {streaming && !m.content && (
+                      /*
+                        Шаг конвейера, когда он известен, и «Думаю» — когда нет.
+                        Заменить шаг словом «Думаю» значило бы обменять сведения
+                        на анимацию: «ищу сцены» говорит больше.
+                      */
+                      <TypingAnimation text={step ?? "Думаю"} className="text-slate" />
+                    )}
+                  </div>
+                ) : (
+                  <p className="whitespace-pre-wrap">{m.content}</p>
+                )}
                 {note && (
                   <p className="mt-2 border-t border-hairline pt-2 text-xs leading-relaxed text-warning">
                     {note}

@@ -594,7 +594,13 @@ const Cell = memo(function Cell({
                   в материале нет. */}
               {cell.isCut && <span className="text-[10px] uppercase">склейка</span>}
             </span>
-            <span className="mt-0.5 block line-clamp-3 text-sm">
+            {/*
+              Описание показывается целиком. Здесь стоял `line-clamp-3`, и он
+              обрезал ровно так же молча, как `max-h-24` обрезал речь: замер на
+              боевом 18.09.2026, прогон 0092, — «Сцена показывает группу
+              солдат…» занимала 120 px, а показывалось 100.
+            */}
+            <span className="mt-0.5 block text-sm">
               {cell.scene ?? "до первой сцены"}
             </span>
           </span>
@@ -608,7 +614,27 @@ const Cell = memo(function Cell({
         */}
         <span className="min-w-0 border-l border-hairline pl-3">
           {cell.lines.length > 0 ? (
-            <span className="block max-h-24 space-y-1 overflow-hidden text-xs leading-relaxed">
+            /*
+              Высота — по объёму реплики, без потолка.
+
+              Здесь стояло `max-h-24 overflow-hidden`. Замер в браузере на
+              боевом 18.09.2026, `/runs/0092`, окно 1512×792: колонка речи
+              182 px, `scrollHeight` 160 против `clientHeight` 96 — то есть
+              64 px, около четырёх строк, отрезаны без единого признака того,
+              что они были. Обрезается при этом ровно та ячейка, где речи
+              много, — ровно та, ради которой колонку и читают.
+
+              Потолок вдобавок спорил с `lib/timeline-columns.ts`: пропорция
+              колонок там подбирается перебором так, чтобы СУММАРНАЯ ВЫСОТА
+              ленты была наименьшей, и высота каждой строки считается по
+              ПОЛНОМУ тексту обеих колонок. Подобрать ширину под текст, а потом
+              отрезать текст по высоте — значит решать задачу и выбрасывать её
+              решение.
+
+              Цена замерена там же: снятие обеих обрезок удлинило ленту 0092 на
+              11 % (376 → 418 px).
+            */
+            <span className="block space-y-1 text-xs leading-relaxed">
               {cell.lines.map((line, i) => (
                 <span key={`${line.start}-${i}`} className="block pl-2 -indent-2">
                   {line.speaker ? (
