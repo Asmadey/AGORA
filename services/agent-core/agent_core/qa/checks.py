@@ -391,10 +391,24 @@ def coverage_reasons(answer: dict[str, Any], survey: Any = None) -> list[str]:
     missing: list[str] = []
     parse_errors: list[str] = []
 
-    def check_parsed(field: str, question: dict[str, Any], raw: Any) -> None:
+    def check_parsed(
+        field: str,
+        question: dict[str, Any],
+        raw: Any,
+        row: dict[str, Any] | None = None,
+    ) -> None:
+        """
+        Разбор спрашивает варианты у СТРОКИ, когда она названа.
+
+        У вопроса внутри темы свой список: «Гордость за страну» отвечается
+        «поднималась / не поднималась», а «Что запомнилось» — «финал / музыка».
+        Разбор против общего списка вопроса — которого у такой матрицы нет
+        вовсе — объявил бы ошибкой КАЖДЫЙ законный ответ, и персона уходила бы
+        на переспрос за правильный ответ.
+        """
         if raw is None:
             return
-        parsed = parse_field_answer(question, raw)
+        parsed = parse_field_answer(question, raw, row)
         if parsed.error:
             parse_errors.append(f"ошибка разбора поля {field}: {parsed.error}")
 
@@ -443,7 +457,7 @@ def coverage_reasons(answer: dict[str, Any], survey: Any = None) -> list[str]:
                 if rid and _norm(rid) not in given_keys:
                     missing.append(f"{qid}/{rid}" if qid else rid)
                 elif rid:
-                    check_parsed(rid, question, given.get(rid))
+                    check_parsed(rid, question, given.get(rid), row)
             continue
 
         if not answered_directly:

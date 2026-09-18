@@ -290,3 +290,97 @@ def test_успешно_разобранный_закрытый_ответ_не_
     outcome = run_qa(answers=[answer], pack={}, survey=survey)
 
     assert not [v for v in outcome.flagged if v["kind"] == "coverage"]
+
+
+def test_законный_ответ_по_своим_вариантам_строки_не_гейтится():
+    """
+    Правило разбора обязано спрашивать варианты у СТРОКИ.
+
+    С 18.09.2026 у вопроса внутри темы свой список вариантов: «Гордость за
+    страну» отвечается «поднималась / не поднималась», а «Что запомнилось» —
+    «финал / музыка». Разбор против общего списка вопроса — которого у такой
+    матрицы нет вовсе — объявил бы «вариантом не из списка» КАЖДЫЙ законный
+    ответ. Персону отправляли бы на переспрос за правильный ответ, прогон
+    дорожал бы вдвое, а причина выглядела бы как капризы модели.
+    """
+    from agent_core.qa.run import run_qa
+
+    survey = [{
+        "id": "q-tree",
+        "label": "Темы проекта",
+        "type": "matrix_single",
+        "themes": [{"id": "t1", "label": "Патриотизм"}],
+        "rows": [
+            {
+                "id": "r1",
+                "label": "Гордость за страну",
+                "themeId": "t1",
+                "options": [
+                    {"id": "r1-a", "label": "Поднималась"},
+                    {"id": "r1-b", "label": "Не поднималась"},
+                ],
+            },
+            {
+                "id": "r2",
+                "label": "Что запомнилось",
+                "themeId": "t1",
+                "maxChoices": 2,
+                "options": [
+                    {"id": "r2-a", "label": "Финал"},
+                    {"id": "r2-b", "label": "Музыка"},
+                ],
+            },
+        ],
+    }]
+    answer = {
+        "persona_id": "p-1",
+        "survey_answers": {"r1": "Поднималась", "r2": ["Финал", "Музыка"]},
+    }
+
+    outcome = run_qa(answers=[answer], pack={}, survey=survey)
+
+    assert not [v for v in outcome.flagged if v["kind"] == "coverage"], (
+        "законный ответ по вариантам своей строки объявлен ошибкой разбора"
+    )
+
+
+def test_чужой_вариант_строки_остаётся_ошибкой():
+    """Обратная сторона: вариант соседнего вопроса темы законным не становится."""
+    from agent_core.qa.run import run_qa
+
+    survey = [{
+        "id": "q-tree",
+        "label": "Темы проекта",
+        "type": "matrix_single",
+        "themes": [{"id": "t1", "label": "Патриотизм"}],
+        "rows": [
+            {
+                "id": "r1",
+                "label": "Гордость за страну",
+                "themeId": "t1",
+                "options": [
+                    {"id": "r1-a", "label": "Поднималась"},
+                    {"id": "r1-b", "label": "Не поднималась"},
+                ],
+            },
+            {
+                "id": "r2",
+                "label": "Что запомнилось",
+                "themeId": "t1",
+                "options": [
+                    {"id": "r2-a", "label": "Финал"},
+                    {"id": "r2-b", "label": "Музыка"},
+                ],
+            },
+        ],
+    }]
+    answer = {
+        "persona_id": "p-1",
+        "survey_answers": {"r1": "Финал", "r2": "Музыка"},
+    }
+
+    outcome = run_qa(answers=[answer], pack={}, survey=survey)
+    flagged = [v for v in outcome.flagged if v["kind"] == "coverage"]
+
+    assert flagged, "ответ вариантом соседнего вопроса принят как законный"
+    assert any("не из списка" in r for r in flagged[0]["reasons"])
