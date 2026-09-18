@@ -20,14 +20,7 @@ RERUN_LIB = WEB / "lib" / "rerun.ts"
 QUEUE = WEB / "lib" / "server" / "queue.ts"
 TASKS = WEB / "lib" / "server" / "tasks.ts"
 NODES = CORE / "agent_core" / "pipeline" / "nodes.py"
-#: Схема читается ВСЕМ набором миграций, а не одним файлом.
-#:
-#: §5 CLAUDE.md: уже применённый файл не редактируется, новая колонка заводится
-#: следующим по номеру. Так сделаны poster_ref (30), playback_ref (29),
-#: source_name (30) — в 02_schema.sql их нет и не должно быть. Проверка,
-#: смотрящая только в 02_schema.sql, требовала бы нарушить это правило, чтобы
-#: стать зелёной.
-SCHEMA_FILES = sorted(INIT.glob("*.sql"))
+SCHEMA = INIT / "02_schema.sql"
 
 results: list[tuple[str, str, str]] = []
 
@@ -56,7 +49,7 @@ rerun = read(RERUN_LIB)
 queue = read(QUEUE)
 tasks = read(TASKS)
 nodes = read(NODES)
-schema = "\n".join(read(path) for path in SCHEMA_FILES)
+schema = read(SCHEMA)
 
 check("экран результата предлагает повтор", "studies/new?rerun=" in report)
 check("API повтора защищён сессией", "requireSession" in rerun_api and "withTenant" in rerun_api)
