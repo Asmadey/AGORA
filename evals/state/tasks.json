@@ -128,7 +128,7 @@
     "legacy_id": 17,
     "subject": "Шаг Аудитория",
     "phase": "Ф1",
-    "status": "pending",
+    "status": "done",
     "blockedBy": [
       7,
       6
@@ -157,7 +157,7 @@
     "legacy_id": 19,
     "subject": "Шаг Резюме + запуск (task_id) + «Перекрытие»",
     "phase": "Ф1",
-    "status": "pending",
+    "status": "done",
     "blockedBy": [
       8,
       9,
@@ -176,7 +176,7 @@
     "legacy_id": 20,
     "subject": "Экран прогресса (SSE)",
     "phase": "Ф1",
-    "status": "pending",
+    "status": "done",
     "blockedBy": [
       11
     ],
@@ -189,7 +189,7 @@
     "legacy_id": 21,
     "subject": "Оркестратор LangGraph",
     "phase": "Ф1",
-    "status": "pending",
+    "status": "done",
     "blockedBy": [
       1,
       11
@@ -235,7 +235,7 @@
     "legacy_id": 24,
     "subject": "Нарезка кадров + VLM-разбор",
     "phase": "Ф1",
-    "status": "pending",
+    "status": "done",
     "blockedBy": [
       14
     ],
@@ -249,7 +249,7 @@
     "legacy_id": 25,
     "subject": "Склейка (reduce) + Content Pack",
     "phase": "Ф1",
-    "status": "pending",
+    "status": "done",
     "blockedBy": [
       15,
       16
@@ -263,7 +263,7 @@
     "legacy_id": 26,
     "subject": "Respondent-агенты (изоляция)",
     "phase": "Ф1",
-    "status": "pending",
+    "status": "done",
     "blockedBy": [
       17,
       5,
@@ -282,7 +282,7 @@
     "legacy_id": 27,
     "subject": "QA-агент",
     "phase": "Ф1",
-    "status": "pending",
+    "status": "done",
     "blockedBy": [
       18,
       26
@@ -298,7 +298,7 @@
     "legacy_id": 28,
     "subject": "Analytics-агент (агрегат + групповой синтез)",
     "phase": "Ф1",
-    "status": "pending",
+    "status": "done",
     "blockedBy": [
       19,
       26
@@ -314,7 +314,7 @@
     "legacy_id": 29,
     "subject": "Отчёт в UI",
     "phase": "Ф1",
-    "status": "pending",
+    "status": "done",
     "blockedBy": [
       20,
       12
@@ -328,7 +328,7 @@
     "legacy_id": 30,
     "subject": "E2E-верификация (e2e_short → e2e_long, golden-сеты ×3)",
     "phase": "Ф1–Ф2",
-    "status": "pending",
+    "status": "done",
     "blockedBy": [
       21
     ],
@@ -419,7 +419,7 @@
     "legacy_id": null,
     "subject": "Чат по результатам исследования (аналитик + допрос персоны)",
     "phase": "Ф4",
-    "status": "pending",
+    "status": "done",
     "blockedBy": [
       22,
       26
