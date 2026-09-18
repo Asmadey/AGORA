@@ -6,6 +6,7 @@ import { withTenant } from "@/lib/server/db";
 import { requireSession } from "@/lib/server/guard";
 import { resolveRun } from "@/lib/server/run-ref";
 import { loadRunTiming } from "@/lib/server/tasks";
+import { audienceStage } from "@/lib/audience-stage";
 
 /**
  * Страница прогресса прогона (задача #12).
@@ -40,14 +41,34 @@ export default async function ProgressPage({
   // started_at/finished_at нужны таймеру. Без них он считал бы от загрузки
   // страницы: обновление на десятой минуте показывало бы «0:03», а открытая со
   // вчера вкладка — сутки прогона, которого давно нет.
+  // Набор персон читается тем же запросом, что и сам прогон.
+  //
+  // Создание персон — отдельная задача Celery над отдельной строкой, и в графе
+  // воркера его нет. Но воркер один, и прогон, запущенный сразу после выбора
+  // «создать 100 персон», честно стоит в очереди за своей же аудиторией. Без
+  // этой строки экран показывал «Разбор файла» и ноль секунд на нём — то есть
+  // выглядел зависшим ровно тогда, когда всё работало.
+  //
+  // `LEFT JOIN`: ссылка объявлена `ON DELETE SET NULL`, и у старого прогона её
+  // может не быть. Тогда этап просто не рисуется — см. `audienceStage`.
   const row = await withTenant(tenantId, async (client) => {
     const { rows } = await client.query<{
       mode: string;
       status: string;
       started_at: Date | null;
       finished_at: Date | null;
+      set_name: string | null;
+      set_status: string | null;
+      set_size: number | null;
+      set_generated: number | null;
+      set_error: string | null;
     }>(
-      "SELECT mode, status, started_at, finished_at FROM tasks WHERE id = $1::uuid",
+      `SELECT t.mode, t.status, t.started_at, t.finished_at,
+              ps.name AS set_name, ps.status AS set_status, ps.size AS set_size,
+              ps.generated_count AS set_generated, ps.error AS set_error
+         FROM tasks t
+         LEFT JOIN persona_sets ps ON ps.id = t.persona_set_id
+        WHERE t.id = $1::uuid`,
       [id],
     );
     return rows[0] ?? null;
@@ -80,6 +101,17 @@ export default async function ProgressPage({
           finishedAt={row.finished_at?.toISOString() ?? null}
           durations={durations}
           taskStatus={row.status}
+          audience={audienceStage(
+            row.set_status === null
+              ? null
+              : {
+                  name: row.set_name ?? "Аудитория",
+                  status: row.set_status,
+                  size: Number(row.set_size ?? 0),
+                  generatedCount: Number(row.set_generated ?? 0),
+                  error: row.set_error,
+                },
+          )}
         />
       </div>
     </>

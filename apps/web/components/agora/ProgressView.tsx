@@ -2,12 +2,14 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { AlertTriangle, Check, Circle, Loader2 } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import { mergeDurations, type TimingEntry } from "@/lib/progress-durations";
 import { nodesForMode, type PipelineNode } from "@/lib/pipeline-nodes";
 import { humanDuration, progressStates, type NodeState } from "@/lib/progress-state";
+import { stageScale, type AudienceStage } from "@/lib/audience-stage";
 
 /**
  * Экран прогресса прогона (задача #12).
@@ -60,6 +62,7 @@ export function ProgressView({
   finishedAt = null,
   durations = {},
   taskStatus = null,
+  audience = null,
 }: {
   taskId: string;
   mode?: "short" | "long";
@@ -87,7 +90,17 @@ export function ProgressView({
    * одной галочки при полностью заполненных длительностях.
    */
   taskStatus?: string | null;
+  /**
+   * Создание персон — этап ПЕРЕД конвейером.
+   *
+   * Приходит из Postgres отдельно, потому что в графе воркера его нет: это
+   * своя задача Celery над строкой `persona_sets`. Подробности и причина — в
+   * `lib/audience-stage.ts`. `null` — прогон не ссылается на набор, и этап не
+   * рисуется вовсе.
+   */
+  audience?: AudienceStage | null;
 }) {
+  const router = useRouter();
   const [event, setEvent] = useState<ProgressEvent | null>(null);
   const [connected, setConnected] = useState(false);
   /**
@@ -156,6 +169,25 @@ export function ProgressView({
     return () => source.close();
   }, [taskId]);
 
+  /**
+   * Пока персоны создаются, экран обновляется сам.
+   *
+   * Счётчик «40 из 100» живёт в Postgres, а не в потоке событий: генерация
+   * аудитории — отдельная задача Celery, и о прогоне она ничего не знает.
+   * Заводить ради неё второй SSE-поток дороже, чем перерисовать серверную
+   * страницу: она и так `force-dynamic`, и `refresh()` перечитывает ровно те
+   * две строки, которые изменились.
+   *
+   * Пять секунд — та же частота, с какой воркер пишет прогресс (раз в пять
+   * персон). Чаще значило бы опрашивать базу за ответом, который не менялся.
+   */
+  const generatingAudience = audience?.state === "running";
+  useEffect(() => {
+    if (!generatingAudience) return;
+    const timer = setInterval(() => router.refresh(), 5000);
+    return () => clearInterval(timer);
+  }, [generatingAudience, router]);
+
   // Живые длительности поверх серверных объявлены ниже, поэтому состояние
   // считается там же — сразу после них.
 
@@ -213,8 +245,16 @@ export function ProgressView({
     return "";
   }
 
-  const doneCount = progress.doneCount;
-  const pct = Math.round((doneCount / nodes.length) * 100);
+  // Шкала считается вместе с этапом аудитории: пока персоны создаются, текущий
+  // шаг — они, а не «Разбор файла». Арифметика живёт в lib (CLAUDE.md §11.7) —
+  // «Шаг 4 из 12» это то самое число, по которому человек решает, ждать ему
+  // или перезагружать страницу, и ошибка в нём не видна ни на одном скриншоте.
+  const scale = stageScale({
+    nodeCount: nodes.length,
+    nodeDone: progress.doneCount,
+    nodeIndex: currentIndex,
+    stage: audience,
+  });
 
   function stateOf(index: number): NodeState {
     return progress.states[index] ?? "waiting";
@@ -229,13 +269,19 @@ export function ProgressView({
               ? "Прогон завершён"
               : failed
                 ? "Прогон остановлен"
-                : `Шаг ${Math.min(Math.max(currentIndex + 1, 1), nodes.length)} из ${nodes.length}`}
+                : `Шаг ${scale.stepNumber} из ${scale.total}`}
           </span>
           <span className="text-sm tabular-nums text-slate">
-            {!connected && !finished && !failed
-              ? "переподключение…"
-              : elapsed === null
-                ? "в очереди"
+            {/*
+              «В очереди» стоит ПЕРЕД «переподключение…» намеренно. Пока прогон
+              не взят воркером, считать нечего, и любое число здесь было бы
+              выдуманным; «переподключение…» же обвиняло поток событий в том,
+              что прогон просто ещё не начинался.
+            */}
+            {elapsed === null
+              ? "в очереди"
+              : !connected && !finished && !failed
+                ? "переподключение…"
                 : humanDuration(elapsed)}
           </span>
         </div>
@@ -245,7 +291,7 @@ export function ProgressView({
               "h-full rounded-full transition-all duration-700",
               failed ? "bg-rose-400" : "bg-foreground",
             )}
-            style={{ width: `${pct}%` }}
+            style={{ width: `${scale.pct}%` }}
           />
         </div>
       </div>
@@ -279,6 +325,28 @@ export function ProgressView({
       )}
 
       <ol className="space-y-1">
+        {audience && (
+          <li
+            className={cn(
+              "flex items-start gap-3 rounded-md px-3 py-3",
+              audience.state === "running" && "bg-secondary/50",
+            )}
+          >
+            <span className="mt-0.5 shrink-0">
+              {audience.state === "done" && <Check className="h-4 w-4 text-success" />}
+              {audience.state === "running" && (
+                <Loader2 className="h-4 w-4 animate-spin text-brand-blue" />
+              )}
+              {audience.state === "failed" && (
+                <AlertTriangle className="h-4 w-4 text-danger" />
+              )}
+            </span>
+            <span className="min-w-0 flex-1">
+              <span className="block text-sm">{audience.label}</span>
+              <span className="mt-0.5 block text-xs text-slate">{audience.detail}</span>
+            </span>
+          </li>
+        )}
         {nodes.map((node, i) => {
           const state = stateOf(i);
           return (
