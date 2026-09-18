@@ -191,7 +191,7 @@ export function Chip({
   tone = "muted",
 }: {
   children: React.ReactNode;
-  tone?: "muted" | "outline" | "solid";
+  tone?: "muted" | "outline" | "solid" | "blue";
 }) {
   return (
     <span
@@ -200,6 +200,7 @@ export function Chip({
         tone === "muted" && "bg-secondary text-secondary-foreground",
         tone === "outline" && "border border-hairline text-slate",
         tone === "solid" && "bg-foreground text-background",
+        tone === "blue" && "bg-brand-blue/10 text-brand-blue",
       )}
     >
       {children}

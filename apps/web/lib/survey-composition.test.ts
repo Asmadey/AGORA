@@ -7,6 +7,7 @@ import {
   BASE_QUESTIONS,
   DEFAULT_QUESTIONS,
   MANDATORY_THEME_IDS,
+  mandatoryThemeCountLabel,
   toggleMandatoryTheme,
   withSelectedMandatoryThemes,
   groundingIssues,
@@ -129,6 +130,14 @@ test("конструктор не называет шкалу числами в 
 });
 
 // ─── Обязательный блок заказчика ──────────────────────────────────────────
+
+test("подпись чипа тем склоняется по числу выбранных тем", () => {
+  assert.equal(mandatoryThemeCountLabel(0), "0 тем");
+  assert.equal(mandatoryThemeCountLabel(1), "1 тема");
+  assert.equal(mandatoryThemeCountLabel(2), "2 темы");
+  assert.equal(mandatoryThemeCountLabel(5), "5 тем");
+  assert.equal(mandatoryThemeCountLabel(10), "10 тем");
+});
 
 test("анкета по умолчанию — это пятнадцать обязательных вопросов заказчика", () => {
   const numbers = DEFAULT_QUESTIONS.map((q) => q.number);

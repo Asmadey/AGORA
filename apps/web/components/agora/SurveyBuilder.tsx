@@ -11,6 +11,7 @@ import {
   groundingIssues,
   isMandatory,
   MANDATORY_THEMES,
+  mandatoryThemeCountLabel,
   newQuestionDraft,
   toggleMandatoryTheme as toggleMandatoryThemeSelection,
   withSelectedMandatoryThemes,
@@ -521,13 +522,22 @@ function OptionChips({ q }: { q: SurveyQuestion }) {
   );
 }
 
-function MandatoryHead({ q }: { q: SurveyQuestion }) {
+function MandatoryHead({
+  q,
+  accessory,
+}: {
+  q: SurveyQuestion;
+  accessory?: React.ReactNode;
+}) {
   const rows = q.rows?.length ?? 0;
   const options = q.options?.length ?? 0;
 
   return (
     <div className="min-w-0 flex-1">
-      <p className="text-sm leading-snug">{q.label}</p>
+      <div className="flex items-start gap-2">
+        <p className="text-sm leading-snug">{q.label}</p>
+        {accessory}
+      </div>
       <p className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-slate">
         <span>{describe(q)}</span>
         {rows > 0 && <span>{rows} строк</span>}
@@ -538,9 +548,27 @@ function MandatoryHead({ q }: { q: SurveyQuestion }) {
   );
 }
 
-function MandatoryRow({ q }: { q: SurveyQuestion }) {
+function MandatoryRow({
+  q,
+  onToggleTheme,
+  themeSelectionIssue,
+}: {
+  q: SurveyQuestion;
+  onToggleTheme?: (themeId: string) => void;
+  themeSelectionIssue?: string | null;
+}) {
   const presentation = optionsPresentation(q);
   const groups = themeGroups(q);
+  const groupsById = new Map(groups.map((group) => [group.id, group]));
+  const isThemeSelector = q.number === 9;
+  const selectedThemeIds = new Set(q.themes?.map((theme) => theme.id) ?? []);
+  const visibleGroups = isThemeSelector
+    ? MANDATORY_THEMES.map((theme) => ({
+        id: theme.id,
+        label: theme.label,
+        rows: groupsById.get(theme.id)?.rows ?? [],
+      }))
+    : groups;
 
   const shell = "rounded-md border border-hairline bg-secondary/20 px-4 py-2.5";
   const number = (
@@ -565,11 +593,24 @@ function MandatoryRow({ q }: { q: SurveyQuestion }) {
     <details className={cn("group", shell)}>
       <summary className="flex cursor-pointer list-none items-start gap-3 [&::-webkit-details-marker]:hidden">
         {number}
-        <MandatoryHead q={q} />
+        <MandatoryHead
+          q={q}
+          accessory={
+            isThemeSelector && (
+              <Chip tone="blue">{mandatoryThemeCountLabel(selectedThemeIds.size)}</Chip>
+            )
+          }
+        />
         <ChevronDown className="h-4 w-4 shrink-0 self-center text-slate transition-transform group-open:rotate-180" />
       </summary>
 
       <div className="mt-3 space-y-3 border-t border-hairline pt-3 pl-9">
+        {isThemeSelector && (
+          <p className="text-xs leading-relaxed text-slate">
+            Выбираются целиком вместе со всеми подтемами. Вопрос 11 следует этому выбору.
+          </p>
+        )}
+
         <div className="space-y-1.5">
           <p className="text-[11px] uppercase tracking-wide text-slate">
             {groups.length > 0 ? "Варианты ответа на каждую строку" : "Варианты ответа"}
@@ -577,20 +618,37 @@ function MandatoryRow({ q }: { q: SurveyQuestion }) {
           <OptionChips q={q} />
         </div>
 
-        {groups.map((group) => (
+        {visibleGroups.map((group) => (
           <div key={group.id} className="space-y-1">
-            {group.label && (
-              <p className="text-[11px] font-medium text-slate">{group.label}</p>
+            {isThemeSelector ? (
+              <label className="flex items-start gap-2 text-xs leading-relaxed">
+                <input
+                  type="checkbox"
+                  checked={selectedThemeIds.has(group.id)}
+                  onChange={() => onToggleTheme?.(group.id)}
+                  aria-label={`Тема вопроса 9: ${group.label}`}
+                  className="mt-0.5"
+                />
+                <span className="font-medium text-slate">{group.label}</span>
+              </label>
+            ) : (
+              group.label && <p className="text-[11px] font-medium text-slate">{group.label}</p>
             )}
-            <ul className="space-y-0.5">
-              {group.rows.map((row) => (
-                <li key={row.id} className="text-xs leading-relaxed text-foreground/80">
-                  {row.label}
-                </li>
-              ))}
-            </ul>
+            {group.rows.length > 0 && (
+              <ul className={cn("space-y-0.5", isThemeSelector && "pl-6")}>
+                {group.rows.map((row) => (
+                  <li key={row.id} className="text-xs leading-relaxed text-foreground/80">
+                    {row.label}
+                  </li>
+                ))}
+              </ul>
+            )}
           </div>
         ))}
+
+        {isThemeSelector && themeSelectionIssue && (
+          <p className="text-xs text-warning" role="alert">{themeSelectionIssue}</p>
+        )}
       </div>
     </details>
   );
@@ -796,33 +854,14 @@ export function SurveyBuilder({
             вопросы ниже.
           </p>
 
-          <fieldset className="mt-3 rounded-md border border-hairline bg-secondary/20 p-3">
-            <legend className="px-1 text-xs font-medium">Темы вопроса 9</legend>
-            <p className="mt-1 text-xs leading-relaxed text-slate">
-              Выбираются целиком вместе со всеми подтемами. Вопрос 11 следует этому выбору.
-            </p>
-            <div className="mt-2 grid gap-2 sm:grid-cols-2">
-              {MANDATORY_THEMES.map((theme) => (
-                <label key={theme.id} className="flex items-start gap-2 text-xs leading-relaxed">
-                  <input
-                    type="checkbox"
-                    checked={selectedThemeIds.has(theme.id)}
-                    onChange={() => toggleMandatoryTheme(theme.id)}
-                    aria-label={`Тема вопроса 9: ${theme.label}`}
-                    className="mt-0.5"
-                  />
-                  <span>{theme.label}</span>
-                </label>
-              ))}
-            </div>
-            {themeSelectionIssue && (
-              <p className="mt-2 text-xs text-warning" role="alert">{themeSelectionIssue}</p>
-            )}
-          </fieldset>
-
           <div className="mt-3 space-y-2">
             {mandatory.map((q) => (
-              <MandatoryRow key={q.id} q={q} />
+              <MandatoryRow
+                key={q.id}
+                q={q}
+                onToggleTheme={toggleMandatoryTheme}
+                themeSelectionIssue={themeSelectionIssue}
+              />
             ))}
           </div>
         </div>
