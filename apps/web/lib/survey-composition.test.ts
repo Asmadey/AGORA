@@ -7,6 +7,8 @@ import {
   BASE_QUESTIONS,
   DEFAULT_QUESTIONS,
   MANDATORY_THEME_IDS,
+  toggleMandatoryTheme,
+  withSelectedMandatoryThemes,
   groundingIssues,
   isMandatory,
   newQuestionDraft,
@@ -171,6 +173,54 @@ test("невыбранная тема убирает свои строки из 
     "зависимый вопрос 11 не пошёл за выбором тем — интегральный показатель " +
       "восприятия считался бы по разному числу строк и стал бы несравним",
   );
+});
+
+test("переключение тем сохраняет свои вопросы и меняет обязательные обеих матриц", () => {
+  const mine = newQuestionDraft("q-mine");
+  const result = withSelectedMandatoryThemes(withMandatory([mine], MANDATORY_THEME_IDS), ["t1"]);
+
+  assert.equal(result.at(-1)?.id, "q-mine");
+  assert.deepEqual(result.find((q) => q.number === 9)?.themes?.map((t) => t.id), ["t1"]);
+  assert.ok(result.find((q) => q.number === 9)?.rows?.every((r) => r.themeId === "t1"));
+  assert.ok(result.find((q) => q.number === 11)?.rows?.every((r) => r.themeId === "t1"));
+});
+
+test("переключение темы не позволяет получить нулевой набор", () => {
+  assert.deepEqual(
+    toggleMandatoryTheme(["t1"], "t1"),
+    { selected: ["t1"], reason: "Нельзя снять последнюю тему." },
+  );
+  assert.deepEqual(toggleMandatoryTheme(["t1"], "t2"), { selected: ["t1", "t2"] });
+  assert.deepEqual(toggleMandatoryTheme(["t1", "t2"], "t1"), { selected: ["t2"] });
+});
+
+test("конструктор показывает темы вопроса 9 чекбоксами и запрещает снять последнюю", () => {
+  assert.match(
+    BUILDER,
+    /type="checkbox"[\s\S]*Тема/,
+    "оператор должен выбирать темы целиком, а не редактировать скрытые строки вручную",
+  );
+  assert.match(
+    BUILDER,
+    /нельзя снять последнюю тему|хотя бы одну тему|выберите хотя бы одну тему/i,
+    "нулевой набор тем должен быть объяснён оператору сразу в конструкторе",
+  );
+});
+
+test("открытый вопрос предупреждает об отсутствии графика и текстовом блоке", () => {
+  assert.match(BUILDER, /label: "Открытый"/);
+  assert.match(BUILDER, /график не построится/i);
+  assert.match(BUILDER, /текстовым блоком с темами и цитатами/i,
+    "при выборе открытого типа оператор должен узнать формат отчёта до запуска");
+});
+
+test("подпись матрицы описывает несколько ответов внутри вопроса", () => {
+  assert.doesNotMatch(
+    BUILDER,
+    /по одному варианту на каждую строку/,
+    "устаревшая подпись обещает один ответ на строку вместо настройки каждого вопроса",
+  );
+  assert.match(BUILDER, /Сколько вариантов\?/);
 });
 
 test("обязательная анкета целиком проходит валидатор", async () => {
