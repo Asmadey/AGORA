@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Check, Pencil, Trash2, Plus, Info, RotateCcw } from "lucide-react";
+import { Check, ChevronDown, Pencil, Trash2, Plus, Info, RotateCcw } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Chip } from "@/components/agora/Primitives";
 import type { SurveyQuestion, QuestionType } from "@/lib/agora-types";
@@ -12,6 +12,11 @@ import {
   isMandatory,
   newQuestionDraft,
 } from "@/lib/survey-composition";
+import {
+  isServiceOption,
+  optionsPresentation,
+  themeGroups,
+} from "@/lib/survey-preview";
 
 /**
  * Конструктор анкеты (задача #10).
@@ -206,27 +211,99 @@ function QuestionEditor({
  * у своих вопросов, нельзя: оператор должен видеть, что именно спросят, чтобы
  * решить, нужны ли ему дополнительные вопросы.
  */
-function MandatoryRow({ q }: { q: SurveyQuestion }) {
+function OptionChips({ q }: { q: SurveyQuestion }) {
+  return (
+    <div className="flex flex-wrap gap-1.5">
+      {(q.options ?? []).map((o) => (
+        <span
+          key={o.id}
+          className={cn(
+            "rounded-full border px-2.5 py-0.5 text-[11px] leading-relaxed",
+            isServiceOption(q, o.id)
+              ? "border-dashed border-hairline-strong text-slate"
+              : "border-hairline text-foreground/80",
+          )}
+          title={isServiceOption(q, o.id) ? "Служебный вариант: выбирается только в одиночку" : undefined}
+        >
+          {o.label}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+function MandatoryHead({ q }: { q: SurveyQuestion }) {
   const rows = q.rows?.length ?? 0;
   const options = q.options?.length ?? 0;
 
   return (
-    <div className="flex items-start gap-3 rounded-md border border-hairline bg-secondary/20 px-4 py-2.5">
-      <span className="w-6 shrink-0 pt-0.5 text-right text-xs tabular-nums text-stone">
-        {q.number}
-      </span>
-
-      <div className="min-w-0 flex-1">
-        <p className="text-sm leading-snug">{q.label}</p>
-        <p className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-slate">
-          <span>{describe(q)}</span>
-          {rows > 0 && <span>{rows} строк</span>}
-          {options > 0 && <span>{options} вариантов</span>}
-          {q.maxChoices && <span>до {q.maxChoices} ответов</span>}
-          {q.baseKey && <span className="font-mono">{q.baseKey}</span>}
-        </p>
-      </div>
+    <div className="min-w-0 flex-1">
+      <p className="text-sm leading-snug">{q.label}</p>
+      <p className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-slate">
+        <span>{describe(q)}</span>
+        {rows > 0 && <span>{rows} строк</span>}
+        {options > 0 && <span>{options} вариантов</span>}
+        {q.maxChoices && <span>до {q.maxChoices} ответов</span>}
+      </p>
     </div>
+  );
+}
+
+function MandatoryRow({ q }: { q: SurveyQuestion }) {
+  const presentation = optionsPresentation(q);
+  const groups = themeGroups(q);
+
+  const shell = "rounded-md border border-hairline bg-secondary/20 px-4 py-2.5";
+  const number = (
+    <span className="w-6 shrink-0 pt-0.5 text-right text-xs tabular-nums text-stone">
+      {q.number}
+    </span>
+  );
+
+  if (presentation !== "collapsed") {
+    return (
+      <div className={cn("flex items-start gap-3", shell)}>
+        {number}
+        <div className="min-w-0 flex-1 space-y-2">
+          <MandatoryHead q={q} />
+          {presentation === "inline" && <OptionChips q={q} />}
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <details className={cn("group", shell)}>
+      <summary className="flex cursor-pointer list-none items-start gap-3 [&::-webkit-details-marker]:hidden">
+        {number}
+        <MandatoryHead q={q} />
+        <ChevronDown className="mt-0.5 h-4 w-4 shrink-0 text-slate transition-transform group-open:rotate-180" />
+      </summary>
+
+      <div className="mt-3 space-y-3 border-t border-hairline pt-3 pl-9">
+        <div className="space-y-1.5">
+          <p className="text-[11px] uppercase tracking-wide text-slate">
+            {groups.length > 0 ? "Варианты ответа на каждую строку" : "Варианты ответа"}
+          </p>
+          <OptionChips q={q} />
+        </div>
+
+        {groups.map((group) => (
+          <div key={group.id} className="space-y-1">
+            {group.label && (
+              <p className="text-[11px] font-medium text-slate">{group.label}</p>
+            )}
+            <ul className="space-y-0.5">
+              {group.rows.map((row) => (
+                <li key={row.id} className="text-xs leading-relaxed text-foreground/80">
+                  {row.label}
+                </li>
+              ))}
+            </ul>
+          </div>
+        ))}
+      </div>
+    </details>
   );
 }
 
@@ -264,9 +341,6 @@ function QuestionRow({
 
       <div className="min-w-0 flex-1">
         <p className="truncate text-sm">{q.label}</p>
-        {q.baseKey && (
-          <p className="mt-0.5 truncate font-mono text-[11px] text-slate">{q.baseKey}</p>
-        )}
       </div>
 
       <span className="shrink-0 text-xs text-slate">{describe(q)}</span>
