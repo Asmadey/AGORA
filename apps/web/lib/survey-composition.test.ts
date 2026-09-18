@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
 
@@ -44,10 +44,10 @@ const SURVEY_FILE = JSON.parse(
   readFileSync(join(ROOT, "..", "..", "data", "survey", "customer_2026.json"), "utf8"),
 ) as { questions: { baseKey?: string; scaleMin?: number; scaleMax?: number }[] };
 
-/** Места, где анкета заводится с нуля, — их засев обязан быть обязательным блоком. */
-const SEEDS = {
-  "studies/new/page.tsx": readFileSync(join(ROOT, "app", "studies", "new", "page.tsx"), "utf8"),
-  "SurveyPicker.tsx": readFileSync(join(ROOT, "components", "agora", "SurveyPicker.tsx"), "utf8"),
+/** Экраны, чьи подписи описывают оператору состав анкеты. */
+const SCREENS = {
+  "surveys/new/page.tsx": readFileSync(join(ROOT, "app", "surveys", "new", "page.tsx"), "utf8"),
+  "surveys/page.tsx": readFileSync(join(ROOT, "app", "surveys", "page.tsx"), "utf8"),
 };
 
 test("базовые вопросы в исходном виде проходят проверку заземления", () => {
@@ -185,12 +185,58 @@ test("обязательная анкета целиком проходит ва
   assert.equal(result.valid, true);
 });
 
-test("конструктор больше не начинает с голых базовых критериев", () => {
-  for (const [name, text] of Object.entries(SEEDS)) {
+test("анкету засевает только обязательный блок — ни один экран не берёт BASE_QUESTIONS", () => {
+  /**
+   * Проверка утверждает СВОЙСТВО, а не перечисляет известные формы засева.
+   *
+   * Первая её версия искала два конкретных шаблона — `useState<…>(BASE_QUESTIONS)`
+   * и `questionsOf(…, BASE_QUESTIONS)`. Она была зелёной, а экран
+   * `/surveys/new` показывал пять критериев вместо пятнадцати: третья точка
+   * засева написана как `initialQuestions ?? BASE_QUESTIONS` и под оба шаблона
+   * не подошла. Нашлось это глазами на боевом, а не тестом.
+   *
+   * Перечислять формы бессмысленно — их столько, сколько способов написать
+   * значение по умолчанию. Поэтому здесь запрещён сам импорт: `BASE_QUESTIONS`
+   * нужны ровно одному файлу — конструктору, который по ним считает, изменён
+   * ли критерий, и восстанавливает исходный. Все остальные берут
+   * `DEFAULT_QUESTIONS`.
+   */
+  const ALLOWED = new Set(["components/agora/SurveyBuilder.tsx"]);
+  const offenders: string[] = [];
+
+  const walk = (dir: string) => {
+    for (const entry of readdirSync(join(ROOT, dir), { withFileTypes: true })) {
+      const rel = `${dir}/${entry.name}`;
+      if (entry.isDirectory()) {
+        walk(rel);
+      } else if (/\.tsx?$/.test(entry.name) && !entry.name.endsWith(".test.ts")) {
+        const text = readFileSync(join(ROOT, rel), "utf8");
+        if (text.includes("BASE_QUESTIONS") && !ALLOWED.has(rel)) offenders.push(rel);
+      }
+    }
+  };
+  walk("app");
+  walk("components");
+
+  assert.deepEqual(
+    offenders,
+    [],
+    "эти экраны берут пять базовых критериев вместо обязательной анкеты: " +
+      offenders.join(", "),
+  );
+});
+
+test("экраны анкеты не обещают вопрос о доле просмотра", () => {
+  /**
+   * Доля просмотра убрана из обязательной анкеты решением владельца
+   * 17.09.2026, а подписи на экранах продолжали её обещать. Текст — такая же
+   * часть контракта с оператором, как и состав вопросов: по нему он решает,
+   * нужно ли добавлять вопрос самому.
+   */
+  for (const [name, text] of Object.entries(SCREENS)) {
     assert.ok(
-      !/useState<SurveyQuestion\[\]>\(BASE_QUESTIONS\)|questionsOf\([^)]*BASE_QUESTIONS\)/.test(text),
-      `${name} всё ещё засевает анкету пятью базовыми критериями вместо ` +
-        "обязательного блока заказчика",
+      !/доле просмотра|долей просмотра|вопросом о доле/.test(text),
+      `${name} обещает вопрос о доле просмотра, которого в анкете больше нет`,
     );
   }
 });

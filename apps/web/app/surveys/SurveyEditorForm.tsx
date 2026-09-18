@@ -4,7 +4,7 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 
 import { SurveyBuilder } from "@/components/agora/SurveyBuilder";
-import { BASE_QUESTIONS } from "@/lib/survey-composition";
+import { DEFAULT_QUESTIONS } from "@/lib/survey-composition";
 import { ErrorState } from "@/components/agora/States";
 import type { SurveyQuestion } from "@/lib/agora-types";
 
@@ -36,7 +36,7 @@ export function SurveyEditorForm({
   const router = useRouter();
   const [name, setName] = useState(initialName);
   const [questions, setQuestions] = useState<SurveyQuestion[]>(
-    initialQuestions ?? BASE_QUESTIONS,
+    initialQuestions ?? DEFAULT_QUESTIONS,
   );
   const [saving, setSaving] = useState(false);
   const [errors, setErrors] = useState<string[]>([]);
