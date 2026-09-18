@@ -17,6 +17,16 @@ import {
   optionsPresentation,
   themeGroups,
 } from "@/lib/survey-preview";
+import {
+  addOption,
+  addRow,
+  draftForType,
+  draftIssues,
+  removeOption,
+  removeRow,
+  setOptionLabel,
+  setRowLabel,
+} from "@/lib/survey-draft";
 
 /**
  * Конструктор анкеты (задача #10).
@@ -80,6 +90,126 @@ function describe(q: SurveyQuestion): string {
 
 // ─── Форма правки одного вопроса ──────────────────────────────────────────
 
+const FIELD =
+  "w-full rounded-md border border-hairline bg-background px-3 py-2 text-sm outline-none focus:border-ink/60";
+
+/** Кружок с плюсом: добавить вариант или строку. */
+function AddButton({ onClick, children }: { onClick: () => void; children: React.ReactNode }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="group/add inline-flex items-center gap-2 text-xs text-slate transition-colors hover:text-foreground"
+    >
+      <span className="grid h-5 w-5 shrink-0 place-items-center rounded-full border border-hairline transition-colors group-hover/add:border-ink">
+        <Plus className="h-3 w-3" />
+      </span>
+      {children}
+    </button>
+  );
+}
+
+/**
+ * Список вариантов ответа.
+ *
+ * Значок слева показывает, КАК персона будет отвечать: кружок — ровно один
+ * вариант, квадрат — несколько. Это не украшение: у «одного из списка» и
+ * «нескольких из списка» одинаковая форма редактирования, и отличить их иначе
+ * можно только прочитав подпись типа выше.
+ */
+function OptionsEditor({
+  draft,
+  onChange,
+}: {
+  draft: SurveyQuestion;
+  onChange: (q: SurveyQuestion) => void;
+}) {
+  const many = draft.type === "multi_choice";
+
+  return (
+    <div className="space-y-2">
+      <span className="block text-xs text-slate">Варианты ответа</span>
+
+      <div className="space-y-1.5">
+        {(draft.options ?? []).map((option, index) => (
+          <div key={option.id} className="flex items-center gap-2.5">
+            <span
+              aria-hidden
+              className={cn(
+                "h-3.5 w-3.5 shrink-0 border border-hairline-strong",
+                many ? "rounded-[3px]" : "rounded-full",
+              )}
+            />
+            <input
+              id={`option-${option.id}`}
+              value={option.label}
+              onChange={(e) => onChange(setOptionLabel(draft, option.id, e.target.value))}
+              placeholder={`Вариант ${index + 1}`}
+              aria-label={`Вариант ответа ${index + 1}`}
+              className={FIELD}
+            />
+            <button
+              type="button"
+              onClick={() => onChange(removeOption(draft, option.id))}
+              aria-label={`Удалить вариант ${index + 1}`}
+              className="shrink-0 rounded p-1.5 text-slate transition-colors hover:bg-secondary hover:text-danger"
+            >
+              <Trash2 className="h-4 w-4" />
+            </button>
+          </div>
+        ))}
+      </div>
+
+      <AddButton onClick={() => onChange(addOption(draft))}>Добавить вариант ответа</AddButton>
+    </div>
+  );
+}
+
+/** Строки матрицы: каждая получает свой ответ из общего списка вариантов. */
+function RowsEditor({
+  draft,
+  onChange,
+}: {
+  draft: SurveyQuestion;
+  onChange: (q: SurveyQuestion) => void;
+}) {
+  return (
+    <div className="space-y-2">
+      <span className="block text-xs text-slate">
+        Строки — на каждую персона отвечает отдельно
+      </span>
+
+      <div className="space-y-1.5">
+        {(draft.rows ?? []).map((row, index) => (
+          <div key={row.id} className="flex items-center gap-2.5">
+            <span className="w-5 shrink-0 text-right text-xs tabular-nums text-stone">
+              {index + 1}
+            </span>
+            <input
+              id={`row-${row.id}`}
+              value={row.label}
+              onChange={(e) => onChange(setRowLabel(draft, row.id, e.target.value))}
+              placeholder={`Строка ${index + 1}`}
+              aria-label={`Строка матрицы ${index + 1}`}
+              className={FIELD}
+            />
+            <button
+              type="button"
+              onClick={() => onChange(removeRow(draft, row.id))}
+              aria-label={`Удалить строку ${index + 1}`}
+              className="shrink-0 rounded p-1.5 text-slate transition-colors hover:bg-secondary hover:text-danger"
+            >
+              <Trash2 className="h-4 w-4" />
+            </button>
+          </div>
+        ))}
+      </div>
+
+      <AddButton onClick={() => onChange(addRow(draft))}>Добавить строку</AddButton>
+    </div>
+  );
+}
+
 function QuestionEditor({
   draft,
   onChange,
@@ -91,18 +221,16 @@ function QuestionEditor({
   onSave: () => void;
   onCancel: () => void;
 }) {
-  const invalidLabel = draft.label.trim().length === 0;
-  // Границы есть только у шкалы; у выбора из списка их нет и быть не может.
-  const invalidScale =
-    draft.type === "scale" &&
-    (draft.scaleMin === undefined ||
-      draft.scaleMax === undefined ||
-      draft.scaleMin >= draft.scaleMax);
+  const issues = draftIssues(draft);
+  const closed =
+    draft.type === "single_choice" ||
+    draft.type === "multi_choice" ||
+    draft.type === "matrix_single";
 
   return (
-    <div className="space-y-3 rounded-md border border-ink/40 bg-secondary/40 p-4">
+    <div className="space-y-4 rounded-md border border-ink/40 bg-secondary/40 p-4">
       <div>
-        <label className="text-xs text-slate" htmlFor={`label-${draft.id}`}>
+        <label className="block text-xs text-slate" htmlFor={`label-${draft.id}`}>
           Формулировка вопроса
         </label>
         <input
@@ -111,23 +239,23 @@ function QuestionEditor({
           value={draft.label}
           onChange={(e) => onChange({ ...draft, label: e.target.value })}
           onKeyDown={(e) => {
-            if (e.key === "Enter" && !invalidLabel && !invalidScale) onSave();
+            if (e.key === "Enter" && issues.length === 0) onSave();
             if (e.key === "Escape") onCancel();
           }}
           placeholder="Например: насколько убедителен финал?"
-          className="mt-1.5 w-full rounded-md border border-hairline bg-background px-3 py-2 text-sm outline-none focus:border-ink/60"
+          className={cn(FIELD, "mt-1.5")}
         />
       </div>
 
       <div>
-        <span className="text-xs text-slate">Тип ответа</span>
+        <span className="block text-xs text-slate">Тип ответа</span>
         <div className="mt-1.5 flex flex-wrap gap-1.5">
           {QUESTION_TYPES.map((t) => (
             <button
               key={t.v}
               type="button"
               title={t.hint}
-              onClick={() => onChange({ ...draft, type: t.v })}
+              onClick={() => onChange(draftForType(draft, t.v))}
               className={cn(
                 "rounded-full border px-3 py-1 text-xs transition-colors",
                 draft.type === t.v
@@ -145,42 +273,67 @@ function QuestionEditor({
       </div>
 
       {draft.type === "scale" && (
-        <div className="flex items-end gap-3">
+        <div className="flex flex-wrap items-end gap-4">
           <div>
-            <label className="text-xs text-slate" htmlFor={`min-${draft.id}`}>
+            <label className="block text-xs text-slate" htmlFor={`min-${draft.id}`}>
               От
             </label>
             <input
               id={`min-${draft.id}`}
               type="number"
-              value={draft.scaleMin}
+              value={draft.scaleMin ?? ""}
               onChange={(e) => onChange({ ...draft, scaleMin: Number(e.target.value) })}
-              className="mt-1.5 w-20 rounded-md border border-hairline bg-background px-3 py-2 text-sm tabular-nums outline-none focus:border-ink/60"
+              className={cn(FIELD, "mt-1.5 w-24 tabular-nums")}
             />
           </div>
           <div>
-            <label className="text-xs text-slate" htmlFor={`max-${draft.id}`}>
+            <label className="block text-xs text-slate" htmlFor={`max-${draft.id}`}>
               До
             </label>
             <input
               id={`max-${draft.id}`}
               type="number"
-              value={draft.scaleMax}
+              value={draft.scaleMax ?? ""}
               onChange={(e) => onChange({ ...draft, scaleMax: Number(e.target.value) })}
-              className="mt-1.5 w-20 rounded-md border border-hairline bg-background px-3 py-2 text-sm tabular-nums outline-none focus:border-ink/60"
+              className={cn(FIELD, "mt-1.5 w-24 tabular-nums")}
             />
           </div>
-          {invalidScale && (
-            <p className="pb-2 text-xs text-danger">Нижняя граница должна быть меньше верхней.</p>
-          )}
         </div>
+      )}
+
+      {closed && <OptionsEditor draft={draft} onChange={onChange} />}
+
+      {draft.type === "multi_choice" && (
+        <div>
+          <label className="block text-xs text-slate" htmlFor={`cap-${draft.id}`}>
+            Сколько вариантов может выбрать персона
+          </label>
+          <input
+            id={`cap-${draft.id}`}
+            type="number"
+            min={1}
+            value={draft.maxChoices ?? ""}
+            onChange={(e) => onChange({ ...draft, maxChoices: Number(e.target.value) })}
+            className={cn(FIELD, "mt-1.5 w-24 tabular-nums")}
+          />
+        </div>
+      )}
+
+      {draft.type === "matrix_single" && <RowsEditor draft={draft} onChange={onChange} />}
+
+      {issues.length > 0 && (
+        <ul className="space-y-1 text-xs text-slate">
+          {issues.map((reason) => (
+            <li key={reason}>· {reason}</li>
+          ))}
+        </ul>
       )}
 
       <div className="flex gap-2 pt-1">
         <button
           type="button"
           onClick={onSave}
-          disabled={invalidLabel || invalidScale}
+          disabled={issues.length > 0}
           className="rounded-md bg-foreground px-4 py-2 text-sm font-medium text-background transition-opacity hover:opacity-90 disabled:pointer-events-none disabled:opacity-40"
         >
           Готово
@@ -487,14 +640,14 @@ export function SurveyBuilder({
     <div className="space-y-6">
       {mandatory.length > 0 && (
         <div>
-          <div className="flex items-baseline justify-between gap-4">
-            <h2 className="text-sm font-semibold">Обязательные вопросы заказчика</h2>
-            <span className="text-xs tabular-nums text-slate">{mandatory.length}</span>
+          <div className="flex items-center gap-2.5">
+            <h2 className="text-sm font-semibold">Обязательные вопросы</h2>
+            <Chip tone="outline">{questions.length}</Chip>
           </div>
           <p className="mt-1 text-xs leading-relaxed text-slate">
-            Эти вопросы задаются в каждом исследовании и не редактируются: отчёт и
-            выгрузка называют их номерами заказчика, и снятый вопрос сделал бы отчёт
-            неполным незаметно для читателя. Гибкость — в дополнительных вопросах ниже.
+            Эти вопросы задаются в каждом исследовании и не редактируются (снятые
+            вопросы сделали бы отчёт неполным). Вы можете добавить дополнительные
+            вопросы ниже.
           </p>
 
           <div className="mt-3 space-y-2">
@@ -550,11 +703,6 @@ export function SurveyBuilder({
         </p>
 
         <div className="mt-3 space-y-2">
-          {custom.length === 0 && !addingNew && (
-            <p className="rounded-md border border-dashed border-hairline px-4 py-3 text-xs text-slate">
-              Пока ни одного. Обязательных вопросов заказчика достаточно для полного отчёта.
-            </p>
-          )}
           {renderList(custom)}
           {addingNew && draft && (
             <QuestionEditor draft={draft} onChange={setDraft} onSave={commit} onCancel={cancel} />
@@ -574,7 +722,6 @@ export function SurveyBuilder({
       </div>
 
       <div className="flex flex-wrap items-center gap-2 border-t border-hairline pt-4">
-        <Chip tone="outline">Всего вопросов: {questions.length}</Chip>
         {/* Предупреждение осталось, подтверждение снято: «заземление активно» —
             это состояние по умолчанию, и сообщать о нём значит приучать не
             читать эту строку. Красный флаг, который горит всегда, перестаёт

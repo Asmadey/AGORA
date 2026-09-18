@@ -1,3 +1,4 @@
+import { ArrowLeft } from "lucide-react";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 
@@ -39,12 +40,13 @@ export default async function SurveyPage({
       <PageHeader
         title={survey.name}
         subtitle={`Создана ${new Date(survey.createdAt).toLocaleDateString("ru-RU")} · ${survey.questions.length} вопросов`}
-        actions={
+        back={
           <Link
             href="/surveys"
-            className="rounded-md border border-hairline px-4 py-2 text-sm transition-colors hover:bg-secondary"
+            aria-label="К списку анкет"
+            className="grid h-8 w-8 place-items-center rounded-full border border-hairline text-slate transition-colors hover:border-ink hover:text-ink"
           >
-            К списку
+            <ArrowLeft className="h-4 w-4" />
           </Link>
         }
       />

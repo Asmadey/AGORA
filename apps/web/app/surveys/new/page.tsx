@@ -1,3 +1,4 @@
+import { ArrowLeft } from "lucide-react";
 import Link from "next/link";
 
 import { PageHeader } from "@/components/AppShell";
@@ -25,12 +26,13 @@ export default async function NewSurveyPage() {
       <PageHeader
         title="Новая анкета"
         subtitle="Пятнадцать обязательных вопросов заказчика подставлены заранее и не редактируются. Свои вопросы добавляются поверх."
-        actions={
+        back={
           <Link
             href="/surveys"
-            className="rounded-md border border-hairline px-4 py-2 text-sm transition-colors hover:bg-secondary"
+            aria-label="К списку анкет"
+            className="grid h-8 w-8 place-items-center rounded-full border border-hairline text-slate transition-colors hover:border-ink hover:text-ink"
           >
-            К списку
+            <ArrowLeft className="h-4 w-4" />
           </Link>
         }
       />
