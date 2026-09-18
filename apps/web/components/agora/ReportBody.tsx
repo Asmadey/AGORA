@@ -2,13 +2,26 @@ import type { ReactNode } from "react";
 
 import { Chip, Metric, ScoreBar, TimecodeRef } from "@/components/agora/Primitives";
 import { PersonaAccordion } from "@/components/agora/PersonaAccordion";
-import { ValuesChart } from "@/components/agora/ValuesChart";
+import { SurveyValuesChart } from "@/components/agora/SurveyValuesChart";
 import { MetricProvenance } from "@/components/agora/MetricProvenance";
 import { MetricInfo } from "@/components/agora/MetricInfo";
 import { CRITERIA, CRITERIA_LABELS } from "@/lib/agora-types";
 import { contributions, type MetricKey } from "@/lib/provenance";
+import {
+  matrixPairs,
+  optionPairs,
+  surveyBlocks,
+  surveyQuestion,
+} from "@/lib/report-survey";
 import { showsSection, type ReportScope } from "@/lib/share-scope";
-import type { AnswerView, ReportView } from "@/lib/report-view";
+import type {
+  AnswerView,
+  ReportView,
+  SurveyIndexKey,
+  SurveyQuestionView,
+  SurveyStats,
+  SurveyView,
+} from "@/lib/report-view";
 
 /**
  * Тело отчёта — одно на внутреннюю страницу и на публичную ссылку.
@@ -40,13 +53,6 @@ export interface ReportBodyProps {
   answers: AnswerView[];
   /** Сколько ответов в прогоне всего — карточек на странице может быть меньше. */
   audienceSize: number;
-  /**
-   * Сколько персон аудитории несут каждую ценность.
-   *
-   * `null` — считать не по чему: набор персон удалён после прогона
-   * (`tasks.persona_set_id` обнуляется). Плитка тогда не рисуется.
-   */
-  values?: Record<string, number> | null;
   /** Идентификатор прогона: по нему аккордеон догружает следующие страницы. */
   runId: string;
   /** Подпись про отбраковку QA рядом со списком персон. */
@@ -95,6 +101,300 @@ function Row({ label, value }: { label: string; value: string }) {
   );
 }
 
+/**
+ * Доля процентами. Прочерк — «не считалось»: ноль означал бы, что вариант не
+ * выбрал никто, а это другое утверждение.
+ */
+function pct(share: number | null): string {
+  return share === null ? "—" : `${(share * 100).toFixed(0)}%`;
+}
+
+/**
+ * Строка показателя: подпись и два числа — по всей аудитории и по срезу.
+ *
+ * Колонка среза у КАЖДОГО показателя — требование заказчика, а не украшение.
+ * Поэтому она рисуется одной функцией на все типы вопросов: скопированная по
+ * четырём веткам, она разошлась бы в половине из них при первой же правке.
+ */
+function SurveyRow({
+  label,
+  total,
+  target,
+  muted = false,
+}: {
+  label: string;
+  total: string;
+  target: string;
+  muted?: boolean;
+}) {
+  return (
+    <div className="grid grid-cols-[1fr_auto_auto] items-baseline gap-x-4 py-[3px] text-sm">
+      <span className={`min-w-0 truncate ${muted ? "text-slate" : ""}`} title={label}>
+        {label}
+      </span>
+      <span className="w-14 text-right tabular-nums">{total}</span>
+      <span className="w-14 text-right tabular-nums text-slate">{target}</span>
+    </div>
+  );
+}
+
+/**
+ * Сколько человек стоит за числом.
+ *
+ * `n` — ответившие, `base` — опрошенные. Заказчик подписывает доли «в % от
+ * опрошенных», а считаются они от ответивших: при полной анкете это одно и то
+ * же, при пропусках — расходится вдвое. Выбирать знаменатель за читателя
+ * нельзя, поэтому на экране стоят оба числа.
+ */
+function surveySize(stats: SurveyStats): string {
+  return stats.base === null ? `${stats.n}` : `${stats.n} из ${stats.base}`;
+}
+
+/**
+ * Один вопрос анкеты: заголовок, размеры охватов и числа по типу вопроса.
+ *
+ * Подавленный срез не рисуется прочерками молча — под вопросом стоит строка о
+ * том, что срез меньше порога. Молчаливые прочерки в колонке читаются как сбой
+ * расчёта, а это решение, принятое намеренно.
+ */
+function SurveyQuestionCard({
+  question,
+  targetLabel,
+  minSegment,
+}: {
+  question: SurveyQuestionView;
+  targetLabel: string;
+  minSegment: number;
+}) {
+  // Колонка среза заполняется только из среза: сведение пар живёт в `lib`,
+  // потому что подстановку «нет среза — покажем общее» разметка не сторожит
+  // ничем, а выглядит такая подстановка как посчитанный срез.
+  const options = optionPairs(question, question.total, question.target);
+  const rows = matrixPairs(question, question.total, question.target);
+  const unlabelled = [...options, ...rows].some((r) => !r.known);
+
+  return (
+    <div>
+      <h4 className="text-sm font-medium">
+        {question.number === null ? "" : `${question.number}. `}
+        {question.label}
+      </h4>
+      {/*
+        Размеры охватов стоят строкой над числами, а не в шапке колонок: «3 из
+        3» не влезает в колонку шириной под «100 %», а обрезанное n читается
+        как другое число.
+      */}
+      <p className="mt-0.5 text-[11px] text-slate">
+        Ответили: {surveySize(question.total)} · в срезе «{targetLabel}»:{" "}
+        {surveySize(question.target)}
+      </p>
+      <div className="mt-1 grid grid-cols-[1fr_auto_auto] gap-x-4 text-[11px] uppercase tracking-wide text-slate">
+        <span>Показатель</span>
+        <span className="w-14 text-right">Все</span>
+        <span className="w-14 text-right normal-case tracking-normal">{targetLabel}</span>
+      </div>
+
+      <div className="mt-1 divide-y divide-hairline/60">
+        {question.type === "scale" && (
+          <>
+            <SurveyRow
+              label="Среднее"
+              total={fmt(question.total.mean, 2)}
+              target={fmt(question.target.mean, 2)}
+            />
+            <SurveyRow
+              label="Доля 8–10"
+              total={pct(question.total.topBox)}
+              target={pct(question.target.topBox)}
+            />
+            {(question.total.groups ?? []).map((g) => (
+              <SurveyRow
+                key={g.id}
+                label={`Баллы ${g.id}`}
+                total={pct(g.share)}
+                target={pct(
+                  question.target.groups?.find((t) => t.id === g.id)?.share ?? null,
+                )}
+                muted
+              />
+            ))}
+          </>
+        )}
+
+        {options.map((o) => (
+          <SurveyRow
+            key={o.id}
+            label={o.label}
+            total={pct(o.total)}
+            target={pct(o.target)}
+            muted={o.service}
+          />
+        ))}
+
+        {rows.map((row) => (
+          <div key={row.id} className="py-1">
+            <p className="min-w-0 truncate text-xs text-slate" title={row.label}>
+              {row.label}
+            </p>
+            {row.options.map((o) => (
+              <SurveyRow
+                key={o.id}
+                label={o.label}
+                total={pct(o.total)}
+                target={pct(o.target)}
+                muted={o.service}
+              />
+            ))}
+          </div>
+        ))}
+
+        {question.type === "open" && (
+          <SurveyRow
+            label="Ответов в свободной форме"
+            total={String(question.total.n)}
+            target={String(question.target.n)}
+          />
+        )}
+      </div>
+
+      <div className="mt-1 space-y-0.5 text-[11px] text-slate">
+        {question.target.belowThreshold && (
+          <p>
+            Срез «{targetLabel}»: {question.target.n} персон — меньше порога{" "}
+            {minSegment}. Доли по нему не считались: доля по такой группе шагает
+            слишком крупно, чтобы её можно было читать наравне с остальными.
+          </p>
+        )}
+        {question.total.errors !== null && question.total.errors > 0 && (
+          <p>
+            Не разобрано по форме: {question.total.errors}. Такой ответ нарушил
+            правило вопроса и в доли не идёт — он остаётся здесь числом, чтобы
+            доля не выглядела посчитанной по всем.
+          </p>
+        )}
+        {unlabelled && (
+          <p>
+            Подписи части вариантов в анкете заказчика не нашлись — на их месте
+            стоят идентификаторы. Доли при этом посчитаны.
+          </p>
+        )}
+        {question.type === "open" && (
+          <p>Сами ответы стоят в карточках персон ниже.</p>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Секция «Ответы на анкету».
+ *
+ * Числа приходят посчитанными из `aggregate.survey` — это вывод `survey_tally`
+ * воркера. Ни одного из них экран не считает сам: вторая формула разошлась бы с
+ * первой молча, и два числа в одном отчёте отвечали бы на один вопрос по-разному.
+ */
+function SurveySection({ survey }: { survey: SurveyView }) {
+  const targetLabel = survey.audience.targetRange ?? "срез";
+  const indices: { key: SurveyIndexKey; label: string; hint: string }[] = [
+    {
+      key: "satisfaction",
+      label: "Удовлетворённость",
+      hint: "среднее долей 8–10 по пяти критериям",
+    },
+    {
+      key: "perception",
+      label: "Восприятие тем",
+      hint: "среднее максимумов «тема поднималась» по темам",
+    },
+    { key: "nps", label: "NPS по анкете", hint: "доля 9–10 минус доля 0–6" },
+  ];
+
+  return (
+    <section>
+      <h2 className="mb-1 text-sm font-semibold">Ответы на анкету</h2>
+      <p className="mb-4 text-xs text-slate">
+        У каждого показателя два числа: по всей аудитории и по срезу «{targetLabel}».
+        Рядом с каждым — сколько персон ответили.
+        {survey.excludedByQa > 0
+          ? ` Из расчёта выбыло ответов по правилам проверки: ${survey.excludedByQa}.`
+          : ""}
+      </p>
+
+      <div className="mb-4 grid gap-3 sm:grid-cols-3">
+        {indices.map((index) => {
+          const value = survey.indices[index.key];
+          return (
+            <div key={index.key} className="rounded-lg border border-hairline bg-card p-4">
+              <p className="text-xs uppercase tracking-wide text-slate">{index.label}</p>
+              <p className="mt-1 text-2xl font-semibold tabular-nums">
+                {pct(value.total)}
+              </p>
+              <p className="mt-1 text-xs text-slate">
+                {targetLabel}: {pct(value.target)} · {index.hint}
+              </p>
+            </div>
+          );
+        })}
+      </div>
+      {/*
+        Прочерк у индекса — это «не считался», и причина у него одна: вопросов,
+        из которых он собирается, в анкете не было. Среднее по четырём
+        критериям из пяти выглядит как среднее по пяти, и различить их в отчёте
+        нечем, поэтому писатель при неполном наборе не считает вовсе.
+      */}
+      <p className="mb-4 text-[11px] text-slate">
+        Прочерк у показателя означает, что вопросов, из которых он собирается, в
+        этой анкете не было: при неполном наборе он не считается вовсе.
+      </p>
+
+      <div className="space-y-4">
+        {surveyBlocks(survey).map((block) => (
+          <div key={block.id} className="rounded-lg border border-hairline bg-card p-5">
+            <h3 className="text-xs uppercase tracking-wide text-slate">{block.label}</h3>
+            <div className="mt-4 space-y-5">
+              {block.questions.map((q) => (
+                <SurveyQuestionCard
+                  key={q.id}
+                  question={q}
+                  targetLabel={targetLabel}
+                  minSegment={survey.minSegment}
+                />
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/*
+        Состав аудитории порога не признаёт: городов в корпусе семь, и порог,
+        осмысленный для сравнения средних, уничтожил бы сам разрез, который
+        заказчик требует прямо.
+      */}
+      <div className="mt-4 rounded-lg border border-hairline bg-card p-5">
+        <h3 className="text-xs uppercase tracking-wide text-slate">Состав аудитории</h3>
+        <p className="mt-1 text-xs text-slate">
+          Всего персон: {survey.audience.total} · в срезе «{targetLabel}»:{" "}
+          {survey.audience.target}
+        </p>
+        <div className="mt-3 flex flex-wrap gap-[15px]">
+          {survey.audience.breakdowns.map((dim) => (
+            <div key={dim.key} className="w-[240px]">
+              <h4 className="mb-1 text-xs uppercase tracking-wide text-slate">
+                {dim.label}
+              </h4>
+              <dl className="space-y-1 text-sm text-slate">
+                {dim.counts.map((row) => (
+                  <Row key={row.value} label={row.value} value={String(row.personas)} />
+                ))}
+              </dl>
+            </div>
+          ))}
+        </div>
+      </div>
+    </section>
+  );
+}
+
 export function ReportBody({
   view,
   answers,
@@ -104,9 +404,17 @@ export function ReportBody({
   scope,
   timeline,
   rawReport,
-  values = null,
 }: ReportBodyProps) {
   const show = (section: Parameters<typeof showsSection>[1]) => showsSection(scope, section);
+
+  /**
+   * Вопрос 8 — «какие ценности стремились донести создатели проекта».
+   *
+   * Отдельной переменной, потому что он стоит в панели показателей плиткой, а
+   * не только в разделе анкеты: это ответ про материал, и место ему рядом с
+   * остальными числами о материале.
+   */
+  const donatedValues = view.survey ? surveyQuestion(view.survey, 8) : null;
 
   /**
    * Происхождение числа: раскрытие под метрикой ведёт к ответам, из которых
@@ -286,16 +594,25 @@ export function ReportBody({
             </div>
 
             {/*
-              Ценности аудитории заняли место карточки «Модель зрения» по
-              решению владельца (16.09.2026): состав ценностей объясняет ответы
-              персон сильнее, чем имя модели. Имена моделей не потеряны — они
-              лежат в `models_used` и видны в «Отчёте в исходном виде».
+              На этом месте стоял график ценностей АУДИТОРИИ — сколько персон
+              несут каждую из семнадцати. Он занял место карточки «Модель
+              зрения» 16.09.2026 и уступил место вопросу 8 по решению владельца
+              17.09.2026.
 
-              Плитки нет вовсе, когда считать не по чему: `persona_set_id`
-              обнуляется при удалении набора, и пустой график утверждал бы, что
-              у аудитории нет ценностей, — а это другое.
+              Замена, а не соседство: две похожие плитки рядом читались бы как
+              одно и то же число, посчитанное дважды. Разница в том, ЧТО они
+              описывают. Ценности аудитории — свойство сгенерированных персон:
+              они выпали при генерации и о материале не говорят ничего. Вопрос 8
+              спрашивает, какие ценности аудитория увидела В МАТЕРИАЛЕ, и это
+              ответ на вопрос исследования.
+
+              `ValuesChart` при этом не удалён: состав ценностей набора остаётся
+              свойством аудитории и нужен её реестру.
+
+              Плитки нет вовсе, когда анкеты в прогоне не было: пустой график
+              утверждал бы, что вопрос задавали и никто не ответил.
             */}
-            {values && <ValuesChart counts={values} />}
+            {donatedValues && <SurveyValuesChart question={donatedValues} />}
           </div>
         </section>
 
@@ -449,6 +766,16 @@ export function ReportBody({
             )}
           </section>
         )}
+
+        {/*
+          Ответы на анкету.
+
+          Секции нет вовсе, когда `survey` пуст: это либо прогон без анкеты,
+          либо отчёт, снятый до того, как агрегат научился её считать.
+          Различить их по отчёту нечем, а пустая секция утверждала бы, что
+          анкету задавали и никто не ответил.
+        */}
+        {show("survey") && view.survey && <SurveySection survey={view.survey} />}
 
         {/* Групповой синтез */}
         {show("synthesis") && view.themes.length > 0 && (
