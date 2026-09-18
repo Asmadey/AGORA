@@ -128,6 +128,111 @@ export interface ReportView {
   } | null;
   disclaimer: string | null;
   degraded: string[];
+  /**
+   * Посчитанная анкета: `aggregate.survey`, он же результат `survey_tally`.
+   *
+   * `null` — анкеты в прогоне не было ЛИБО отчёт снят до того, как агрегат
+   * научился её считать. Различать эти два случая по отчёту нечем, и пустая
+   * секция утверждала бы, что анкету задавали, а ответов нет.
+   */
+  survey: SurveyView | null;
+}
+
+/**
+ * Анкета, посчитанная воркером.
+ *
+ * Форма повторяет вывод `survey_tally`
+ * (`services/agent-core/agent_core/analytics/survey_stats.py`) один в один:
+ * здесь только переименование питоновских ключей и приведение словарей к
+ * спискам, чтобы порядок строк на экране не зависел от порядка обхода объекта.
+ * Ни одного числа этот разбор не считает — вся арифметика живёт у писателя, и
+ * вторая её копия разошлась бы с первой молча.
+ */
+export interface SurveyView {
+  /** Вопросы по возрастанию номера; вопросы без номера — в конце. */
+  questions: SurveyQuestionView[];
+  /**
+   * Интегральные показатели заказчика — доли, а не проценты: 0.6667 значит
+   * 66,7 %. NPS здесь тоже доля (−1…+1), а не привычные −100…+100: писатель
+   * считает его вычитанием долей, и домножение на сто — дело экрана.
+   */
+  indices: Record<SurveyIndexKey, { total: number | null; target: number | null }>;
+  audience: SurveyAudience;
+  /**
+   * Порог показа долей в срезе. Ниже него писатель убирает числа, оставляя
+   * размер: доля по группе из пяти шагает по двадцать процентных пунктов и
+   * выглядит на экране так же уверенно, как доля по сотне.
+   */
+  minSegment: number;
+  /** Сколько ответов выбыло по детерминированным правилам QA. */
+  excludedByQa: number;
+}
+
+export type SurveyIndexKey = "satisfaction" | "perception" | "nps";
+
+export interface SurveyQuestionView {
+  id: string;
+  /** Номер в анкете заказчика. `null` у вопросов, добавленных оператором. */
+  number: number | null;
+  /** `scale`, `single_choice`, `multi_choice`, `matrix_single`, `open`. */
+  type: string;
+  /** Блок заказчика: `b1`…`b6`. `null` — вопрос вне блоков. */
+  block: string | null;
+  label: string;
+  total: SurveyStats;
+  /** Тот же показатель по срезу «14–35». */
+  target: SurveyStats;
+}
+
+/**
+ * Состав аудитории. Порога не признаёт намеренно: городов в корпусе семь, и
+ * порог, осмысленный для сравнения средних, уничтожил бы сам разрез.
+ */
+export interface SurveyAudience {
+  total: number;
+  target: number;
+  /** Подпись среза, как её задал писатель: «14–35». */
+  targetRange: string | null;
+  breakdowns: { key: string; label: string; counts: { value: string; personas: number }[] }[];
+}
+
+/**
+ * Один показатель по одному охвату.
+ *
+ * Заполнены поля, осмысленные для типа вопроса: у шкалы — `mean`, `topBox` и
+ * `groups`, у выбора — `options` и `errors`, у матрицы — `rows`, у открытого —
+ * `texts`. Остальные равны `null`, и это то же `null`, что у подавленного
+ * среза: «не считалось». Ноль сюда не подставляется нигде.
+ */
+export interface SurveyStats {
+  /** Сколько персон ответили на вопрос. */
+  n: number;
+  /**
+   * Сколько персон в этом охвате опрашивали. Стоит рядом с `n`, потому что
+   * заказчик подписывает доли «в % от опрошенных», а считаются они от
+   * ОТВЕТИВШИХ: при полной анкете это одно число, при пропусках — два разных.
+   */
+  base: number | null;
+  /** Срез меньше `minSegment`: числа не считались, размер остался. */
+  belowThreshold: boolean;
+  mean: number | null;
+  /** Доля верхних баллов, 8–10. Доля, а не проценты. */
+  topBox: number | null;
+  /** Группы шкалы 9–10 / 7–8 / 0–6 в порядке писателя. */
+  groups: { id: string; share: number }[] | null;
+  /**
+   * Доли по вариантам в порядке анкеты, включая невыбранные.
+   *
+   * Невыбранный вариант — ноль, а не пропавшая строка: исчезнувшая строка на
+   * графике читается как «такого варианта не предлагали».
+   */
+  options: { id: string; share: number | null; count: number | null }[] | null;
+  /** Сколько ответов выброшено как нарушившие форму вопроса. */
+  errors: number | null;
+  /** Ответы на открытый вопрос. */
+  texts: string[] | null;
+  /** Строки матрицы. У подавленного среза — `null`, а не пустой список. */
+  rows: { id: string; themeId: string | null; stats: SurveyStats }[] | null;
 }
 
 export interface Quote {
@@ -358,6 +463,122 @@ function qaOf(value: unknown): ReportView["qa"] {
   };
 }
 
+/** Подписи разрезов состава аудитории. Порядок — порядок показа. */
+const AUDIENCE_LABELS: Record<string, string> = {
+  gender: "Пол",
+  age_group: "Возраст",
+  geo: "Тип населённого пункта",
+  city: "Город",
+};
+
+const SURVEY_INDEX_KEYS: SurveyIndexKey[] = ["satisfaction", "perception", "nps"];
+
+/** Словарь `{ключ: число}` → список пар в порядке писателя. */
+function pairs(value: unknown): { id: string; share: number }[] | null {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
+  return Object.entries(value as Record<string, unknown>).flatMap(([id, share]) => {
+    const parsed = num(share);
+    return parsed === null ? [] : [{ id, share: parsed }];
+  });
+}
+
+/**
+ * Показатель по одному охвату.
+ *
+ * Чего здесь НЕТ: подстановки нулей. Писатель у подавленного среза заменяет
+ * числа на `null` и оставляет `n` с `base` — это его способ сказать «срез
+ * слишком мал». Превратить такой `null` в ноль значило бы стереть единственное
+ * различие между «посчитали, вышло ноль» и «считать не стали».
+ */
+function surveyStats(value: unknown): SurveyStats {
+  const s = obj(value);
+  const counts = obj(s.counts);
+  const shares = pairs(s.shares);
+  const rawRows = s.rows;
+
+  return {
+    n: num(s.n) ?? 0,
+    base: num(s.base),
+    belowThreshold: s.below_threshold === true,
+    mean: num(s.mean),
+    topBox: num(s.top_box),
+    groups: pairs(s.groups),
+    options: shares
+      ? shares.map(({ id, share }) => ({ id, share, count: num(counts[id]) }))
+      : null,
+    errors: num(s.errors),
+    texts: Array.isArray(s.texts) ? strings(s.texts) : null,
+    rows:
+      typeof rawRows === "object" && rawRows !== null && !Array.isArray(rawRows)
+        ? Object.entries(rawRows as Record<string, unknown>).map(([id, row]) => ({
+            id,
+            themeId: str(obj(row).themeId),
+            stats: surveyStats(row),
+          }))
+        : null,
+  };
+}
+
+/**
+ * Посчитанная анкета из агрегата.
+ *
+ * `null` при отсутствии поля: секции тогда нет вовсе. Пустая секция «Ответы на
+ * анкету» сообщала бы, что анкету задавали и никто не ответил.
+ */
+function surveyOf(value: unknown): SurveyView | null {
+  const raw = obj(value);
+  if (Object.keys(raw).length === 0) return null;
+
+  const questions: SurveyQuestionView[] = Object.entries(obj(raw.questions)).map(
+    ([id, rawQuestion]) => {
+      const q = obj(rawQuestion);
+      return {
+        id,
+        number: num(q.number),
+        type: str(q.type) ?? "open",
+        block: str(q.block),
+        label: str(q.label) ?? id,
+        total: surveyStats(q.total),
+        target: surveyStats(q.target),
+      };
+    },
+  );
+  // По номеру, а не по порядку ключей: порядок словаря переживает Mongo, но
+  // держаться за него незачем — номер вопроса и есть порядок анкеты. Вопросы
+  // без номера (их добавил оператор) идут после пронумерованных.
+  questions.sort((a, b) => (a.number ?? Infinity) - (b.number ?? Infinity));
+
+  const rawAudience = obj(raw.audience);
+  const breakdowns = Object.entries(AUDIENCE_LABELS).flatMap(([key, label]) => {
+    const counts = Object.entries(obj(rawAudience[key])).map(([value, personas]) => ({
+      value,
+      personas: num(personas) ?? 0,
+    }));
+    return counts.length ? [{ key, label, counts }] : [];
+  });
+
+  const rawIndices = obj(raw.indices);
+  const indices = Object.fromEntries(
+    SURVEY_INDEX_KEYS.map((key) => {
+      const pair = obj(rawIndices[key]);
+      return [key, { total: num(pair.total), target: num(pair.target) }];
+    }),
+  ) as SurveyView["indices"];
+
+  return {
+    questions,
+    indices,
+    audience: {
+      total: num(rawAudience.total) ?? 0,
+      target: num(rawAudience.target) ?? 0,
+      targetRange: str(rawAudience.target_range),
+      breakdowns,
+    },
+    minSegment: num(raw.min_segment) ?? 0,
+    excludedByQa: num(raw.excluded_by_qa) ?? 0,
+  };
+}
+
 function quotesOf(value: unknown): Quote[] {
   if (!Array.isArray(value)) return [];
   return value.flatMap((raw) => {
@@ -494,6 +715,7 @@ export function parseReport(raw: Record<string, unknown>): ReportView {
     hasSegments,
     disclaimer: str(raw.disclaimer),
     degraded: strings(raw.degraded),
+    survey: surveyOf(agg.survey),
   };
 }
 
