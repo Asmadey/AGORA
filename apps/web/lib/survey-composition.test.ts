@@ -8,6 +8,7 @@ import {
   DEFAULT_QUESTIONS,
   MANDATORY_THEME_IDS,
   mandatoryThemeCountLabel,
+  surveyComposition,
   toggleMandatoryTheme,
   withSelectedMandatoryThemes,
   groundingIssues,
@@ -298,4 +299,54 @@ test("экраны анкеты не обещают вопрос о доле п�
       `${name} обещает вопрос о доле просмотра, которого в анкете больше нет`,
     );
   }
+});
+
+test("свежая анкета не показывает своих вопросов: их там нет", () => {
+  /*
+   * Владелец завёл анкету, не добавил ни одного своего вопроса — и увидел
+   * плашку «10 своих».
+   *
+   * Счёт шёл по отсутствию `baseKey`. Пока обязательными были пять базовых
+   * критериев, это совпадало со «своими». С пятнадцатью вопросами заказчика
+   * `baseKey` несут только первые пять, и десять обязательных уехали в чужую
+   * колонку.
+   *
+   * Проверка идёт по DEFAULT_QUESTIONS — ровно тому составу, который получает
+   * новая анкета. На выдуманном списке из пяти вопросов дефект не проявился бы.
+   */
+  const fresh = surveyComposition(DEFAULT_QUESTIONS);
+
+  assert.equal(fresh.total, 15, "новая анкета — пятнадцать вопросов заказчика");
+  assert.equal(fresh.mandatory, 15, "все пятнадцать обязательные");
+  assert.equal(fresh.custom, 0, "своих вопросов оператор не добавлял");
+
+  assert.equal(
+    DEFAULT_QUESTIONS.filter((q) => !q.baseKey).length,
+    10,
+    "прежний признак «нет baseKey» насчитал бы десять своих — он и врал",
+  );
+});
+
+test("добавленный оператором вопрос считается своим, обязательные — нет", () => {
+  const withOwn = surveyComposition([
+    ...DEFAULT_QUESTIONS,
+    { id: "own-1", label: "Свой вопрос", type: "open" } as (typeof DEFAULT_QUESTIONS)[number],
+  ]);
+
+  assert.equal(withOwn.total, 16);
+  assert.equal(withOwn.mandatory, 15);
+  assert.equal(withOwn.custom, 1, "плашка обязана появиться ровно теперь");
+});
+
+test("снятый базовый вопрос не превращает обязательные в свои", () => {
+  /*
+   * Прежняя причина, которая не отменяется: считать своё вычитанием длины
+   * базового набора нельзя — базовый вопрос можно снять, и вычитание начинало
+   * врать в другую сторону.
+   */
+  const withoutOneBase = DEFAULT_QUESTIONS.filter((q) => q.baseKey !== "music");
+  const c = surveyComposition(withoutOneBase);
+
+  assert.equal(c.total, 14);
+  assert.equal(c.custom, 0, "снятый базовый — не свой вопрос");
 });

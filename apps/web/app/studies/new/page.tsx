@@ -9,7 +9,7 @@ import { UploadProgress } from "@/components/agora/UploadProgress";
 import { putWithProgress, uploadPercent, type UploadState } from "@/lib/upload";
 import { cn } from "@/lib/utils";
 import { Chip } from "@/components/agora/Primitives";
-import { DEFAULT_QUESTIONS } from "@/lib/survey-composition";
+import { DEFAULT_QUESTIONS, surveyComposition } from "@/lib/survey-composition";
 import { SurveyPicker } from "@/components/agora/SurveyPicker";
 import { DRAFT_SURVEY_ID, draftSurveyName } from "@/lib/survey-sync";
 import { AudienceStep } from "@/components/agora/AudienceStep";
@@ -636,20 +636,25 @@ export default function NewStudyPage() {
                 ["Доп. контекст", contextFile?.name ?? "не приложен"],
                 [
                   "Анкета",
-                  // Своё считается по отсутствию `baseKey`, а не по разнице с
-                  // длиной базового набора. Пока базовые пять были
-                  // обязательными, разница совпадала со «своими»; теперь любой
-                  // из них можно снять, и вычитание начало врать — три своих
-                  // вопроса при двух снятых базовых давали «5 вопросов» без
-                  // единого упоминания, что три из них свои.
+                  // Считать своё вычитанием длины базового набора нельзя, и
+                  // эта причина остаётся в силе: базовый вопрос можно снять, и
+                  // тогда три своих вопроса при двух снятых базовых давали
+                  // «5 вопросов» без единого упоминания, что три из них свои.
+                  //
+                  // Прежний ответ на это — «своё = нет baseKey» — верен был,
+                  // только пока обязательными были те самые пять базовых. С
+                  // пятнадцатью вопросами заказчика baseKey несут первые пять,
+                  // и десять обязательных уезжали в «свои»: свежая анкета
+                  // рапортовала «10 своих» при нуле добавленных.
+                  //
+                  // Признак один и он в lib — членство в обязательном блоке.
                   (() => {
-                    const custom = questions.filter((q) => !q.baseKey).length;
-                    const base = questions.length - custom;
+                    const { total, mandatory, custom } = surveyComposition(questions);
                     const parts = [
-                      base > 0 ? `${base} базовых` : null,
+                      mandatory > 0 ? `${mandatory} обязательных` : null,
                       custom > 0 ? `${custom} своих` : null,
                     ].filter(Boolean);
-                    return `${questions.length} — ${parts.join(", ")}`;
+                    return `${total} — ${parts.join(", ")}`;
                   })(),
                 ],
                 ["Название", title.trim() || videoName || "по имени файла"],
