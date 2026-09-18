@@ -44,6 +44,62 @@ export const CONTEXT_ACCEPT = ".txt,.md,text/plain,text/markdown";
  */
 export const CONTEXT_LIMIT_CHARS = 4000;
 
+export type ContextConflictKind = "demographics" | "scores";
+
+export interface ContextConflict {
+  kind: ContextConflictKind;
+  evidence: string;
+}
+
+/**
+ * Находит указания, которые выглядят как попытка задать заземлённые поля.
+ *
+ * Это намеренно проверка текста, а не пересчёт корпуса в браузере: корпусная
+ * истина живёт на сервере. Пользователю достаточно заранее сказать, что файл
+ * содержит спорное указание; окончательные доли и средние оценки всё равно
+ * остаются за генератором по корпусу.
+ */
+export function detectContextConflicts(text: string): ContextConflict[] {
+  const body = normalizeContext(text);
+  if (!body) return [];
+
+  const conflicts: ContextConflict[] = [];
+  const audienceClaim =
+    /(?:аудитор|клиент|целев|пользоват|подписчик|покупател)/i.test(body);
+  const demographicClaim =
+    /(?:женщин|мужчин|женск|мужск|18\s*(?:-|\u2013|\u2014)\s*24|25\s*(?:-|\u2013|\u2014)\s*34|35\s*(?:-|\u2013|\u2014)\s*44|45\s*(?:-|\u2013|\u2014)\s*59|60\s*\+|москв|петербург|столиц|регион|город)/i.test(
+      body,
+    );
+  if (audienceClaim && demographicClaim) {
+    conflicts.push({
+      kind: "demographics",
+      evidence: "соцдемографические указания",
+    });
+  }
+
+  if (
+    /(?:оценк|балл|рейтинг|score|средн)/i.test(body) &&
+    /(?:9\s*(?:-|\u2013|\u2014)?\s*10|10\s*(?:-|\u2013|\u2014)?\s*9|высок|низк|обычно)/i.test(body)
+  ) {
+    conflicts.push({ kind: "scores", evidence: "указания на оценки" });
+  }
+
+  return conflicts;
+}
+
+/** Текст предупреждения рядом с приложенным файлом либо null. */
+export function contextConflictWarning(text: string): string | null {
+  const conflicts = detectContextConflicts(text);
+  if (conflicts.length === 0) return null;
+  return (
+    "Предупреждение: файл содержит " +
+    conflicts.map((conflict) => conflict.evidence).join(" и ") +
+    ", которые могут конфликтовать с grounding-корпусом. " +
+    "Распределения соцдема и средние оценки берутся из корпуса; файл уточняет " +
+    "только язык, интересы и специфику ниши."
+  );
+}
+
 /**
  * Текст без краевых пробелов и без длинных пустот.
  *

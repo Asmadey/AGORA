@@ -6,6 +6,7 @@ import { FileChip } from "@/components/agora/FileChip";
 import {
   CONTEXT_ACCEPT,
   CONTEXT_LIMIT_CHARS,
+  contextConflictWarning,
   contextFileError,
   normalizeContext,
 } from "@/lib/context-file";
@@ -168,6 +169,7 @@ export function AudienceStep({
   const [loadError, setLoadError] = useState<string | null>(null);
 
   const reuse = personaSetId !== null;
+  const contextWarning = contextFile ? contextConflictWarning(contextFile.text) : null;
 
   const refreshSets = async () => {
     const r = await fetch("/api/persona-sets");
@@ -256,7 +258,11 @@ export function AudienceStep({
         // Тело плоское: parseAudienceChoice читает size/ageGroups/geos/genders
         // с верхнего уровня и различает ветки по наличию personaSetId, а не по
         // полю-дискриминатору.
-        body: JSON.stringify({ ...criteria, datasetId }),
+        body: JSON.stringify({
+          ...criteria,
+          datasetId,
+          audienceContext: contextFile?.text,
+        }),
       });
       const data = (await res.json()) as Record<string, unknown>;
       if (!res.ok) {
@@ -522,6 +528,11 @@ export function AudienceStep({
                   {contextFile.text.length} символов из {CONTEXT_LIMIT_CHARS} — прочитаны и
                   уйдут в промпт персон.
                 </p>
+                {contextWarning && (
+                  <p className="mt-2 rounded-md border border-warning/40 bg-warning-soft/60 p-2.5 text-xs leading-relaxed text-warning">
+                    {contextWarning}
+                  </p>
+                )}
               </>
             ) : (
               <label className="mt-3 flex cursor-pointer items-center gap-3 rounded-lg border border-dashed border-hairline-strong px-4 py-3 transition-colors hover:border-ink/40 hover:bg-surface">

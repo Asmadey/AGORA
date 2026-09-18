@@ -39,6 +39,7 @@ import os
 from typing import Any
 
 from ..celery_app import app
+from ..portraits.distill import distill_context_file, load_prompt_template
 
 #: Как часто писать прогресс в базу.
 #:
@@ -46,6 +47,25 @@ from ..celery_app import app
 #: строке, которую в это же время опрашивает список. Каждая пятая — заметно для
 #: глаза (обновление раз в несколько секунд) и незаметно для базы.
 PROGRESS_EVERY = 5
+
+
+def _prepare_generation_config(raw_config: dict[str, Any]) -> dict[str, Any]:
+    """Distill an uploaded context before constructing ``GenerationConfig``."""
+    context_file = raw_config.get("audience_context")
+    if not isinstance(context_file, str) or not context_file.strip():
+        return raw_config
+
+    try:
+        context_prompt = load_prompt_template()
+    except FileNotFoundError:
+        context_prompt = None
+    return {
+        **raw_config,
+        "audience_context": distill_context_file(
+            context_file,
+            prompt_template=context_prompt,
+        ),
+    }
 
 
 def _update(tenant_id: str, sql: str, params: tuple[Any, ...]) -> None:
@@ -94,6 +114,10 @@ def generate_audience(self: Any, payload: dict[str, Any]) -> dict[str, Any]:
 
     # ── Скелеты ──────────────────────────────────────────────────────────────
     try:
+        # Контекст файла не должен ехать сырым в persona.generate. Сначала
+        # пропускаем context_file через существующий portrait.distill (#24),
+        # затем передаём короткий портрет отдельным ключом генератора.
+        raw_config = _prepare_generation_config(raw_config)
         config = GenerationConfig(**raw_config)
         # Слепок корпуса, снятый при создании аудитории, — главнее файла в
         # образе. Файл остаётся запасным путём для наборов, созданных до того,

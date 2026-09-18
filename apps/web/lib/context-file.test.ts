@@ -4,7 +4,9 @@ import { test } from "node:test";
 import {
   CONTEXT_ACCEPT,
   CONTEXT_LIMIT_CHARS,
+  contextConflictWarning,
   contextFileError,
+  detectContextConflicts,
   normalizeContext,
 } from "./context-file.ts";
 
@@ -65,4 +67,18 @@ test("список принимаемых расширений — тот же, 
   assert.match(CONTEXT_ACCEPT, /\.txt/);
   assert.match(CONTEXT_ACCEPT, /\.md/);
   assert.doesNotMatch(CONTEXT_ACCEPT, /pdf|docx|xlsx/);
+});
+
+test("конфликтный соцдем и оценки получают предупреждение", () => {
+  const text = "Наша аудитория — женщины 18-24 из Москвы, оценки обычно 9-10.";
+  assert.deepEqual(
+    detectContextConflicts(text).map((item) => item.kind),
+    ["demographics", "scores"],
+  );
+  assert.match(contextConflictWarning(text) ?? "", /Предупреждение/);
+  assert.match(contextConflictWarning(text) ?? "", /корпус/);
+});
+
+test("обычное описание ниши не предупреждает о конфликте", () => {
+  assert.equal(contextConflictWarning("Любят разбирать сюжеты и говорить простыми словами."), null);
 });

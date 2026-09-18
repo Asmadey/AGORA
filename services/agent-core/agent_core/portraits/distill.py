@@ -405,6 +405,47 @@ def distill_portrait(
     return distill_portrait_deterministic(records, segment_key)
 
 
+def distill_context_file(
+    text: str,
+    prompt_template: str | None = None,
+    use_llm: bool = True,
+) -> str:
+    """Distill user-provided audience context through ``portrait.distill``.
+
+    The uploaded material is not a corpus and must never replace corpus
+    distributions. It is wrapped as source material for the existing portrait
+    distiller and returned as a separate portrait section. If the model is
+    unavailable, the fallback preserves the customer's wording while marking
+    the corpus as authoritative.
+    """
+    body = (text or "").strip()
+    if not body:
+        return ""
+
+    if use_llm and prompt_template:
+        record = {
+            "source": "user-provided audience context",
+            "context_text": body,
+            "focus_group_verbatims": [body],
+        }
+        result = distill_portrait_llm(
+            [record],
+            "уточнение заказчика",
+            prompt_template,
+        )
+        if result:
+            return result
+
+    return (
+        "# Портрет аудитории: уточнение заказчика\n\n"
+        "## Уточнения ниши и лексики\n"
+        f"{body}\n\n"
+        "## Ограничение grounding\n"
+        "Этот файл уточняет язык, интересы и специфику ниши. "
+        "Распределения по соцдему и средние оценки остаются из корпуса."
+    )
+
+
 def distill_all_segments(
     corpus_path: str | Path | None = None,
     prompt_path: str | Path | None = None,

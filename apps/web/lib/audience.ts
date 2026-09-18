@@ -1,3 +1,5 @@
+import { CONTEXT_LIMIT_CHARS, normalizeContext } from "./context-file.ts";
+
 /**
  * Критерии отбора аудитории (задача #9, PRD §10).
  *
@@ -77,6 +79,8 @@ export interface AudienceCriteria {
   genders: Gender[];
   /** Пустой массив — критерий не задан. Незаземлён, см. шапку файла. */
   education: EducationLevel[];
+  /** Дистиллируется воркером до генерации; не меняет заземлённые доли. */
+  audienceContext?: string;
 }
 
 export const DEFAULT_CRITERIA: AudienceCriteria = {
@@ -129,6 +133,20 @@ export function parseAudienceChoice(
 
   const errors: string[] = [];
 
+  let audienceContext: string | undefined;
+  if (raw.audienceContext !== undefined) {
+    if (typeof raw.audienceContext !== "string") {
+      errors.push("audienceContext: строка либо отсутствует");
+    } else {
+      audienceContext = normalizeContext(raw.audienceContext);
+      if (!audienceContext) {
+        errors.push("audienceContext: файл пуст — прикладывать нечего");
+      } else if (audienceContext.length > CONTEXT_LIMIT_CHARS) {
+        errors.push(`audienceContext: длиннее ${CONTEXT_LIMIT_CHARS} символов`);
+      }
+    }
+  }
+
   const size = raw.size;
   if (
     typeof size !== "number" ||
@@ -175,6 +193,7 @@ export function parseAudienceChoice(
         geos: geos as Geo[],
         genders: genders as Gender[],
         education: education as EducationLevel[],
+        ...(audienceContext ? { audienceContext } : {}),
       },
     },
   };
@@ -198,5 +217,8 @@ export function toGenerationConfig(
     geos: criteria.geos,
     genders: criteria.genders,
     education: criteria.education,
+    ...(criteria.audienceContext
+      ? { audience_context: normalizeContext(criteria.audienceContext) }
+      : {}),
   };
 }
