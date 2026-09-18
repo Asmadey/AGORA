@@ -104,8 +104,15 @@ export function optionRows(
   question: SurveyQuestionView,
   stats: SurveyStats,
 ): SurveyOptionRow[] {
+  if (stats.belowThreshold) return [];
   const byId = new Map((spec(question)?.options ?? []).map((o) => [o.id, o]));
-  return (stats.options ?? []).map((row) => {
+  const actual = new Map((stats.options ?? []).map((row) => [row.id, row]));
+  const ids = [...new Set([
+    ...((spec(question)?.options ?? []).map((option) => option.id)),
+    ...(stats.options ?? []).map((row) => row.id),
+  ])];
+  return ids.map((id) => {
+    const row = actual.get(id) ?? { id, share: 0, count: 0 };
     const option = byId.get(row.id);
     return {
       id: row.id,
