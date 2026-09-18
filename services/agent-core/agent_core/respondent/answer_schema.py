@@ -54,7 +54,7 @@ from typing import Annotated, Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, create_model
 
 from ..schemas.answer import RETENTION_VALUES
-from ..survey import question_options, question_rows, survey_questions
+from ..survey import question_rows, row_max_choices, row_options, survey_questions
 
 #: Границы свободных полей.
 #:
@@ -88,8 +88,11 @@ def _field_for(question: dict[str, Any], row: dict[str, Any] | None = None) -> t
     """
     Тип одного поля ответа: (аннотация, Field).
 
-    Матричная строка описывается вариантами САМОГО ВОПРОСА — у матрицы они
-    общие на все строки, а отвечают по строке.
+    Матричная строка описывается СВОИМИ вариантами, а при их отсутствии —
+    общими у вопроса. Так вопрос 9 заказчика (один список на сорок три подтемы)
+    и своя матрица оператора (свой список у каждого вопроса темы) описываются
+    одним правилом, и схема ответа не разрешает ответить на вопрос вариантом
+    соседнего.
     """
     qtype = str(question.get("type") or "open")
     label = str(row.get("label") if row else question.get("label") or "")
@@ -102,12 +105,22 @@ def _field_for(question: dict[str, Any], row: dict[str, Any] | None = None) -> t
     if qtype == "open":
         return Annotated[str, Field(max_length=OPEN_ANSWER_MAX, description=label)], ...
 
-    ids = [str(o.get("id")) for o in question_options(question) if o.get("id")]
+    ids = [str(o.get("id")) for o in row_options(question, row) if o.get("id")]
     if not ids:
         # Закрытый вопрос без вариантов невалиден по схеме анкеты, но схема
         # ответа не то место, где об этом сообщать: упасть здесь значило бы
         # уронить прогон вместо внятного отказа валидатора.
         return Annotated[str, Field(max_length=OPEN_ANSWER_MAX, description=label)], ...
+
+    if qtype == "matrix_single" and row_max_choices(question, row) > 1:
+        cap = row_max_choices(question, row)
+        return (
+            Annotated[
+                list[_literal(ids)],
+                Field(min_length=1, max_length=cap, description=label),
+            ],
+            ...,
+        )
 
     if qtype == "multi_choice":
         cap = int(question.get("maxChoices") or len(ids))

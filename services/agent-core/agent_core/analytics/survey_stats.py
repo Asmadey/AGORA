@@ -38,7 +38,7 @@ import statistics
 from collections.abc import Callable, Iterable
 from typing import Any
 
-from ..survey import parse_field_answer, question_rows, survey_questions
+from ..survey import parse_field_answer, question_rows, row_options, survey_questions
 from .aggregate import surviving
 
 #: Целевая аудитория заказчика. Границы включительные.
@@ -121,7 +121,11 @@ def _scale(question: dict[str, Any], raw_values: Iterable[Any]) -> dict[str, Any
     }
 
 
-def _choice(question: dict[str, Any], raw_values: Iterable[Any]) -> dict[str, Any]:
+def _choice(
+    question: dict[str, Any],
+    raw_values: Iterable[Any],
+    row: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     """
     Доли по вариантам.
 
@@ -132,12 +136,14 @@ def _choice(question: dict[str, Any], raw_values: Iterable[Any]) -> dict[str, An
     Невыбранный вариант получает ноль, а не исчезает из результата. Исчезнувшая
     строка на графике читается как «такого варианта не предлагали».
     """
-    option_ids = [str(o.get("id")) for o in (question.get("options") or [])]
+    # Варианты строки, а не вопроса: у своей матрицы оператора они разные, и
+    # раскладка ответа по чужому списку дала бы нули там, где ответы были.
+    option_ids = [str(o.get("id")) for o in row_options(question, row)]
     counts = dict.fromkeys(option_ids, 0)
     answered = 0
     errors = 0
     for raw in raw_values:
-        parsed = parse_field_answer(question, raw)
+        parsed = parse_field_answer(question, raw, row)
         if parsed.error:
             # Нарушение формы — не мнение. Персона, назвавшая два варианта там,
             # где разрешён один, не сказала «оба»: она не выполнила правило, и
@@ -171,7 +177,7 @@ def _matrix(
     rows: dict[str, Any] = {}
     for row in question_rows(question):
         rid = str(row.get("id"))
-        stats = _choice(question, by_field.get(rid, []))
+        stats = _choice(question, by_field.get(rid, []), row)
         stats["themeId"] = row.get("themeId")
         rows[rid] = stats
     answered = max((r["n"] for r in rows.values()), default=0)

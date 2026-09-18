@@ -19,17 +19,21 @@ import {
 } from "@/lib/survey-preview";
 import {
   addOption,
+  addRowOption,
   addRowTo,
   addTheme,
   draftForType,
   draftIssues,
   removeOption,
   removeRow,
+  removeRowOption,
   removeTheme,
+  rowOptions,
   rowsOfTheme,
-  setOptionCount,
   setOptionLabel,
   setRowLabel,
+  setRowMaxChoices,
+  setRowOptionLabel,
   setThemeLabel,
 } from "@/lib/survey-draft";
 
@@ -115,13 +119,55 @@ function AddButton({ onClick, children }: { onClick: () => void; children: React
 }
 
 /**
- * Список вариантов ответа.
+ * Одна строка списка вариантов.
  *
  * Значок слева показывает, КАК персона будет отвечать: кружок — ровно один
  * вариант, квадрат — несколько. Это не украшение: у «одного из списка» и
  * «нескольких из списка» одинаковая форма редактирования, и отличить их иначе
  * можно только прочитав подпись типа выше.
  */
+function OptionLine({
+  index,
+  label,
+  many,
+  onLabel,
+  onRemove,
+}: {
+  index: number;
+  label: string;
+  many: boolean;
+  onLabel: (value: string) => void;
+  onRemove: () => void;
+}) {
+  return (
+    <div className="flex items-center gap-2.5">
+      <span
+        aria-hidden
+        className={cn(
+          "h-3.5 w-3.5 shrink-0 border border-hairline-strong",
+          many ? "rounded-[3px]" : "rounded-full",
+        )}
+      />
+      <input
+        value={label}
+        onChange={(e) => onLabel(e.target.value)}
+        placeholder={`Вариант ${index + 1}`}
+        aria-label={`Вариант ответа ${index + 1}`}
+        className={FIELD}
+      />
+      <button
+        type="button"
+        onClick={onRemove}
+        aria-label={`Удалить вариант ${index + 1}`}
+        className="shrink-0 rounded p-1.5 text-slate transition-colors hover:bg-secondary hover:text-danger"
+      >
+        <Trash2 className="h-4 w-4" />
+      </button>
+    </div>
+  );
+}
+
+/** Варианты ответа вопроса, у которого нет строк: «один из списка» и «несколько». */
 function OptionsEditor({
   draft,
   onChange,
@@ -133,54 +179,18 @@ function OptionsEditor({
 
   return (
     <div className="space-y-2">
-      <div className="flex flex-wrap items-end justify-between gap-3">
-        <span className="block text-xs text-slate">
-          {draft.type === "matrix_single"
-            ? "Варианты ответа — общие для всех вопросов матрицы"
-            : "Варианты ответа"}
-        </span>
-        {draft.type === "matrix_single" && (
-          <label className="flex items-center gap-2 text-xs text-slate">
-            Сколько вариантов
-            <input
-              id={`option-count-${draft.id}`}
-              type="number"
-              min={2}
-              value={draft.options?.length ?? 2}
-              onChange={(e) => onChange(setOptionCount(draft, Number(e.target.value)))}
-              className={cn(FIELD, "w-20 tabular-nums")}
-            />
-          </label>
-        )}
-      </div>
+      <span className="block text-xs text-slate">Варианты ответа</span>
 
       <div className="space-y-1.5">
         {(draft.options ?? []).map((option, index) => (
-          <div key={option.id} className="flex items-center gap-2.5">
-            <span
-              aria-hidden
-              className={cn(
-                "h-3.5 w-3.5 shrink-0 border border-hairline-strong",
-                many ? "rounded-[3px]" : "rounded-full",
-              )}
-            />
-            <input
-              id={`option-${option.id}`}
-              value={option.label}
-              onChange={(e) => onChange(setOptionLabel(draft, option.id, e.target.value))}
-              placeholder={`Вариант ${index + 1}`}
-              aria-label={`Вариант ответа ${index + 1}`}
-              className={FIELD}
-            />
-            <button
-              type="button"
-              onClick={() => onChange(removeOption(draft, option.id))}
-              aria-label={`Удалить вариант ${index + 1}`}
-              className="shrink-0 rounded p-1.5 text-slate transition-colors hover:bg-secondary hover:text-danger"
-            >
-              <Trash2 className="h-4 w-4" />
-            </button>
-          </div>
+          <OptionLine
+            key={option.id}
+            index={index}
+            label={option.label}
+            many={many}
+            onLabel={(value) => onChange(setOptionLabel(draft, option.id, value))}
+            onRemove={() => onChange(removeOption(draft, option.id))}
+          />
         ))}
       </div>
 
@@ -190,17 +200,24 @@ function OptionsEditor({
 }
 
 /**
- * Матрица как дерево: тема → вопросы.
+ * Матрица как дерево: тема → вопросы → варианты ответа вопроса.
  *
- * Список вариантов у матрицы ОДИН на всё дерево — так же, как у заказчика в
- * вопросе 9 («поднималась / не поднималась / затрудняюсь»). Поэтому поле
- * «сколько вариантов» стоит один раз, у списка, а не у каждого вопроса: у
- * каждого оно обещало бы, что списки разные.
+ * Список вариантов принадлежит ВОПРОСУ внутри темы, а не матрице целиком.
+ * Общий список стоял здесь до 18.09.2026 и был перенесён на матрицу вообще из
+ * частного случая вопроса 9 заказчика, где он действительно один на сорок три
+ * подтемы. У своей матрицы оператора вопросы внутри темы разные — «Гордость за
+ * страну» отвечается «поднималась / не поднималась», а «Что запомнилось» —
+ * «финал / музыка / герой», — и общий список предложил бы персоне музыку там,
+ * где спрашивают про гордость.
  *
- * Отступ и левая линия у вопросов не украшение: по ним видно, к какой теме
- * относится вопрос. В отчёте интегральный показатель восприятия считается как
- * максимум по вопросам ВНУТРИ темы, усреднённый по темам, — то есть вложенность
- * здесь означает ровно то же, что и в расчёте.
+ * Поле «сколько вариантов?» стоит у вопроса и прижато к числу добавленных
+ * вариантов: потолок «до трёх» при двух вариантах анкета не выполнит, а в
+ * отчёте это не будет видно — доли сойдутся по тем двум, что есть.
+ *
+ * Отступ и левая линия не украшение: по ним видно, к какой теме относится
+ * вопрос. В отчёте интегральный показатель восприятия считается как максимум по
+ * вопросам ВНУТРИ темы, усреднённый по темам, — то есть вложенность здесь
+ * означает ровно то же, что и в расчёте.
  */
 function MatrixEditor({
   draft,
@@ -213,12 +230,12 @@ function MatrixEditor({
     <div className="space-y-2">
       <span className="block text-xs text-slate">Темы и вопросы внутри них</span>
 
-      <div className="space-y-3">
+      <div className="space-y-4">
         {(draft.themes ?? []).map((theme, themeIndex) => {
           const rows = rowsOfTheme(draft, theme.id);
 
           return (
-            <div key={theme.id} className="space-y-1.5">
+            <div key={theme.id} className="space-y-2">
               <div className="flex items-center gap-2.5">
                 <input
                   id={`theme-${theme.id}`}
@@ -239,30 +256,73 @@ function MatrixEditor({
                 </button>
               </div>
 
-              <div className="ml-3 space-y-1.5 border-l border-hairline pl-4">
-                {rows.map((row, rowIndex) => (
-                  <div key={row.id} className="flex items-center gap-2.5">
-                    <span className="w-5 shrink-0 text-right text-xs tabular-nums text-stone">
-                      {rowIndex + 1}
-                    </span>
-                    <input
-                      id={`row-${row.id}`}
-                      value={row.label}
-                      onChange={(e) => onChange(setRowLabel(draft, row.id, e.target.value))}
-                      placeholder={`Вопрос ${rowIndex + 1}`}
-                      aria-label={`Вопрос ${rowIndex + 1} темы «${theme.label || themeIndex + 1}»`}
-                      className={FIELD}
-                    />
-                    <button
-                      type="button"
-                      onClick={() => onChange(removeRow(draft, row.id))}
-                      aria-label={`Удалить вопрос ${rowIndex + 1}`}
-                      className="shrink-0 rounded p-1.5 text-slate transition-colors hover:bg-secondary hover:text-danger"
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </button>
-                  </div>
-                ))}
+              <div className="ml-3 space-y-3 border-l border-hairline pl-4">
+                {rows.map((row, rowIndex) => {
+                  const options = rowOptions(draft, row);
+                  const cap = row.maxChoices ?? 1;
+
+                  return (
+                    <div key={row.id} className="space-y-1.5">
+                      <div className="flex flex-wrap items-center gap-2.5">
+                        <span className="w-5 shrink-0 text-right text-xs tabular-nums text-stone">
+                          {rowIndex + 1}
+                        </span>
+                        <input
+                          id={`row-${row.id}`}
+                          value={row.label}
+                          onChange={(e) => onChange(setRowLabel(draft, row.id, e.target.value))}
+                          placeholder={`Вопрос ${rowIndex + 1}`}
+                          aria-label={`Вопрос ${rowIndex + 1} темы «${theme.label || themeIndex + 1}»`}
+                          className={cn(FIELD, "min-w-[12rem] flex-1")}
+                        />
+                        <label
+                          htmlFor={`row-cap-${row.id}`}
+                          className="flex shrink-0 items-center gap-2 text-xs text-slate"
+                        >
+                          Сколько вариантов?
+                          <input
+                            id={`row-cap-${row.id}`}
+                            type="number"
+                            min={1}
+                            max={options.length}
+                            value={cap}
+                            onChange={(e) =>
+                              onChange(setRowMaxChoices(draft, row.id, Number(e.target.value)))
+                            }
+                            className={cn(FIELD, "w-16 tabular-nums")}
+                          />
+                        </label>
+                        <button
+                          type="button"
+                          onClick={() => onChange(removeRow(draft, row.id))}
+                          aria-label={`Удалить вопрос ${rowIndex + 1}`}
+                          className="shrink-0 rounded p-1.5 text-slate transition-colors hover:bg-secondary hover:text-danger"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </button>
+                      </div>
+
+                      <div className="ml-7 space-y-1.5 border-l border-hairline pl-4">
+                        {options.map((option, optionIndex) => (
+                          <OptionLine
+                            key={option.id}
+                            index={optionIndex}
+                            label={option.label}
+                            many={cap > 1}
+                            onLabel={(value) =>
+                              onChange(setRowOptionLabel(draft, row.id, option.id, value))
+                            }
+                            onRemove={() => onChange(removeRowOption(draft, row.id, option.id))}
+                          />
+                        ))}
+
+                        <AddButton onClick={() => onChange(addRowOption(draft, row.id))}>
+                          Добавить вариант ответа
+                        </AddButton>
+                      </div>
+                    </div>
+                  );
+                })}
 
                 <AddButton onClick={() => onChange(addRowTo(draft, theme.id))}>
                   Добавить вопрос
@@ -290,10 +350,9 @@ function QuestionEditor({
   onCancel: () => void;
 }) {
   const issues = draftIssues(draft);
-  const closed =
-    draft.type === "single_choice" ||
-    draft.type === "multi_choice" ||
-    draft.type === "matrix_single";
+  // Матрица сюда не входит: варианты у неё лежат у вопросов внутри темы, и
+  // общего списка, который мог бы показать `OptionsEditor`, у неё нет.
+  const closed = draft.type === "single_choice" || draft.type === "multi_choice";
 
   return (
     <div className="space-y-4 rounded-md border border-ink/40 bg-secondary/40 p-4">

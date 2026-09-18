@@ -88,6 +88,35 @@ export const ALLOWED_QUESTION_TYPES: QuestionType[] = [
 /** Типы, ответ на которые обязан быть одним из объявленных вариантов. */
 const CLOSED_TYPES: QuestionType[] = ["single_choice", "multi_choice", "matrix_single"];
 
+/**
+ * Варианты одного списка: объект, непустой идентификатор, уникальность, подпись.
+ *
+ * Список бывает у вопроса и у строки матрицы, и правила у них одни. Отдельная
+ * копия проверки на строку разошлась бы с копией на вопрос — в этом
+ * репозитории так уже расходились четыре читателя ответа персоны.
+ */
+function checkOptions(options: unknown[], prefix: string, errors: string[]): void {
+  const seen = new Set<string>();
+  for (let j = 0; j < options.length; j++) {
+    const option = options[j] as Record<string, unknown> | null;
+    if (typeof option !== "object" || option === null) {
+      errors.push(`${prefix}[${j}]: должен быть объектом`);
+      continue;
+    }
+    // Идентификатор, а не подпись: подпись правят, идентификатор — нет.
+    if (typeof option.id !== "string" || option.id.trim().length === 0) {
+      errors.push(`${prefix}[${j}].id: обязательная непустая строка`);
+    } else if (seen.has(option.id)) {
+      errors.push(`${prefix}[${j}].id: дубликат «${option.id}»`);
+    } else {
+      seen.add(option.id);
+    }
+    if (typeof option.label !== "string" || option.label.trim().length === 0) {
+      errors.push(`${prefix}[${j}].label: обязательная непустая строка`);
+    }
+  }
+}
+
 // ─── Результат валидации ────────────────────────────────────────────────
 
 export interface ValidationResult {
@@ -212,30 +241,21 @@ export function validateSurvey(doc: unknown): ValidationResult {
     // Закрытый вопрос БЕЗ вариантов — это открытый вопрос: персона ответит
     // своими словами, ответ разберётся, отчёт соберётся — и не сойдётся с
     // закрытым списком заказчика.
+    //
+    // У матрицы список лежит либо у вопроса (вопрос 9 заказчика: один на сорок
+    // три подтемы), либо у каждой строки (своя матрица оператора: у вопросов
+    // внутри темы они разные). Требовать оба — значит отвергнуть одну из двух
+    // живых форм; не требовать ни одного — пропустить матрицу без вариантов.
+    const sharedOptions = question.options;
+    const hasShared = Array.isArray(sharedOptions) && sharedOptions.length >= 2;
+
     if (typeof type === "string" && CLOSED_TYPES.includes(type as QuestionType)) {
-      const options = question.options;
-      if (!Array.isArray(options) || options.length < 2) {
+      if (type === "matrix_single") {
+        if (Array.isArray(sharedOptions)) checkOptions(sharedOptions, `${prefix}.options`, errors);
+      } else if (!hasShared) {
         errors.push(`${prefix}.options: закрытому вопросу нужно не меньше двух вариантов`);
       } else {
-        const seenOptionIds = new Set<string>();
-        for (let j = 0; j < options.length; j++) {
-          const option = options[j] as Record<string, unknown> | null;
-          if (typeof option !== "object" || option === null) {
-            errors.push(`${prefix}.options[${j}]: должен быть объектом`);
-            continue;
-          }
-          // Идентификатор, а не подпись: подпись правят, идентификатор — нет.
-          if (typeof option.id !== "string" || option.id.trim().length === 0) {
-            errors.push(`${prefix}.options[${j}].id: обязательная непустая строка`);
-          } else if (seenOptionIds.has(option.id)) {
-            errors.push(`${prefix}.options[${j}].id: дубликат «${option.id}»`);
-          } else {
-            seenOptionIds.add(option.id);
-          }
-          if (typeof option.label !== "string" || option.label.trim().length === 0) {
-            errors.push(`${prefix}.options[${j}].label: обязательная непустая строка`);
-          }
-        }
+        checkOptions(sharedOptions as unknown[], `${prefix}.options`, errors);
       }
     }
 
@@ -246,6 +266,47 @@ export function validateSurvey(doc: unknown): ValidationResult {
       const rows = question.rows;
       if (!Array.isArray(rows) || rows.length < 1) {
         errors.push(`${prefix}.rows: матрице нужна хотя бы одна строка`);
+      } else {
+        for (let j = 0; j < rows.length; j++) {
+          const row = rows[j] as Record<string, unknown> | null;
+          const rowPrefix = `${prefix}.rows[${j}]`;
+          if (typeof row !== "object" || row === null) {
+            errors.push(`${rowPrefix}: должен быть объектом`);
+            continue;
+          }
+
+          const own = row.options;
+          const hasOwn = Array.isArray(own) && own.length > 0;
+          if (hasOwn) {
+            if ((own as unknown[]).length < 2) {
+              errors.push(
+                `${rowPrefix}.options: закрытому вопросу нужно не меньше двух вариантов`,
+              );
+            }
+            checkOptions(own as unknown[], `${rowPrefix}.options`, errors);
+          } else if (!hasShared) {
+            errors.push(
+              `${rowPrefix}.options: у строки нет своих вариантов, а общих у вопроса нет`,
+            );
+          }
+
+          // Потолок выбора строки — это обещание персоне. Больше, чем
+          // вариантов, анкета не выполнит, а в отчёте это не будет видно:
+          // доли сойдутся по тем, что есть, и будут выглядеть так же уверенно.
+          const cap = row.maxChoices;
+          if (cap !== undefined && cap !== null) {
+            const total = hasOwn
+              ? (own as unknown[]).length
+              : (Array.isArray(sharedOptions) ? sharedOptions.length : 0);
+            if (typeof cap !== "number" || !Number.isInteger(cap) || cap < 1) {
+              errors.push(`${rowPrefix}.maxChoices: целое число не меньше единицы`);
+            } else if (cap > total) {
+              errors.push(
+                `${rowPrefix}.maxChoices: разрешено ${cap} ответов, а вариантов ${total}`,
+              );
+            }
+          }
+        }
       }
     }
 
