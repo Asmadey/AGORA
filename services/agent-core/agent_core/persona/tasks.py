@@ -333,6 +333,11 @@ def generate_audience(self: Any, payload: dict[str, Any]) -> dict[str, Any]:
             try:
                 outcome = enrich_personas(
                     personas,
+                    # Имена едут вместе с персонами, а не приклеиваются в конце.
+                    # Без этого модель писала портрет, не зная, как человека
+                    # зовут: в наборе 170c318c ни один из двадцати портретов не
+                    # назвал собственное имя персоны, зато пять назвали чужое.
+                    names=names,
                     on_progress=report,
                     temperature=temperatures.personaCreation,  # стадия personaCreation
                     # Портреты сегментов из базы арендатора. До 19.08 раздел
@@ -400,6 +405,9 @@ def generate_audience(self: Any, payload: dict[str, Any]) -> dict[str, Any]:
                     replacement_name, replacement_dna = fresh[0]
                     replacement = enrich_personas(
                         [replacement_dna],
+                        # Имя пересозданной персоны, а не прежнее: `generate_named`
+                        # выдал новую пару, и портрет обязан быть про неё.
+                        names=[replacement_name],
                         temperature=temperatures.personaCreation,
                         portraits=portraits,
                     ).personas[0]

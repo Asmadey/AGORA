@@ -136,6 +136,7 @@ def cache_key(
     prompt_template: str,
     model: str,
     portrait_md: str = "",
+    name: str = "",
 ) -> str:
     """
     Ключ обогащения одной персоны.
@@ -161,6 +162,15 @@ def cache_key(
     # выкладки и первый же прогон оплатит обогащение заново.
     if portrait_md:
         h.update(portrait_md.encode("utf-8"))
+    # Имя — по тому же доводу, что и портрет: оно теперь часть промпта. Скелет
+    # двух персон может совпасть до последнего поля, а различаются они именем;
+    # ключ без имени отдал бы второй портрет первой, с чужим именем внутри, — и
+    # выглядел бы он совершенно нормально.
+    #
+    # Пустое имя ничего не дописывает: прежний накопленный кэш обесценился бы
+    # целиком в день выкладки, и первый же прогон оплатил бы обогащение заново.
+    if name:
+        h.update(name.encode("utf-8"))
     return h.hexdigest()
 
 
@@ -320,8 +330,35 @@ def _skeleton(persona: dict[str, Any]) -> dict[str, Any]:
     return {k: persona[k] for k in GROUNDED_FIELDS if k in persona}
 
 
+def foreign_name(name: str, narrative: str) -> str | None:
+    """
+    Имя ЧУЖОЙ персоны в портрете, если оно там есть.
+
+    ─── Зачем детерминированное правило, а не вердикт судьи ───────────────────
+    Имя либо то, либо не то; мнение здесь ни при чём. Политика владельца
+    17.09.2026: детерминированные правила гейтят, судья информирует.
+
+    Смотрим по пулу имён генератора, а не на любое слово с заглавной буквы:
+    «Санкт-Петербург», «Smart-TV» и «Яндекс.Дзен» тоже с заглавной, и правило по
+    заглавной браковало бы годные портреты пачками.
+
+    Своё имя не считается чужим, сколько бы раз оно ни встретилось — портрет и
+    должен звать человека по имени.
+    """
+    from .generator import _NAME_POOL_F, _NAME_POOL_M
+
+    text = narrative or ""
+    own = (name or "").strip()
+    for candidate in (*_NAME_POOL_M, *_NAME_POOL_F):
+        if candidate == own:
+            continue
+        if candidate in text:
+            return candidate
+    return None
+
+
 def render_prompt(
-    template: str, persona: dict[str, Any], portrait_md: str = ""
+    template: str, persona: dict[str, Any], portrait_md: str = "", name: str = ""
 ) -> str:
     """
     Подставляет скелет в шаблон persona.enrich.md.
@@ -368,6 +405,13 @@ def render_prompt(
         # уехал бы в модель буквально, и она приняла бы фигурные скобки за часть
         # задания.
         .replace("{{portrait_md}}", portrait_md)
+        # Имя — 18.09.2026. До этой правки его тут не было вовсе: `generate_named`
+        # возвращает пары «имя, DNA», но дальше ехала только DNA, а имена
+        # приклеивались к персонам при записи в базу (`zip(names, personas)`).
+        # Модель писала портрет, не зная, как человека зовут, и либо обходилась
+        # безымянно, либо придумывала имя — в наборе 170c318c ни один из двадцати
+        # портретов не назвал собственное имя персоны, зато пять назвали чужое.
+        .replace("{{name}}", str(name or ""))
         .replace("{{skeleton_json}}", json.dumps(_skeleton(persona), ensure_ascii=False, indent=2))
         .replace("{{age}}", str(demo.get("age", "")))
         .replace("{{gender}}", str(demo.get("gender", "")))
@@ -404,6 +448,7 @@ def render_prompt(
 def enrich_personas(
     personas: list[dict[str, Any]],
     *,
+    names: list[str] | None = None,
     client: TextClient | None = None,
     prompt: str | None = None,
     cache: Cache | None = None,
@@ -470,7 +515,13 @@ def enrich_personas(
         # сегментов получат один кэшированный narrative, собранный по чужому
         # портрету, — и выглядеть он будет совершенно нормально.
         portrait = portrait_for(persona, portraits or {})
-        key = cache_key(_skeleton(persona), prompt, model_name, portrait_md=portrait)
+        # Имя этой персоны, а не всего набора: списки идут параллельно, и
+        # сдвиг на единицу дал бы каждому портрету имя соседа — дефект,
+        # неотличимый от нынешнего, но уже необъяснимый.
+        name = names[index - 1] if names and index - 1 < len(names) else ""
+        key = cache_key(
+            _skeleton(persona), prompt, model_name, portrait_md=portrait, name=name
+        )
 
         cached = cache.get(key) if cache else None
         if cached is not None:
@@ -483,7 +534,7 @@ def enrich_personas(
 
         try:
             text = client.complete(
-                prompt=render_prompt(prompt, persona, portrait_md=portrait)
+                prompt=render_prompt(prompt, persona, portrait_md=portrait, name=name)
             )
         except Exception as exc:
             # Отказ на середине списка: уже обогащённые персоны сохраняются,
@@ -498,6 +549,22 @@ def enrich_personas(
 
         result.calls_made += 1
         if len(text) < MIN_NARRATIVE_LEN:
+            result.personas.append(enriched)
+            result.sources.append("template")
+            report(index)
+            continue
+
+        # Чужое имя в портрете — тот же класс отказа, что и слишком короткий
+        # текст: портрет не про эту персону, и оставлять его нельзя. Персона
+        # «Наталья» с портретом «Анна, 41-летняя жительница Санкт-Петербурга»
+        # уезжала в промпт опроса как описание себя — то есть расхождение не
+        # косметическое, оно доезжало до ответов.
+        #
+        # Шаблонный narrative беднее хорошего портрета, но он хотя бы не врёт.
+        # В кэш такой текст не кладётся: иначе следующая персона с тем же
+        # скелетом получила бы его готовым.
+        stranger = foreign_name(name, text) if name else None
+        if stranger:
             result.personas.append(enriched)
             result.sources.append("template")
             report(index)
