@@ -85,7 +85,7 @@ def sheet():
 def test_подписи_блоков_берутся_из_анкеты_целиком():
     """Документ анкеты несёт подписи блоков сам — передавать их отдельно не обязано."""
     ws = build_workbook(SURVEY, ANSWERS, PERSONAS, meta={})["Ответы"]
-    assert ws.cell(row=1, column=len(AUDIENCE_COLUMNS) + 1).value == "Оценки проекта"
+    assert ws.cell(row=1, column=5).value == "Оценки проекта"
 
 
 def row(n: int) -> list:
@@ -103,8 +103,40 @@ def test_шапка_из_двух_строк_данные_с_третьей():
 def test_параметры_аудитории_стоят_слева_до_вопросов():
     """У заказчика они первые: населённый пункт, идентификатор, пол, возраст."""
     head = row(2)
-    assert head[: len(AUDIENCE_COLUMNS)] == [c[0] for c in AUDIENCE_COLUMNS]
+    assert head[:4] == [c[0] for c in AUDIENCE_COLUMNS[:4]]
     assert head[0] == "Населенный пункт"
+
+
+def test_дополнительные_параметры_аудитории_сохранены_справа_после_вопросов():
+    """`geo` и `children` не теряются и не сдвигают блок вопросов."""
+    ws = sheet()
+    head = row(2)
+    assert head[-2:] == ["Тип населённого пункта", "Наличие детей"]
+    tail = [ws.cell(row=3, column=i).value for i in range(ws.max_column - 1, ws.max_column + 1)]
+    assert tail == ["центры субъектов", "Нет детей"]
+
+
+def test_форма_ответов_совпадает_с_двухстрочным_полевым_файлом():
+    """Полевой файл начинается ровно с четырёх параметров аудитории."""
+    ws = sheet()
+    assert [ws.cell(row=2, column=i).value for i in range(1, 5)] == [
+        "Населенный пункт", "ID респондента", "Пол", "Возраст",
+    ]
+    assert ws.cell(row=2, column=5).value == THEMED[0]["label"]
+    assert ws.max_row == 2 + len(PERSONAS)
+
+    q7 = [q for q in THEMED if q["number"] == 7][0]
+    first = [c.value for c in ws[2]].index(q7["label"]) + 1
+    question_span = _merge_span(ws, 2, first)
+    assert question_span is not None
+    assert question_span[1] - question_span[0] + 1 == q7["maxChoices"]
+    block_span = _merge_span(ws, 1, first)
+    assert block_span is not None
+    assert ws.cell(row=3, column=first).value == "Гордость"
+
+    q1 = [q for q in THEMED if q["number"] == 1][0]
+    q1_column = [c.value for c in ws[2]].index(q1["label"]) + 1
+    assert isinstance(ws.cell(row=3, column=q1_column).value, int)
 
 
 def _merge_span(ws, row_no: int, column: int) -> tuple[int, int] | None:
