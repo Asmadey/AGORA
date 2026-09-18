@@ -3,6 +3,12 @@ import "server-only";
 import type { PoolClient } from "pg";
 
 import type { PersonaDNA } from "@agora/shared/types/persona-dna";
+import {
+  BLOCKED_SETS_QUERY,
+  toBlocked,
+  type BlockedRow,
+  type BlockedSet,
+} from "@/lib/audience-delete";
 
 /**
  * Доступ к персонам и наборам персон (задача #6).
@@ -213,22 +219,22 @@ export async function deletePersonas(
  *
  * Поэтому такие наборы возвращаются отдельным списком с числом прогонов: пусть
  * человек решает, а не узнаёт постфактум.
+ *
+ * ─── Вторая причина отказа: набор генерируется ─────────────────────────────
+ * 18.09.2026 набор из ста персон удалили, пока воркер его наполнял. Задача
+ * этого не заметила и двадцать семь минут звала модель, записывая прогресс в
+ * исчезнувшую строку; прогон 0093 стоял за ней в очереди и выглядел зависшим.
+ * Правило и текст отказа живут в `lib/audience-delete.ts` — в `lib/server/**`
+ * их не покрывают веб-тесты (CLAUDE.md §11.7).
  */
 export async function deletePersonaSets(
   client: PoolClient,
   ids: string[],
-): Promise<{ deleted: number; blocked: { id: string; name: string; runs: number }[] }> {
+): Promise<{ deleted: number; blocked: BlockedSet[] }> {
   if (ids.length === 0) return { deleted: 0, blocked: [] };
 
-  const { rows: used } = await client.query<{ id: string; name: string; runs: string }>(
-    `SELECT ps.id, ps.name, COUNT(t.id)::text AS runs
-       FROM persona_sets ps
-       JOIN tasks t ON t.persona_set_id = ps.id
-      WHERE ps.id = ANY($1::uuid[])
-      GROUP BY ps.id, ps.name`,
-    [ids],
-  );
-  const blocked = used.map((r) => ({ id: r.id, name: r.name, runs: Number(r.runs) }));
+  const { rows: used } = await client.query<BlockedRow>(BLOCKED_SETS_QUERY, [ids]);
+  const blocked = toBlocked(used);
   const blockedIds = new Set(blocked.map((b) => b.id));
   const free = ids.filter((id) => !blockedIds.has(id));
 

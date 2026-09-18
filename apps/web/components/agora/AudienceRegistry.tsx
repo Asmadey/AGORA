@@ -8,6 +8,7 @@ import { ArrowRight, Loader2, Trash2, UsersRound } from "lucide-react";
 import { PageHeader } from "@/components/AppShell";
 import { Chip } from "@/components/agora/Primitives";
 import { EmptyState } from "@/components/agora/States";
+import { blockedReason, type BlockedSet } from "@/lib/audience-delete";
 
 /**
  * Раздел «Аудитории»: наборы персон, выбор и удаление.
@@ -39,19 +40,13 @@ export interface AudienceCard {
   createdAt: string;
 }
 
-/** Набор, который не удалился: на нём уже считался прогон. */
-interface Blocked {
-  id: string;
-  name: string;
-  runs: number;
-}
 
 export function AudienceRegistry({ sets }: { sets: AudienceCard[] }) {
   const router = useRouter();
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [blocked, setBlocked] = useState<Blocked[]>([]);
+  const [blocked, setBlocked] = useState<BlockedSet[]>([]);
 
   const count = selected.size;
   const personaTotal = useMemo(
@@ -83,7 +78,7 @@ export function AudienceRegistry({ sets }: { sets: AudienceCard[] }) {
       const data = (await res.json()) as {
         error?: string;
         deleted?: number;
-        blocked?: Blocked[];
+        blocked?: BlockedSet[];
       };
       if (!res.ok) throw new Error(data.error ?? `HTTP ${res.status}`);
 
@@ -133,12 +128,14 @@ export function AudienceRegistry({ sets }: { sets: AudienceCard[] }) {
 
         {blocked.length > 0 && (
           <div className="rounded-md border border-warning/30 bg-warning-soft/60 px-3 py-2 text-sm">
-            <p className="font-medium">Не удалены — на них уже считались прогоны:</p>
+            {/* Заголовок общий, причина — у каждой строки своя. Прежний
+                «на них уже считались прогоны» стал бы неправдой для набора,
+                который просто ещё генерируется, и отправил бы человека искать
+                несуществующие прогоны. */}
+            <p className="font-medium">Не удалены:</p>
             <ul className="mt-1 space-y-0.5 text-xs">
               {blocked.map((b) => (
-                <li key={b.id}>
-                  {b.name} — {b.runs} прогон(ов)
-                </li>
+                <li key={b.id}>{blockedReason(b)}</li>
               ))}
             </ul>
           </div>
