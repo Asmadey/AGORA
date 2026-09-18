@@ -2833,6 +2833,70 @@
       }
     },
     "/api/tasks/{id}/share": {
+      "get": {
+        "summary": "Список действующих ссылок на отчёт прогона",
+        "description": "Отдаёт ссылки, которые сейчас открываются: не отозванные и не просроченные. САМ ТОКЕН НЕ ВОЗВРАЩАЕТСЯ и не может быть восстановлен — в базе лежит только SHA-256, а адрес выдаётся один раз при выпуске. Список отвечает на вопрос «какие ссылки живы и до каких пор», а не «как их открыть»: потерянная ссылка выпускается заново, а старая отзывается.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Действующие ссылки",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "active": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "format": "uuid"
+                          },
+                          "createdAt": {
+                            "type": "string",
+                            "format": "date-time",
+                            "nullable": true
+                          },
+                          "expiresAt": {
+                            "type": "string",
+                            "format": "date-time",
+                            "nullable": true
+                          },
+                          "scope": {
+                            "type": "string",
+                            "enum": [
+                              "full",
+                              "aggregate"
+                            ]
+                          },
+                          "viewCount": {
+                            "type": "integer"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Требуется вход"
+          }
+        }
+      },
       "post": {
         "summary": "Выпустить публичную ссылку на отчёт прогона",
         "description": "Возвращает адрес ОДИН раз: в базе хранится только SHA-256 токена, и восстановить его нельзя. Ссылка открывает отчёт без входа в систему по адресу /share/{token}; ограничивают её срок, отзыв и политика RLS для роли agora_share. Публичный адрес берётся из AUTH_URL либо из заголовков обратного прокси — 500, если определить его не удалось.",
