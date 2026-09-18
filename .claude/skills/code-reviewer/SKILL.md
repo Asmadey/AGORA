@@ -70,9 +70,14 @@ git diff origin/main...HEAD
 
 Запустите двух независимых ревьюеров в параллели:
 1. **Worker 1 (Claude / Subagent):** анализ архитектуры, целостности состояния, утечек ресурсов и логики.
-2. **Worker 2 (OpenAI Codex CLI):** независимый аудит через [codex-plugin-cc](file:///Users/asmadey/AntiGravity/PersonalOS/skills/public/dev/codex-plugin-cc/SKILL.md) конкурирующей моделью:
+2. **Worker 2 (OpenAI Codex CLI):** независимый аудит через установленный Codex CLI:
    ```bash
-   node skills/public/dev/codex-plugin-cc/scripts/run-codex.mjs --prompt "<нейтральный промпт>"
+   codex exec review --base origin/main
+   ```
+
+   Если нужен именно нейтральный текстовый промпт поверх подготовленного контекста:
+   ```bash
+   codex exec -C "<репозиторий>" "<нейтральный промпт>"
    ```
 
 > 🛡️ **Инвариант нейтрального промпта (Unbiased Prompt Protocol):**
