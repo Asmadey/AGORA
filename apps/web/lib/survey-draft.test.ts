@@ -6,12 +6,17 @@ import { newQuestionDraft } from "./survey-composition.ts";
 import {
   addOption,
   addRow,
+  addRowTo,
+  addTheme,
   draftForType,
   draftIssues,
   removeOption,
   removeRow,
+  removeTheme,
+  setOptionCount,
   setOptionLabel,
   setRowLabel,
+  setThemeLabel,
 } from "./survey-draft.ts";
 
 /**
@@ -168,4 +173,107 @@ test("заполненный черновик принимается валид�
     [],
     "редактор собрал вопрос, который сервер откажется сохранять",
   );
+});
+
+// ─── Матрица как дерево: тема → вопросы → общие варианты ──────────────────
+
+test("матрица заводится темой с вопросом внутри, а не голой строкой", () => {
+  const m = draft("matrix_single");
+
+  assert.ok((m.themes?.length ?? 0) >= 1, "у матрицы должна быть хотя бы одна тема");
+  assert.ok((m.rows?.length ?? 0) >= 1);
+  assert.equal(
+    m.rows![0].themeId,
+    m.themes![0].id,
+    "вопрос не привязан к теме — в отчёте его не с чем будет сгруппировать",
+  );
+});
+
+test("удаление темы уносит её вопросы", () => {
+  let m = draft("matrix_single");
+  m = addTheme(m);
+  m = addRowTo(m, m.themes![1].id);
+
+  const doomed = m.themes![0].id;
+  const kept = m.themes![1].id;
+  m = removeTheme(m, doomed);
+
+  assert.equal(m.themes?.length, 1);
+  assert.ok(
+    m.rows?.every((r) => r.themeId === kept),
+    "остались вопросы удалённой темы: они не попадут ни в одну группу отчёта " +
+      "и молча выпадут из интегрального показателя",
+  );
+});
+
+test("число вариантов растит и укорачивает общий список, не трогая подписи", () => {
+  let m = draft("matrix_single");
+  m = setOptionLabel(m, m.options![0].id, "Да");
+  m = setOptionLabel(m, m.options![1].id, "Нет");
+
+  m = setOptionCount(m, 3);
+  assert.equal(m.options?.length, 3);
+  assert.equal(m.options![0].label, "Да", "правка числа стёрла уже введённую подпись");
+
+  m = setOptionCount(m, 2);
+  assert.equal(m.options?.length, 2);
+  assert.equal(m.options![1].label, "Нет");
+});
+
+test("число вариантов не опускается ниже двух", () => {
+  const m = setOptionCount(draft("matrix_single"), 1);
+  assert.ok(
+    (m.options?.length ?? 0) >= 2,
+    "закрытому вопросу нужно не меньше двух вариантов — поле ввода не должно " +
+      "уметь собрать анкету, которую сервер отвергнет",
+  );
+});
+
+test("тема без вопросов и тема без подписи названы причинами", () => {
+  const named = (q: SurveyQuestion) => ({ ...q, label: "Вопрос" });
+  let m = named(draft("matrix_single"));
+  m = setRowLabel(m, m.rows![0].id, "Строка");
+  m = setOptionLabel(m, m.options![0].id, "Да");
+  m = setOptionLabel(m, m.options![1].id, "Нет");
+
+  assert.ok(
+    draftIssues(m).some((r) => /подпис.*тем|тем.*подпис/i.test(r)),
+    "тема без подписи должна называться причиной",
+  );
+
+  const withLabel = setThemeLabel(m, m.themes![0].id, "Патриотизм");
+  assert.deepEqual(draftIssues(withLabel), []);
+
+  /**
+   * Новая тема заводится сразу с вопросом внутри, поэтому пустой она через
+   * «добавить тему» не бывает. Но становится — если удалить её последний
+   * вопрос. Это и есть путь, который надо удержать.
+   */
+  let second = addTheme(withLabel);
+  second = setThemeLabel(second, second.themes![1].id, "Пустая");
+  second = setRowLabel(second, second.rows!.at(-1)!.id, "Вопрос");
+  assert.deepEqual(draftIssues(second), [], "тема с вопросом не должна ни на что жаловаться");
+
+  const emptied = removeRow(second, second.rows!.at(-1)!.id);
+  assert.ok(
+    draftIssues(emptied).some((r) => /без вопросов|ни одного вопроса/i.test(r)),
+    "тема, из которой удалили последний вопрос, должна называться причиной: " +
+      "в отчёте она даст пустую группу",
+  );
+});
+
+test("собранная деревом матрица принимается валидатором", async () => {
+  const { validateSurvey } = await import("./server/survey-validator.ts");
+  const { DEFAULT_QUESTIONS } = await import("./survey-composition.ts");
+
+  let m: SurveyQuestion = { ...draft("matrix_single"), label: "Темы проекта" };
+  m = setThemeLabel(m, m.themes![0].id, "Патриотизм");
+  m = setRowLabel(m, m.rows![0].id, "Гордость за страну");
+  m = setOptionLabel(m, m.options![0].id, "Поднималась");
+  m = setOptionLabel(m, m.options![1].id, "Не поднималась");
+
+  assert.deepEqual(draftIssues(m), []);
+
+  const result = validateSurvey({ name: "Проверка", questions: [...DEFAULT_QUESTIONS, m] });
+  assert.deepEqual(result.errors, [], "редактор собрал матрицу, которую сервер отвергнет");
 });
