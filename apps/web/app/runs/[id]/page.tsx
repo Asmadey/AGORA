@@ -18,6 +18,8 @@ import { DownloadMenu } from "@/components/agora/DownloadMenu";
 import { audienceNote } from "@/lib/audience-note";
 import { researchTitle } from "@/lib/research-title";
 import { parseAnswer, parseReport } from "@/lib/report-view";
+import { compareScoreMaps } from "@/lib/rerun";
+import { CRITERIA_LABELS, type Criterion } from "@/lib/agora-types";
 
 /**
  * Экран отчёта (PRD §5.E, §6): агрегат и графики сверху, аккордеон по персонам снизу.
@@ -83,6 +85,13 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
     withTenant(tenantId, (client) => getTask(client, id)),
     loadTimelineDuration(session, id),
   ]);
+  const parentEnvelope = task?.parentTaskId
+    ? await loadReport(session, task.parentTaskId)
+    : null;
+  const parentView = parentEnvelope ? parseReport(parentEnvelope.report) : null;
+  const scoreChanges = parentView
+    ? compareScoreMaps(view.scores, parentView.scores)
+    : [];
   const answers = items.map(parseAnswer);
   // Номер — для человека, идентификатор — для ссылки. Заголовок «Исследование
   // e81feb92-97a2-43ad-8112-de7503699c60» нельзя ни произнести, ни запомнить, а
@@ -160,6 +169,54 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
           </>
         }
       />
+
+      {task?.parentTaskId && (
+        <section className="mx-8 mt-6 rounded-lg border border-hairline bg-card p-6" aria-labelledby="parent-comparison">
+          <h2 id="parent-comparison" className="text-sm font-semibold">
+            Сравнение с родительским прогоном
+          </h2>
+          <p className="mt-1 text-xs leading-relaxed text-slate">
+            Этот прогон связан с родителем явно. Ниже показано, что изменилось,
+            а не только текущий результат — так разницу можно объяснить выбранным
+            режимом памяти и новыми вопросами.
+          </p>
+          {parentView ? (
+            <>
+              <Link
+                href={`/runs/${task.parentTaskId}`}
+                className="mt-3 inline-block text-xs underline underline-offset-4"
+              >
+                Открыть родительский прогон
+              </Link>
+              {scoreChanges.length === 0 ? (
+                <p className="mt-3 text-sm">Баллы базовых критериев не изменились.</p>
+              ) : (
+                <dl className="mt-4 grid gap-2 text-sm sm:grid-cols-2">
+                  {scoreChanges.map((change) => (
+                    <div key={change.key} className="rounded-md border border-hairline p-3">
+                      <dt className="text-slate">
+                        {CRITERIA_LABELS[change.key as Criterion] ?? change.key}
+                      </dt>
+                      <dd className="mt-1">
+                        {change.parent ?? "нет данных"} → {change.current ?? "нет данных"}
+                        {change.delta !== null && (
+                          <span className="ml-2 text-xs text-slate">
+                            ({change.delta > 0 ? "+" : ""}{change.delta.toFixed(2)})
+                          </span>
+                        )}
+                      </dd>
+                    </div>
+                  ))}
+                </dl>
+              )}
+            </>
+          ) : (
+            <p className="mt-3 text-sm text-slate">
+              Отчёт родительского прогона недоступен, поэтому сравнение пока не построено.
+            </p>
+          )}
+        </section>
+      )}
 
         <ReportBody
           view={view}

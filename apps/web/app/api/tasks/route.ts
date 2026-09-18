@@ -34,6 +34,8 @@ interface LaunchBody {
   seed?: unknown;
   audienceContext?: unknown;
   parentTaskId?: unknown;
+  memoryMode?: unknown;
+  carryOverMemory?: unknown;
 }
 
 const REPLICATION_BOUNDS = { min: 1, max: 10 } as const;
@@ -134,6 +136,27 @@ export async function POST(request: Request) {
       }
     }
 
+    const parentTaskId = optionalId(body.parentTaskId);
+    const requestedMemoryMode = body.memoryMode === undefined
+      ? (body.carryOverMemory === true ? "interrogation" : "clean")
+      : body.memoryMode;
+    if (requestedMemoryMode !== "interrogation" && requestedMemoryMode !== "clean") {
+      errors.push("memoryMode: ожидается interrogation | clean");
+    }
+    if (body.carryOverMemory !== undefined && typeof body.carryOverMemory !== "boolean") {
+      errors.push("carryOverMemory: boolean либо отсутствует");
+    }
+    const carryOverMemory = requestedMemoryMode === "interrogation";
+    if (carryOverMemory && !parentTaskId) {
+      errors.push("memoryMode: «Допрос» доступен только для повтора с родительским прогоном");
+    }
+    if (
+      typeof body.carryOverMemory === "boolean" &&
+      body.carryOverMemory !== carryOverMemory
+    ) {
+      errors.push("memoryMode и carryOverMemory задают разные режимы");
+    }
+
     if (errors.length > 0) {
       return Response.json({ error: "некорректные параметры", details: errors }, {
         status: 400,
@@ -169,7 +192,8 @@ export async function POST(request: Request) {
         projectId: optionalId(body.projectId),
         replicationCount,
         seed: body.seed as number,
-        parentTaskId: optionalId(body.parentTaskId),
+        parentTaskId,
+        carryOverMemory,
       };
 
       // Персоны набора читаются ДО создания задачи, внутри тенант-контекста:
@@ -239,6 +263,7 @@ export async function POST(request: Request) {
           // не доезжал вовсе — то есть жёсткий потолок не действовал никогда.
           settings_snapshot: task.launched.settingsSnapshot,
           parent_task_id: task.parentTaskId,
+          carry_over_memory: task.launched.carryOverMemory,
         });
         queued = true;
       } catch (e) {
