@@ -119,6 +119,25 @@ export const MANDATORY_THEME_IDS: string[] = themesOf(9).map((t) => t.id);
 /** Доступные оператору темы вопроса 9, каждая целиком со своими строками. */
 export const MANDATORY_THEMES = themesOf(9);
 
+/** Подпись чипа с количеством выбранных тем вопроса 9. */
+export function mandatoryThemeCountLabel(count: number): string {
+  const lastDigit = count % 10;
+  const lastTwoDigits = count % 100;
+  let noun = "тем";
+
+  if (lastDigit === 1 && lastTwoDigits !== 11) {
+    noun = "тема";
+  } else if (
+    lastDigit >= 2 &&
+    lastDigit <= 4 &&
+    (lastTwoDigits < 12 || lastTwoDigits > 14)
+  ) {
+    noun = "темы";
+  }
+
+  return `${count} ${noun}`;
+}
+
 export type ThemeToggleResult = {
   selected: string[];
   reason?: string;
