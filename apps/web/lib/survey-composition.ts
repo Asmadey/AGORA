@@ -116,6 +116,29 @@ export function newQuestionDraft(id: string): SurveyQuestion {
 /** Идентификаторы всех тем вопроса-матрицы: состояние «выбрано всё». */
 export const MANDATORY_THEME_IDS: string[] = themesOf(9).map((t) => t.id);
 
+/** Доступные оператору темы вопроса 9, каждая целиком со своими строками. */
+export const MANDATORY_THEMES = themesOf(9);
+
+export type ThemeToggleResult = {
+  selected: string[];
+  reason?: string;
+};
+
+/** Переключает тему, не позволяя обязательному блоку стать пустым. */
+export function toggleMandatoryTheme(selected: string[], themeId: string): ThemeToggleResult {
+  const current = new Set(selected);
+  if (current.has(themeId) && current.size === 1) {
+    return { selected: [...selected], reason: "Нельзя снять последнюю тему." };
+  }
+
+  if (current.has(themeId)) current.delete(themeId);
+  else current.add(themeId);
+
+  return {
+    selected: MANDATORY_THEME_IDS.filter((id) => current.has(id)),
+  };
+}
+
 const MANDATORY_IDS = new Set(MANDATORY_QUESTIONS.map((q) => q.id));
 
 /**
@@ -151,6 +174,21 @@ export function withMandatory(
   const mandatory = withSelectedThemes(themeIds);
   const taken = new Set(mandatory.map((q) => q.id));
   return [...mandatory, ...custom.filter((q) => !taken.has(q.id))];
+}
+
+/**
+ * Собирает обязательный блок после изменения выбора тем.
+ *
+ * Темы переключаются только целиком: вместе с вопросом 9 меняется и его
+ * зависимый вопрос 11. Пустой список намеренно не запрещается здесь, чтобы
+ * чистая функция могла описать промежуточное состояние; интерфейс не даёт
+ * снять последнюю галочку и объясняет причину оператору на месте.
+ */
+export function withSelectedMandatoryThemes(
+  questions: SurveyQuestion[],
+  themeIds: string[],
+): SurveyQuestion[] {
+  return withMandatory(questions.filter((q) => !isMandatory(q)), themeIds);
 }
 
 /**

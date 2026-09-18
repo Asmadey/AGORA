@@ -10,7 +10,10 @@ import {
   BASE_SCALE_LABEL,
   groundingIssues,
   isMandatory,
+  MANDATORY_THEMES,
   newQuestionDraft,
+  toggleMandatoryTheme as toggleMandatoryThemeSelection,
+  withSelectedMandatoryThemes,
 } from "@/lib/survey-composition";
 import {
   isServiceOption,
@@ -73,7 +76,7 @@ export const QUESTION_TYPES: {
   { v: "scale", label: "Шкала", hint: "числовая оценка в заданных границах", chartable: true },
   { v: "single_choice", label: "Один из списка", hint: "ровно один вариант из закрытого перечня", chartable: true },
   { v: "multi_choice", label: "Несколько из списка", hint: "до N вариантов из закрытого перечня", chartable: true },
-  { v: "matrix_single", label: "Матрица", hint: "по одному варианту на каждую строку", chartable: true },
+  { v: "matrix_single", label: "Матрица", hint: "по умолчанию один вариант на каждый вопрос; можно разрешить несколько", chartable: true },
   { v: "open", label: "Открытый", hint: "свободный ответ текстом — график не построится", chartable: false },
 ];
 
@@ -397,6 +400,12 @@ function QuestionEditor({
         <p className="mt-1.5 text-xs text-slate">
           {QUESTION_TYPES.find((t) => t.v === draft.type)?.hint}
         </p>
+        {draft.type === "open" && (
+          <p className="mt-2 rounded-md border border-warning/30 bg-warning-soft/60 p-3 text-xs leading-relaxed text-warning">
+            По открытому вопросу график не построится. В отчёте ответы попадут
+            текстовым блоком с темами и цитатами.
+          </p>
+        )}
       </div>
 
       {draft.type === "scale" && (
@@ -669,6 +678,7 @@ export function SurveyBuilder({
 }) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState<SurveyQuestion | null>(null);
+  const [themeSelectionIssue, setThemeSelectionIssue] = useState<string | null>(null);
 
   /**
    * Три группы, а не две.
@@ -683,6 +693,15 @@ export function SurveyBuilder({
   const rest = questions.filter((q) => !isMandatory(q));
   const base = rest.filter((q) => q.baseKey);
   const custom = rest.filter((q) => !q.baseKey);
+
+  const questionNine = questions.find((q) => q.number === 9);
+  const selectedThemeIds = new Set(questionNine?.themes?.map((theme) => theme.id) ?? []);
+
+  const toggleMandatoryTheme = (themeId: string) => {
+    const result = toggleMandatoryThemeSelection([...selectedThemeIds], themeId);
+    setThemeSelectionIssue(result.reason ? `${result.reason} Выберите хотя бы одну тему для вопроса 9.` : null);
+    if (!result.reason) onChange(withSelectedMandatoryThemes(questions, result.selected));
+  };
 
   const grounding = groundingIssues(questions);
   const groundingBroken = grounding.length > 0;
@@ -776,6 +795,30 @@ export function SurveyBuilder({
             вопросы сделали бы отчёт неполным). Вы можете добавить дополнительные
             вопросы ниже.
           </p>
+
+          <fieldset className="mt-3 rounded-md border border-hairline bg-secondary/20 p-3">
+            <legend className="px-1 text-xs font-medium">Темы вопроса 9</legend>
+            <p className="mt-1 text-xs leading-relaxed text-slate">
+              Выбираются целиком вместе со всеми подтемами. Вопрос 11 следует этому выбору.
+            </p>
+            <div className="mt-2 grid gap-2 sm:grid-cols-2">
+              {MANDATORY_THEMES.map((theme) => (
+                <label key={theme.id} className="flex items-start gap-2 text-xs leading-relaxed">
+                  <input
+                    type="checkbox"
+                    checked={selectedThemeIds.has(theme.id)}
+                    onChange={() => toggleMandatoryTheme(theme.id)}
+                    aria-label={`Тема вопроса 9: ${theme.label}`}
+                    className="mt-0.5"
+                  />
+                  <span>{theme.label}</span>
+                </label>
+              ))}
+            </div>
+            {themeSelectionIssue && (
+              <p className="mt-2 text-xs text-warning" role="alert">{themeSelectionIssue}</p>
+            )}
+          </fieldset>
 
           <div className="mt-3 space-y-2">
             {mandatory.map((q) => (
