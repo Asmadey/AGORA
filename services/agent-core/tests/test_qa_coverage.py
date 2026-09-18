@@ -236,3 +236,151 @@ def test_переспрос_знает_подсказку_для_покрыти�
     hint = hint_for({"coverage"})
     assert hint, "подсказки по покрытию нет — переспрос уйдёт впустую"
     assert "каждой строке" in hint or "каждый" in hint
+
+
+def test_ошибка_разбора_закрытого_поля_становится_гейтом():
+    from agent_core.qa.run import run_qa
+
+    survey = [{
+        "id": "q-choice",
+        "label": "Выбор",
+        "type": "single_choice",
+        "options": [{"id": "yes", "label": "Да"}],
+    }]
+    answer = {"persona_id": "p-1", "survey_answers": {"q-choice": "no"}}
+
+    outcome = run_qa(answers=[answer], pack={}, survey=survey)
+
+    flagged = [v for v in outcome.flagged if v["kind"] == "coverage"]
+    assert flagged
+    assert flagged[0]["source"] == "rule"
+    assert any("не из списка" in reason for reason in flagged[0]["reasons"])
+
+
+def test_ошибка_разбора_попадает_в_переспрос():
+    from agent_core.qa.run import run_qa
+    from agent_core.respondent.requestion import kinds_for
+
+    survey = [{
+        "id": "q-scale",
+        "label": "Оценка",
+        "type": "scale",
+        "scaleMin": 0,
+        "scaleMax": 10,
+    }]
+    answer = {"persona_id": "p-1", "replication": 2,
+              "survey_answers": {"q-scale": 11}}
+
+    outcome = run_qa(answers=[answer], pack={}, survey=survey)
+
+    assert "coverage" in kinds_for(outcome.flagged, ("p-1", 2))
+
+
+def test_успешно_разобранный_закрытый_ответ_не_гейтится():
+    from agent_core.qa.run import run_qa
+
+    survey = [{
+        "id": "q-choice",
+        "label": "Выбор",
+        "type": "single_choice",
+        "options": [{"id": "yes", "label": "Да"}],
+    }]
+    answer = {"persona_id": "p-1", "survey_answers": {"q-choice": "yes"}}
+
+    outcome = run_qa(answers=[answer], pack={}, survey=survey)
+
+    assert not [v for v in outcome.flagged if v["kind"] == "coverage"]
+
+
+def test_законный_ответ_по_своим_вариантам_строки_не_гейтится():
+    """
+    Правило разбора обязано спрашивать варианты у СТРОКИ.
+
+    С 18.09.2026 у вопроса внутри темы свой список вариантов: «Гордость за
+    страну» отвечается «поднималась / не поднималась», а «Что запомнилось» —
+    «финал / музыка». Разбор против общего списка вопроса — которого у такой
+    матрицы нет вовсе — объявил бы «вариантом не из списка» КАЖДЫЙ законный
+    ответ. Персону отправляли бы на переспрос за правильный ответ, прогон
+    дорожал бы вдвое, а причина выглядела бы как капризы модели.
+    """
+    from agent_core.qa.run import run_qa
+
+    survey = [{
+        "id": "q-tree",
+        "label": "Темы проекта",
+        "type": "matrix_single",
+        "themes": [{"id": "t1", "label": "Патриотизм"}],
+        "rows": [
+            {
+                "id": "r1",
+                "label": "Гордость за страну",
+                "themeId": "t1",
+                "options": [
+                    {"id": "r1-a", "label": "Поднималась"},
+                    {"id": "r1-b", "label": "Не поднималась"},
+                ],
+            },
+            {
+                "id": "r2",
+                "label": "Что запомнилось",
+                "themeId": "t1",
+                "maxChoices": 2,
+                "options": [
+                    {"id": "r2-a", "label": "Финал"},
+                    {"id": "r2-b", "label": "Музыка"},
+                ],
+            },
+        ],
+    }]
+    answer = {
+        "persona_id": "p-1",
+        "survey_answers": {"r1": "Поднималась", "r2": ["Финал", "Музыка"]},
+    }
+
+    outcome = run_qa(answers=[answer], pack={}, survey=survey)
+
+    assert not [v for v in outcome.flagged if v["kind"] == "coverage"], (
+        "законный ответ по вариантам своей строки объявлен ошибкой разбора"
+    )
+
+
+def test_чужой_вариант_строки_остаётся_ошибкой():
+    """Обратная сторона: вариант соседнего вопроса темы законным не становится."""
+    from agent_core.qa.run import run_qa
+
+    survey = [{
+        "id": "q-tree",
+        "label": "Темы проекта",
+        "type": "matrix_single",
+        "themes": [{"id": "t1", "label": "Патриотизм"}],
+        "rows": [
+            {
+                "id": "r1",
+                "label": "Гордость за страну",
+                "themeId": "t1",
+                "options": [
+                    {"id": "r1-a", "label": "Поднималась"},
+                    {"id": "r1-b", "label": "Не поднималась"},
+                ],
+            },
+            {
+                "id": "r2",
+                "label": "Что запомнилось",
+                "themeId": "t1",
+                "options": [
+                    {"id": "r2-a", "label": "Финал"},
+                    {"id": "r2-b", "label": "Музыка"},
+                ],
+            },
+        ],
+    }]
+    answer = {
+        "persona_id": "p-1",
+        "survey_answers": {"r1": "Финал", "r2": "Музыка"},
+    }
+
+    outcome = run_qa(answers=[answer], pack={}, survey=survey)
+    flagged = [v for v in outcome.flagged if v["kind"] == "coverage"]
+
+    assert flagged, "ответ вариантом соседнего вопроса принят как законный"
+    assert any("не из списка" in r for r in flagged[0]["reasons"])
