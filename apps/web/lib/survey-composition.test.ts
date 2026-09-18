@@ -5,8 +5,12 @@ import { test } from "node:test";
 
 import {
   BASE_QUESTIONS,
+  DEFAULT_QUESTIONS,
+  MANDATORY_THEME_IDS,
   groundingIssues,
+  isMandatory,
   newQuestionDraft,
+  withMandatory,
 } from "./survey-composition.ts";
 
 /**
@@ -39,6 +43,12 @@ const BUILDER = readFileSync(
 const SURVEY_FILE = JSON.parse(
   readFileSync(join(ROOT, "..", "..", "data", "survey", "customer_2026.json"), "utf8"),
 ) as { questions: { baseKey?: string; scaleMin?: number; scaleMax?: number }[] };
+
+/** Места, где анкета заводится с нуля, — их засев обязан быть обязательным блоком. */
+const SEEDS = {
+  "studies/new/page.tsx": readFileSync(join(ROOT, "app", "studies", "new", "page.tsx"), "utf8"),
+  "SurveyPicker.tsx": readFileSync(join(ROOT, "components", "agora", "SurveyPicker.tsx"), "utf8"),
+};
 
 test("базовые вопросы в исходном виде проходят проверку заземления", () => {
   assert.deepEqual(
@@ -114,4 +124,73 @@ test("конструктор не называет шкалу числами в 
       found.join(", ") +
       ". Берите её из BASE_SCALE_LABEL — тогда текст не переживёт смену шкалы",
   );
+});
+
+// ─── Обязательный блок заказчика ──────────────────────────────────────────
+
+test("анкета по умолчанию — это пятнадцать обязательных вопросов заказчика", () => {
+  const numbers = DEFAULT_QUESTIONS.map((q) => q.number);
+
+  assert.deepEqual(
+    numbers,
+    [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+    "конструктор начинает не с обязательной анкеты — оператор соберёт исследование, " +
+      "в котором заказчику не задали его собственные вопросы",
+  );
+  assert.deepEqual(
+    groundingIssues(DEFAULT_QUESTIONS),
+    [],
+    "обязательный блок несёт все пять базовых критериев, заземление обязано быть целым",
+  );
+});
+
+test("свои вопросы оператора идут после обязательных", () => {
+  const mine = newQuestionDraft("q-mine");
+  const composed = withMandatory([mine], MANDATORY_THEME_IDS);
+
+  assert.equal(composed.length, DEFAULT_QUESTIONS.length + 1);
+  assert.equal(composed.at(-1)?.id, "q-mine");
+  assert.ok(
+    composed.slice(0, -1).every((q) => isMandatory(q)),
+    "обязательные вопросы перемешались со своими",
+  );
+});
+
+test("невыбранная тема убирает свои строки из обеих матриц", () => {
+  const one = withMandatory([], ["t1"]);
+  const matrix = one.find((q) => q.number === 9);
+  const impact = one.find((q) => q.number === 11);
+
+  assert.ok(matrix?.rows && matrix.rows.length > 0);
+  assert.ok(
+    matrix.rows.every((r) => r.themeId === "t1"),
+    "в матрице остались строки невыбранных тем",
+  );
+  assert.ok(
+    impact?.rows?.every((r) => r.themeId === "t1"),
+    "зависимый вопрос 11 не пошёл за выбором тем — интегральный показатель " +
+      "восприятия считался бы по разному числу строк и стал бы несравним",
+  );
+});
+
+test("обязательная анкета целиком проходит валидатор", async () => {
+  const { validateSurvey } = await import("./server/survey-validator.ts");
+  const result = validateSurvey({ name: "Обязательная", questions: DEFAULT_QUESTIONS });
+
+  assert.deepEqual(
+    result.errors,
+    [],
+    "конструктор предлагает анкету, которую сервер откажется сохранять",
+  );
+  assert.equal(result.valid, true);
+});
+
+test("конструктор больше не начинает с голых базовых критериев", () => {
+  for (const [name, text] of Object.entries(SEEDS)) {
+    assert.ok(
+      !/useState<SurveyQuestion\[\]>\(BASE_QUESTIONS\)|questionsOf\([^)]*BASE_QUESTIONS\)/.test(text),
+      `${name} всё ещё засевает анкету пятью базовыми критериями вместо ` +
+        "обязательного блока заказчика",
+    );
+  }
 });

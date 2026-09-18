@@ -5,7 +5,7 @@ import { Loader2, ExternalLink } from "lucide-react";
 import Link from "next/link";
 
 import { SurveyBuilder } from "@/components/agora/SurveyBuilder";
-import { BASE_QUESTIONS } from "@/lib/survey-composition";
+import { DEFAULT_QUESTIONS } from "@/lib/survey-composition";
 import {
   DRAFT_SURVEY_ID,
   questionsDiffer,
@@ -70,7 +70,7 @@ export function SurveyPicker({
         if (!surveyId) {
           const first = list[0];
           onSurveyIdChange(first ? first.id : DRAFT_SURVEY_ID);
-          if (first) onChange(questionsOf(list, first.id, BASE_QUESTIONS));
+          if (first) onChange(questionsOf(list, first.id, DEFAULT_QUESTIONS));
         }
       } catch (e) {
         if (!cancelled) setLoadError((e as Error).message);
@@ -88,7 +88,7 @@ export function SurveyPicker({
 
   const pick = (id: string) => {
     onSurveyIdChange(id);
-    onChange(questionsOf(surveys ?? [], id, BASE_QUESTIONS));
+    onChange(questionsOf(surveys ?? [], id, DEFAULT_QUESTIONS));
     setSaveError(null);
     setSavedAt(null);
   };
