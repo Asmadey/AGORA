@@ -57,7 +57,10 @@ check("читается содержимое файла, а не только и
 check("файл передаётся в запуск исследования", "audienceContext" in study and "audienceContext" in api and "audienceContext" in tasks and "normalizeContext" in api)
 check("пустой и слишком большой файл отклоняются", "файл пуст" in context and "CONTEXT_LIMIT_CHARS" in context)
 check("форматный фильтр соответствует проверке файла", "CONTEXT_ACCEPT" in audience and "CONTEXT_EXTENSIONS" in context)
-check("принимаются все форматы из acceptance", all(ext in context + audience for ext in (".pdf", ".docx", ".md", ".txt", ".xls")))
+# `.docx` исключён решением владельца 18.09.2026: нужны только pdf и xls.
+# Разбор обоих идёт в воркере (pdfminer, openpyxl), а не в вебе — §6 запрещает
+# нативные модули в apps/web, §9 селит тяжёлые зависимости в образе воркера.
+check("принимаются все форматы из acceptance", all(ext in context + audience for ext in (".pdf", ".md", ".txt", ".xls")))
 check("файл проходит через portrait.distill", "portrait.distill" in api + tasks + pipeline + persona_tasks and "context_file" in api + tasks + pipeline + persona_tasks)
 check("портрет из файла попадает в persona.generate отдельной секцией", "audienceContext" in generator and ("audience_context" in prompt or "additional" in prompt.lower()))
 check("базовый генератор сохраняет grounding-распределения и калибровку", "segment_distributions" in prompt and "score_means" in generator and "grounding" in prompt.lower())
