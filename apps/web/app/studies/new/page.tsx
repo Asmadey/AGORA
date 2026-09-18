@@ -153,6 +153,10 @@ export default function NewStudyPage() {
           // Прежде наверх уезжали только имя и размер, и содержимое не
           // покидало браузер вовсе.
           audienceContext: contextFile?.text ?? undefined,
+          // Родитель повтора. Без этого поля `parent_task_id` в задаче всегда
+          // NULL, и переиспользование разбора видео родителя (#30) не
+          // включается ни разу: оно ищет родителя, которого не записали.
+          parentTaskId: parentTaskId ?? undefined,
           seed,
         }),
       });
@@ -319,6 +323,22 @@ export default function NewStudyPage() {
    * необязательного параметра это лишняя перестройка визарда.
    */
   const [rerunNote, setRerunNote] = useState<string | null>(null);
+  /**
+   * Родительский прогон, если визард открыт как повтор.
+   *
+   * Ставится только после УДАВШЕГОСЯ префилла. Если исходный прогон не найден,
+   * визард открылся пустым — это новое исследование, и записывать ему
+   * несуществующего родителя значит соврать в родословной.
+   *
+   * Связь не снимается, когда пользователь меняет анкету, аудиторию или даже
+   * материал: «этот прогон — повтор вон того» остаётся правдой независимо от
+   * правок. Решение, можно ли переиспользовать разбор видео, принимает воркер и
+   * принимает его по существу — сверяет `tasks.video_ref` родителя с текущим и
+   * при расхождении отказывается от кэша, записав причину в деградации отчёта.
+   * Снимать `parentTaskId` здесь значило бы потерять родословную ради проверки,
+   * которая уже сделана там, где есть чем проверить.
+   */
+  const [parentTaskId, setParentTaskId] = useState<string | null>(null);
   useEffect(() => {
     const rerunOf = new URLSearchParams(window.location.search).get("rerun");
     if (!rerunOf) return;
@@ -339,6 +359,7 @@ export default function NewStudyPage() {
         setPersonaSetId(p.personaSetId);
         setReplication(p.replicationCount);
         setTitle(p.title);
+        setParentTaskId(rerunOf);
         setRerunNote(p.warning);
       } catch {
         if (!cancelled) setRerunNote("не удалось прочитать исходный прогон");
