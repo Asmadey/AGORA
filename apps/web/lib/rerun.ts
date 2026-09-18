@@ -43,8 +43,45 @@ export interface RerunPrefill {
   surveyQuestions: never[];
   title: string;
   parentTaskId: string;
+  /** По умолчанию безопасная изоляция; пользователь меняет это до запуска. */
+  memoryMode: "interrogation" | "clean";
+  carryOverMemory: boolean;
   /** Чего не хватает для честного повтора. null — всё на месте. */
   warning: string | null;
+}
+
+export interface ScoreChange {
+  key: string;
+  parent: number | null;
+  current: number | null;
+  delta: number | null;
+}
+
+/**
+ * Сравнение чисел отчётов живёт в lib, а не в странице: иначе экран мог бы
+ * показывать «без изменений» по одной трактовке null и 0, а экспорт - по
+ * другой. Отсутствующий балл остаётся null и не превращается в искусственный
+ * ноль.
+ */
+export function compareScoreMaps(
+  current: Record<string, number | null>,
+  parent: Record<string, number | null>,
+): ScoreChange[] {
+  const keys = [...new Set([...Object.keys(parent), ...Object.keys(current)])].sort();
+  return keys.flatMap((key) => {
+    const parentValue = parent[key] ?? null;
+    const currentValue = current[key] ?? null;
+    if (parentValue === currentValue) return [];
+    return [{
+      key,
+      parent: parentValue,
+      current: currentValue,
+      delta:
+        parentValue !== null && currentValue !== null
+          ? currentValue - parentValue
+          : null,
+    }];
+  });
 }
 
 export function rerunPrefill(source: SourceRun): RerunPrefill {
@@ -70,6 +107,8 @@ export function rerunPrefill(source: SourceRun): RerunPrefill {
     surveyQuestions: [],
     title: rerunTitle(source),
     parentTaskId: source.id,
+    memoryMode: "clean",
+    carryOverMemory: false,
     warning: missing.length > 0 ? missing.join("; ") : null,
   };
 }

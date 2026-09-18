@@ -120,6 +120,44 @@ def test_build_slice_is_pure():
     assert a == b
 
 
+def test_parent_memory_is_reused_without_sharing_current_repeats():
+    client = Recorder()
+    outcome = run_survey(
+        personas=[persona(0)],
+        pack=PACK,
+        survey=SURVEY,
+        client=client,
+        replication_count=2,
+        artifact_path=None,
+        system_template=SYSTEM_TPL,
+        user_template=USER_TPL,
+        my_previous_answers={"p0": {"scores": {"overall_impression": 9}}},
+    )
+
+    assert len(outcome.answers) == 2
+    assert len(client.sent) == 2
+    assert all("overall_impression" in user for _, user in client.sent)
+    # Both repeats see the same parent snapshot. Neither sees a response from
+    # the other repeat, so replication still measures model noise.
+    assert client.sent[0][1] == client.sent[1][1]
+
+
+def test_clean_run_does_not_receive_parent_memory():
+    client = Recorder()
+    run_survey(
+        personas=[persona(0)],
+        pack=PACK,
+        survey=SURVEY,
+        client=client,
+        replication_count=1,
+        artifact_path=None,
+        system_template=SYSTEM_TPL,
+        user_template=USER_TPL,
+    )
+    assert client.sent
+    assert "Мои ответы в родительском прогоне" not in client.sent[0][1]
+
+
 # ─── Прогон ──────────────────────────────────────────────────────────────────
 
 

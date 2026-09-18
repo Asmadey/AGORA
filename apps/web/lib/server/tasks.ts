@@ -56,6 +56,8 @@ export interface LaunchParams {
   audienceContext?: string | null;
   /** Родительский прогон, чей разбор видео можно переиспользовать. */
   parentTaskId?: string | null;
+  /** true - «Допрос», false - «Чистый прогон». */
+  carryOverMemory?: boolean;
 }
 
 export interface LaunchedTask {
@@ -93,6 +95,8 @@ export interface LaunchedTask {
    * под другим. Разница в полноте разбора выглядела бы свойством материала.
    */
   settingsSnapshot: Record<string, unknown>;
+  parentTaskId: string | null;
+  carryOverMemory: boolean;
   status: string;
   createdAt: string;
   /** Кто запустил. `null` — автора удалили из команды. */
@@ -136,6 +140,8 @@ interface TaskRow {
   created_at: Date;
   author: string | null;
   settings_snapshot: Record<string, unknown>;
+  parent_task_id: string | null;
+  carry_over_memory: boolean;
 }
 
 /**
@@ -313,6 +319,7 @@ export function idempotencyKey(
     replicationCount: params.replicationCount,
     seed: params.seed,
     parentTaskId: params.parentTaskId ?? null,
+    carryOverMemory: params.carryOverMemory ?? false,
     // Сортировка обязательна: порядок ключей объекта в JS зависит от порядка
     // вставки, а он приходит из порядка строк базы и не гарантирован.
     prompts: Object.keys(snapshot)
@@ -334,6 +341,8 @@ function toTask(row: TaskRow, created: boolean): LaunchedTask {
     replicationCount: row.replication_count,
     promptsSnapshot: row.prompts_snapshot,
     settingsSnapshot: row.settings_snapshot ?? {},
+    parentTaskId: row.parent_task_id ?? null,
+    carryOverMemory: row.carry_over_memory ?? false,
     status: row.status,
     createdAt: row.created_at.toISOString(),
     author: row.author,
@@ -374,6 +383,16 @@ export async function launchTask(
     }
   }
 
+  if (params.parentTaskId) {
+    const { rowCount } = await client.query(
+      "SELECT 1 FROM tasks WHERE id = $1::uuid",
+      [params.parentTaskId],
+    );
+    if (!rowCount) {
+      throw new Error(`родительский прогон ${params.parentTaskId} не найден у этой команды`);
+    }
+  }
+
   const snapshot = await buildPromptsSnapshot(client);
   const settings = await buildSettingsSnapshot(client);
   // Контекст аудитории пиннится вместе с настройками, а не читается на лету:
@@ -404,13 +423,13 @@ export async function launchTask(
      INSERT INTO tasks (project_id, persona_set_id, survey_id, mode, video_ref,
                         replication_count, prompts_snapshot, settings_snapshot,
                         idempotency_key, created_by, tenant_id, seq_no, source_name, title,
-                        parent_task_id)
+                        parent_task_id, carry_over_memory)
      SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
-             current_setting('app.tenant_id')::uuid, next.value, $11, $12, $13
+             current_setting('app.tenant_id')::uuid, next.value, $11, $12, $13, $14
      FROM next
      ON CONFLICT (tenant_id, idempotency_key) WHERE idempotency_key IS NOT NULL
      DO NOTHING
-     RETURNING id, seq_no, mode, video_ref, source_name, title, poster_ref, replication_count, prompts_snapshot, settings_snapshot, status, created_at, (SELECT COALESCE(u.name, u.email) FROM users u WHERE u.id = tasks.created_by) AS author`,
+     RETURNING id, seq_no, mode, video_ref, source_name, title, poster_ref, replication_count, prompts_snapshot, settings_snapshot, parent_task_id, carry_over_memory, status, created_at, (SELECT COALESCE(u.name, u.email) FROM users u WHERE u.id = tasks.created_by) AS author`,
     [
       params.projectId,
       params.personaSetId,
@@ -425,6 +444,7 @@ export async function launchTask(
       params.sourceName ?? null,
       params.title ?? null,
       params.parentTaskId ?? null,
+      params.carryOverMemory ?? false,
     ],
   );
 
@@ -433,7 +453,7 @@ export async function launchTask(
   // Конфликт: задача с таким ключом уже есть. Возвращаем её, а не ошибку —
   // для вызывающего повторный запуск обязан выглядеть как успешный.
   const existing = await client.query<TaskRow>(
-    `SELECT id, seq_no, mode, video_ref, source_name, title, poster_ref, replication_count, prompts_snapshot, settings_snapshot, status, created_at, (SELECT COALESCE(u.name, u.email) FROM users u WHERE u.id = tasks.created_by) AS author
+    `SELECT id, seq_no, mode, video_ref, source_name, title, poster_ref, replication_count, prompts_snapshot, settings_snapshot, parent_task_id, carry_over_memory, status, created_at, (SELECT COALESCE(u.name, u.email) FROM users u WHERE u.id = tasks.created_by) AS author
      FROM tasks WHERE idempotency_key = $1`,
     [key],
   );
@@ -511,7 +531,7 @@ export async function getTask(
   id: string,
 ): Promise<LaunchedTask | null> {
   const { rows } = await client.query<TaskRow>(
-    `SELECT id, seq_no, mode, video_ref, source_name, title, poster_ref, replication_count, prompts_snapshot, settings_snapshot, status, created_at, (SELECT COALESCE(u.name, u.email) FROM users u WHERE u.id = tasks.created_by) AS author
+    `SELECT id, seq_no, mode, video_ref, source_name, title, poster_ref, replication_count, prompts_snapshot, settings_snapshot, parent_task_id, carry_over_memory, status, created_at, (SELECT COALESCE(u.name, u.email) FROM users u WHERE u.id = tasks.created_by) AS author
      FROM tasks WHERE id = $1`,
     [id],
   );
@@ -520,7 +540,7 @@ export async function getTask(
 
 export async function listTasks(client: PoolClient): Promise<LaunchedTask[]> {
   const { rows } = await client.query<TaskRow>(
-    `SELECT id, seq_no, mode, video_ref, source_name, title, poster_ref, replication_count, prompts_snapshot, settings_snapshot, status, created_at, (SELECT COALESCE(u.name, u.email) FROM users u WHERE u.id = tasks.created_by) AS author
+    `SELECT id, seq_no, mode, video_ref, source_name, title, poster_ref, replication_count, prompts_snapshot, settings_snapshot, parent_task_id, carry_over_memory, status, created_at, (SELECT COALESCE(u.name, u.email) FROM users u WHERE u.id = tasks.created_by) AS author
      FROM tasks ORDER BY created_at DESC LIMIT 100`,
   );
   return rows.map((r) => toTask(r, false));
@@ -551,7 +571,7 @@ export async function getTaskBySeqNo(
   seqNo: number,
 ): Promise<LaunchedTask | null> {
   const { rows } = await client.query<TaskRow>(
-    `SELECT id, seq_no, mode, video_ref, source_name, title, poster_ref, replication_count, prompts_snapshot, settings_snapshot, status, created_at, (SELECT COALESCE(u.name, u.email) FROM users u WHERE u.id = tasks.created_by) AS author
+    `SELECT id, seq_no, mode, video_ref, source_name, title, poster_ref, replication_count, prompts_snapshot, settings_snapshot, parent_task_id, carry_over_memory, status, created_at, (SELECT COALESCE(u.name, u.email) FROM users u WHERE u.id = tasks.created_by) AS author
        FROM tasks WHERE seq_no = $1`,
     [seqNo],
   );

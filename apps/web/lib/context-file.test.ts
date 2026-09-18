@@ -4,7 +4,11 @@ import { test } from "node:test";
 import {
   CONTEXT_ACCEPT,
   CONTEXT_LIMIT_CHARS,
+  contextConflictWarning,
+  contextGroundingNote,
   contextFileError,
+  detectContextConflicts,
+  isTextContextFile,
   normalizeContext,
 } from "./context-file.ts";
 
@@ -22,11 +26,19 @@ import {
  * ответам — то есть никак.
  */
 
-test("текстовые форматы принимаются, остальные — нет", () => {
+test("текстовые и бинарные форматы принимаются, docx и старый xls — нет", () => {
   assert.equal(contextFileError("аудитория.txt", "текст"), null);
   assert.equal(contextFileError("аудитория.md", "# текст"), null);
-  assert.match(contextFileError("аудитория.pdf", "текст") ?? "", /txt.*md|md.*txt/i);
+  assert.equal(contextFileError("аудитория.pdf"), null);
+  assert.equal(contextFileError("аудитория.xlsx"), null);
   assert.match(contextFileError("аудитория.docx", "текст") ?? "", /txt|md/i);
+
+  // `.xls` — это BIFF, а разбор таблиц в воркере делает openpyxl, читающий
+  // только OOXML. Принять файл и упасть при разборе значило бы узнать о его
+  // непригодности после запуска, за который уже заплачено.
+  const legacy = contextFileError("аудитория.xls", undefined, 1024);
+  assert.ok(legacy, "формат, который воркер не прочитает, нельзя принимать молча");
+  assert.match(legacy, /\.xlsx/, "человеку нужно сказать, во что пересохранить");
 });
 
 test("регистр расширения значения не имеет", () => {
@@ -64,5 +76,31 @@ test("лимит считается по НОРМАЛИЗОВАННОМУ тек
 test("список принимаемых расширений — тот же, что показан в интерфейсе", () => {
   assert.match(CONTEXT_ACCEPT, /\.txt/);
   assert.match(CONTEXT_ACCEPT, /\.md/);
-  assert.doesNotMatch(CONTEXT_ACCEPT, /pdf|docx|xlsx/);
+  assert.match(CONTEXT_ACCEPT, /\.pdf/);
+  assert.match(CONTEXT_ACCEPT, /\.xls/);
+  assert.match(CONTEXT_ACCEPT, /\.xlsx/);
+  assert.doesNotMatch(CONTEXT_ACCEPT, /docx/);
+});
+
+test("конкретные доли и оценки получают предупреждение", () => {
+  const text = "70 % женщин, возраст 18-24, средний балл 8,5.";
+  assert.deepEqual(
+    detectContextConflicts(text).map((item) => item.kind),
+    ["demographics", "scores"],
+  );
+  assert.match(contextConflictWarning(text) ?? "", /Предупреждение/);
+  assert.match(contextConflictWarning(text) ?? "", /корпус/);
+});
+
+test("описание ниши и города без чисел не предупреждает о конфликте", () => {
+  assert.equal(
+    contextConflictWarning("Наша аудитория живёт в крупных городах и любит разбирать сюжеты."),
+    null,
+  );
+});
+
+test("бинарные форматы проходят без притворной проверки текста", () => {
+  assert.equal(isTextContextFile("brief.pdf"), false);
+  assert.equal(isTextContextFile("brief.md"), true);
+  assert.match(contextGroundingNote(), /корпус/);
 });

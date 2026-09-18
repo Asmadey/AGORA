@@ -678,6 +678,158 @@ def _parent_video_result(
         )
 
 
+def _parent_memory(
+    state: PipelineState,
+) -> tuple[
+    dict[str, dict[str, Any]] | None,
+    set[str],
+    str | None,
+    dict[str, float] | None,
+]:
+    """Загружает память родителя только для явно сохранённого режима «Допрос».
+
+    `parent_task_id` отвечает за родословную и сравнение, а
+    `carry_over_memory` - за доступ к ответам. Смешивать эти условия нельзя:
+    чистый повтор с родителем обязан оставаться чистым.
+
+    В Mongo лежат ответы персон, а в Postgres - снимок анкеты родителя. Поэтому
+    фильтр новых вопросов строится по анкете, а не по случайно пропущенным
+    полям ответа. Отсутствующий ответ родителя не превращается в нулевой балл.
+    """
+    parent_id = state.get("parent_task_id")
+    task_id = state.get("task_id")
+    tenant_id = state.get("tenant_id")
+    dsn = os.environ.get("DATABASE_URL")
+    if not parent_id or not task_id or not tenant_id or not dsn:
+        return None, set(), None, None
+
+    try:
+        import psycopg
+
+        from ..db import assert_tenant_filter, tenant_scope
+        from ..mongo import mongo_db
+        from ..survey import survey_questions
+
+        with psycopg.connect(dsn) as conn, tenant_scope(conn, str(tenant_id)) as cur:
+            cur.execute(
+                "SELECT carry_over_memory, parent_task_id FROM tasks WHERE id = %s::uuid",
+                (str(task_id),),
+            )
+            current = cur.fetchone()
+            if not current or not bool(current[0]) or str(current[1] or "") != str(parent_id):
+                return None, set(), None, None
+
+            cur.execute(
+                """SELECT s.questions
+                   FROM tasks t
+                   LEFT JOIN surveys s ON s.id = t.survey_id
+                  WHERE t.id = %s::uuid""",
+                (str(parent_id),),
+            )
+            parent_row = cur.fetchone()
+
+        parent_questions = survey_questions(parent_row[0] if parent_row else None)
+        parent_question_keys = {
+            str(key)
+            for question in parent_questions
+            for key in (question.get("id"), question.get("baseKey"))
+            if key
+        }
+
+        docs = mongo_db().report_personas.find(
+            assert_tenant_filter({"tenant_id": str(tenant_id), "task_id": str(parent_id)}),
+            {"_id": 0, "persona_id": 1, "replication": 1, "answer": 1},
+        )
+        previous: dict[str, dict[str, Any]] = {}
+        for document in docs:
+            persona_id = str(document.get("persona_id") or "")
+            answer = document.get("answer")
+            # Несколько repeat-ответов одной персоны не становятся памятью
+            # друг для друга: для контекста берём только её первый результат
+            # родительского прогона, а текущие repeat остаются независимыми.
+            if persona_id and isinstance(answer, dict) and persona_id not in previous:
+                previous[persona_id] = dict(answer)
+
+        parent_doc = mongo_db().reports.find_one(
+            assert_tenant_filter({"tenant_id": str(tenant_id), "task_id": str(parent_id)}),
+            {"_id": 0, "report.aggregate.core_scores_mean": 1},
+        )
+        aggregate = parent_doc.get("report", {}).get("aggregate", {}) if parent_doc else {}
+        raw_scores = aggregate.get("core_scores_mean") if isinstance(aggregate, dict) else None
+        parent_scores = (
+            {str(key): float(value) for key, value in raw_scores.items()
+             if isinstance(value, (int, float))}
+            if isinstance(raw_scores, dict)
+            else None
+        )
+
+        if not previous:
+            return (
+                {},
+                parent_question_keys,
+                "у родительского прогона нет сохранённых ответов",
+                parent_scores,
+            )
+        return (
+            previous,
+            parent_question_keys,
+            f"ответы персон взяты из родительского прогона {parent_id}",
+            parent_scores,
+        )
+    except Exception as exc:  # noqa: BLE001 - память не должна ронять чистый прогон
+        return (
+            None,
+            set(),
+            f"память родительского прогона недоступна ({type(exc).__name__}); "
+            "задана полная анкета",
+            None,
+        )
+
+
+def _new_questions_survey(
+    survey: Any,
+    parent_question_keys: set[str],
+) -> Any:
+    """Оставляет для «Допроса» только вопросы, которых не было у родителя."""
+    from ..survey import survey_questions
+
+    if not parent_question_keys:
+        return survey
+    questions = [
+        question
+        for question in survey_questions(survey)
+        if not ({str(question.get("id")), str(question.get("baseKey"))} & parent_question_keys)
+    ]
+    if isinstance(survey, list):
+        return questions
+    if not isinstance(survey, dict):
+        return survey
+    result = dict(survey)
+    result["questions"] = questions
+    return result
+
+
+def _merge_parent_answers(
+    answers: list[dict[str, Any]],
+    my_previous_answers: dict[str, dict[str, Any]] | None,
+) -> list[dict[str, Any]]:
+    """Склеивает старые ответы с новыми без изменения исходных объектов."""
+    if not my_previous_answers:
+        return answers
+    merged: list[dict[str, Any]] = []
+    for item in answers:
+        persona_id = str(item.get("persona_id") or "")
+        previous = my_previous_answers.get(persona_id)
+        current = item.get("answer")
+        if not previous or not isinstance(current, dict):
+            merged.append(item)
+            continue
+        answer = dict(previous)
+        answer.update(current)
+        merged.append({**item, "answer": answer})
+    return merged
+
+
 def analyze_chunks(
     state: PipelineState,
     *,
@@ -952,6 +1104,11 @@ def evaluate_personas(state: PipelineState) -> dict[str, Any]:
     # могут только после первой правки промпта — то есть дефект просыпается в
     # тот день, когда Промпт-студией начинают пользоваться.
     degraded: list[str] = []
+    full_survey = state.get("survey") or {}
+    my_previous_answers, parent_question_keys, memory_note, _ = _parent_memory(state)
+    prompt_survey = _new_questions_survey(full_survey, parent_question_keys)
+    if memory_note:
+        degraded.append(memory_note)
     system_template, why = _prompt("respondent.system", state)
     if why:
         degraded.append(why)
@@ -962,7 +1119,7 @@ def evaluate_personas(state: PipelineState) -> dict[str, Any]:
     outcome = run_survey(
         personas=personas,
         pack=state.get("content_pack_compact") or {},
-        survey=state.get("survey") or {},
+        survey=prompt_survey,
         client=QwenRespondentClient(
             config=_model_config(state),
             temperature=_temperatures(state).responseSimulation,
@@ -977,9 +1134,13 @@ def evaluate_personas(state: PipelineState) -> dict[str, Any]:
         # спросили у персон, и меняться между постановкой задачи и её
         # исполнением не должен — иначе половина ответов дана с ним, половина без.
         extra_context=_audience_context(state),
+        my_previous_answers=my_previous_answers,
     )
     update: dict[str, Any] = {
-        "persona_answers": outcome.answers,
+        # В режиме «Допрос» старые значения входят в итоговый ответ без нового
+        # вызова модели. Поэтому QA и агрегат видят полный ответ, а новые
+        # вопросы всё равно были единственными вопросами prompt_survey.
+        "persona_answers": _merge_parent_answers(outcome.answers, my_previous_answers),
         # Заданные вопросы едут в состояние: отчёт обязан показывать те
         # формулировки, которые получили персоны, а не те, что лежат в анкете
         # на момент чтения отчёта.
@@ -1251,6 +1412,11 @@ def _requestion_flagged(
 
         system_template, _ = _prompt("respondent.system", state)
         user_template, _ = _prompt("respondent.user", state)
+        retry_memory, parent_question_keys, _, _ = _parent_memory(state)
+        retry_survey = _new_questions_survey(
+            state.get("survey") or {},
+            parent_question_keys,
+        )
 
         # Подсказка дописывается в КОНЕЦ пользовательского промпта: персона
         # видит её после материала и анкеты, то есть как уточнение задачи, а не
@@ -1263,7 +1429,7 @@ def _requestion_flagged(
         retry = run_survey(
             personas=to_ask,
             pack=state.get("content_pack_compact") or {},
-            survey=state.get("survey") or {},
+            survey=retry_survey,
             client=QwenRespondentClient(
                 config=_model_config(state),
                 temperature=_temperatures(state).responseSimulation,
@@ -1276,6 +1442,7 @@ def _requestion_flagged(
             artifact_path=workdir(state) / "persona_answers_retry.json",
             system_template=system_template,
             user_template=(user_template or "") + ("\n\n" + hint if hint else ""),
+            my_previous_answers=retry_memory,
         )
     except Exception as exc:  # noqa: BLE001
         degraded.append(
@@ -1286,7 +1453,7 @@ def _requestion_flagged(
 
     fresh = {
         (str(a.get("persona_id")), int(a.get("replication") or 0)): a
-        for a in retry.answers
+        for a in _merge_parent_answers(retry.answers, retry_memory)
     }
     merged = [
         fresh.get((str(a.get("persona_id")), int(a.get("replication") or 0)), a)
@@ -1358,6 +1525,18 @@ def analytics(state: PipelineState) -> dict[str, Any]:
         # прогона несут срез сами, и тогда реестр не читается вовсе.
         personas=_personas_for_segments(state, degraded),
     )
+
+    _, _, _, parent_core_scores = _parent_memory(state)
+    if isinstance(parent_core_scores, dict) and isinstance(report.get("aggregate"), dict):
+        # В «Допросе» старые баллы - данные родителя, а не новый замер. Новая
+        # анкета может расширить отчёт, но не имеет права заменить их случайным
+        # ответом модели.
+        report["aggregate"]["core_scores_mean"] = parent_core_scores
+        report["rerun_memory"] = {
+            "mode": "interrogation",
+            "parent_task_id": state.get("parent_task_id"),
+            "old_scores_source": "parent_report",
+        }
 
     # Отчёт обязан покинуть процесс воркера, иначе интерфейсу его читать
     # неоткуда: состояние графа живёт в чекпоинтере, а report.json — в локальном

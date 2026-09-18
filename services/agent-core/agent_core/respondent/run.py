@@ -213,6 +213,7 @@ def _segment_of(persona: dict[str, Any]) -> dict[str, str]:
 #: Заголовок блока с приложенным контекстом. Отдельной константой: по нему
 #: контекст отличают от инструкций и в промпте, и в трассе.
 CONTEXT_HEADING = "## Дополнительный контекст об аудитории (от заказчика исследования)"
+MEMORY_HEADING = "## Мои ответы в родительском прогоне (только для режима «Допрос»)"
 
 
 def build_slice(
@@ -223,6 +224,7 @@ def build_slice(
     system_template: str,
     user_template: str,
     extra_context: str | None = None,
+    my_previous_answers: dict[str, Any] | None = None,
 ) -> tuple[str, str]:
     """
     Собирает срез одной персоны: (system, user).
@@ -263,6 +265,16 @@ def build_slice(
         .replace("{{survey_questions}}", _render_questions(survey))
         .replace("{{content_title}}", str(pack.get("title", "материал")))
     )
+    if my_previous_answers:
+        # Это память только о родительском прогоне. Она передаётся в каждый
+        # текущий repeat одинаковой копией: repeat 1 не видит ответ repeat 0,
+        # иначе replication_count перестал бы измерять шум модели.
+        user = (
+            f"{user}\n\n{MEMORY_HEADING}\n"
+            "Используй их как собственные уже данные ответы. Не повторяй старые "
+            "вопросы, отвечай только на вопросы выше, которых раньше не было.\n"
+            f"{json.dumps(my_previous_answers, ensure_ascii=False, indent=2)}"
+        )
     _ = lifestyle  # оставлено намеренно: расширение среза идёт сюда, а не в промпт
     return system, user
 
@@ -501,6 +513,7 @@ def run_survey(
     system_template: str | None = None,
     user_template: str | None = None,
     extra_context: str | None = None,
+    my_previous_answers: dict[str, dict[str, Any]] | None = None,
 ) -> SurveyOutcome:
     """
     Прогоняет каждую персону через анкету replication_count раз.
@@ -508,8 +521,9 @@ def run_survey(
     `replication_count` — «Перекрытие» из #11: одна и та же персона отвечает
     несколько раз, и разброс её собственных ответов показывает, сколько в оценке
     шума модели, а сколько — позиции персоны. Повторы независимы: персона не
-    видит своих прежних ответов, иначе второй ответ был бы согласован с первым
-    по построению и разброс перестал бы что-либо мерить.
+    видит ответ предыдущего repeat. В режиме «Допрос» она видит только одну
+    неизменную копию своих ответов из родительского прогона, а не результат
+    соседнего repeat текущего.
     """
     if system_template is None:
         system_template = (
@@ -540,6 +554,7 @@ def run_survey(
             personas[0], pack, survey,
             system_template=system_template, user_template=user_template,
             extra_context=extra_context,
+            my_previous_answers=(my_previous_answers or {}).get(str(personas[0].get("id"))),
         )
         _ = probe_system
         outcome.asked = _asked_questions(probe_user, survey)
@@ -558,6 +573,7 @@ def run_survey(
             persona, pack, survey,
             system_template=system_template, user_template=user_template,
             extra_context=extra_context,
+            my_previous_answers=(my_previous_answers or {}).get(str(persona.get("id"))),
         )
         return {
             "persona_id": persona.get("id"),

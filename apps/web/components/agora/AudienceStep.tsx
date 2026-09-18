@@ -5,8 +5,14 @@ import { FileText, Info, Loader2 } from "lucide-react";
 import { FileChip } from "@/components/agora/FileChip";
 import {
   CONTEXT_ACCEPT,
+  CONTEXT_FILE_MAX_BYTES,
   CONTEXT_LIMIT_CHARS,
+  contextGroundingNote,
+  contextConflictWarning,
   contextFileError,
+  contextMimeType,
+  type ContextFileSelection,
+  isTextContextFile,
   normalizeContext,
 } from "@/lib/context-file";
 
@@ -107,9 +113,9 @@ export interface AudienceStepProps {
     size?: number,
     config?: Record<string, unknown>,
   ) => void;
-  /** Приложенный файл контекста: имя и размер для плашки. */
-  contextFile: { name: string; size: number; text: string } | null;
-  onContextFileChange: (file: { name: string; size: number; text: string } | null) => void;
+  /** Приложенный файл контекста: текстовый или переданный в воркер. */
+  contextFile: ContextFileSelection | null;
+  onContextFileChange: (file: ContextFileSelection | null) => void;
 }
 
 function toggle<T extends string>(list: T[], value: T): T[] {
@@ -156,6 +162,7 @@ export function AudienceStep({
   const [genError, setGenError] = useState<string | null>(null);
   /** Претензия к приложенному файлу. Держится здесь: она про поле, а не про визард. */
   const [contextError, setContextError] = useState<string | null>(null);
+  const [contextUploading, setContextUploading] = useState(false);
   const [generated, setGenerated] = useState<GenerationOutcome | null>(null);
   const [grounding, setGrounding] = useState<Grounding | null>(null);
   const [sets, setSets] = useState<PersonaSetSummary[] | null>(null);
@@ -168,6 +175,9 @@ export function AudienceStep({
   const [loadError, setLoadError] = useState<string | null>(null);
 
   const reuse = personaSetId !== null;
+  const contextWarning = contextFile?.text
+    ? contextConflictWarning(contextFile.text)
+    : null;
 
   const refreshSets = async () => {
     const r = await fetch("/api/persona-sets");
@@ -256,7 +266,12 @@ export function AudienceStep({
         // Тело плоское: parseAudienceChoice читает size/ageGroups/geos/genders
         // с верхнего уровня и различает ветки по наличию personaSetId, а не по
         // полю-дискриминатору.
-        body: JSON.stringify({ ...criteria, datasetId }),
+        body: JSON.stringify({
+          ...criteria,
+          datasetId,
+          audienceContext: contextFile?.text,
+          audienceContextFileId: contextFile?.id,
+        }),
       });
       const data = (await res.json()) as Record<string, unknown>;
       if (!res.ok) {
@@ -495,14 +510,18 @@ export function AudienceStep({
           <div>
             <h2 className="text-sm font-semibold">Дополнительный контекст</h2>
             <p className="mt-1 text-xs leading-relaxed text-slate">
-              Файл с описанием вашей аудитории уточнит персон — лексику, специфику ниши.
-              Он не переопределяет распределения и калибровку баллов: заземление на
-              корпус остаётся главным.
+              Файл с описанием вашей аудитории уточнит персон — лексику, интересы и
+              специфику ниши.
             </p>
             <p className="mt-1 text-xs leading-relaxed text-slate">
-              Только <strong>.txt</strong> и <strong>.md</strong>, не длиннее{" "}
-              {CONTEXT_LIMIT_CHARS} символов. Текст попадает в системный промпт каждой
-              персоны и оплачивается на каждом вызове — поэтому это заметка, а не документ.
+              {contextGroundingNote()}
+            </p>
+            <p className="mt-1 text-xs leading-relaxed text-slate">
+              <strong>.txt</strong> и <strong>.md</strong> читаются сразу. Для{" "}
+              <strong>.pdf</strong> и <strong>.xls/.xlsx</strong> извлечение текста
+              произойдёт в воркере при запуске; тогда же будет применён потолок{" "}
+              {CONTEXT_LIMIT_CHARS} символов. Результат разбора и дистилляции будет
+              виден в состоянии набора аудитории.
             </p>
             {/* Как и у ролика: пока файла нет — зона выбора, после — плашка с
                 именем, весом и крестиком. Прежде здесь менялась только подпись
@@ -518,19 +537,36 @@ export function AudienceStep({
                     onContextFileChange(null);
                   }}
                 />
-                <p className="mt-1.5 text-xs text-slate">
-                  {contextFile.text.length} символов из {CONTEXT_LIMIT_CHARS} — прочитаны и
-                  уйдут в промпт персон.
-                </p>
+                {contextFile.processing === "browser" && contextFile.text ? (
+                  <p className="mt-1.5 text-xs text-slate">
+                    {contextFile.text.length} символов из {CONTEXT_LIMIT_CHARS} — прочитаны и
+                    уйдут в промпт персон.
+                  </p>
+                ) : (
+                  <p className="mt-1.5 text-xs text-slate">
+                    Текст будет извлечён из файла в воркере при запуске. Сейчас объём
+                    результата неизвестен; итог будет виден в состоянии набора аудитории.
+                  </p>
+                )}
+                {contextWarning && (
+                  <p className="mt-2 rounded-md border border-warning/40 bg-warning-soft/60 p-2.5 text-xs leading-relaxed text-warning">
+                    {contextWarning}
+                  </p>
+                )}
               </>
             ) : (
               <label className="mt-3 flex cursor-pointer items-center gap-3 rounded-lg border border-dashed border-hairline-strong px-4 py-3 transition-colors hover:border-ink/40 hover:bg-surface">
                 <FileText className="h-4 w-4 text-slate" />
-                <span className="text-sm">Приложить файл (.txt, .md)</span>
+                <span className="text-sm">
+                  {contextUploading
+                    ? "Загружаем файл…"
+                    : "Приложить файл (.txt, .md, .pdf, .xls/.xlsx)"}
+                </span>
                 <input
                   type="file"
                   accept={CONTEXT_ACCEPT}
                   className="hidden"
+                  disabled={contextUploading}
                   onChange={async (e) => {
                     const f = e.target.files?.[0];
                     // Значение поля сбрасывается сразу: иначе повторный выбор
@@ -538,17 +574,84 @@ export function AudienceStep({
                     e.target.value = "";
                     setContextError(null);
                     if (!f) return;
-                    const text = await f.text();
-                    const problem = contextFileError(f.name, text);
+                    if (f.size > CONTEXT_FILE_MAX_BYTES) {
+                      setContextError("файл слишком большой: максимум 50 МБ");
+                      return;
+                    }
+
+                    if (isTextContextFile(f.name)) {
+                      const text = await f.text();
+                      const problem = contextFileError(f.name, text, f.size);
+                      if (problem) {
+                        setContextError(problem);
+                        return;
+                      }
+                      onContextFileChange({
+                        name: f.name,
+                        size: f.size,
+                        text: normalizeContext(text),
+                        processing: "browser",
+                      });
+                      return;
+                    }
+
+                    const problem = contextFileError(f.name, undefined, f.size);
                     if (problem) {
                       setContextError(problem);
                       return;
                     }
-                    onContextFileChange({
-                      name: f.name,
-                      size: f.size,
-                      text: normalizeContext(text),
-                    });
+
+                    setContextUploading(true);
+                    try {
+                      const contentType = f.type || contextMimeType(f.name);
+                      const presign = await fetch("/api/audience-context", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({
+                          fileName: f.name,
+                          contentType,
+                          fileSize: f.size,
+                        }),
+                      });
+                      const presignData = (await presign.json()) as {
+                        id?: string;
+                        uploadUrl?: string;
+                        error?: string;
+                      };
+                      if (!presign.ok || !presignData.id || !presignData.uploadUrl) {
+                        throw new Error(presignData.error ?? "не удалось подготовить загрузку");
+                      }
+
+                      const uploaded = await fetch(presignData.uploadUrl, {
+                        method: "PUT",
+                        headers: { "Content-Type": contentType },
+                        body: f,
+                      });
+                      if (!uploaded.ok) {
+                        throw new Error(`S3 вернул ${uploaded.status} при загрузке файла`);
+                      }
+
+                      const completed = await fetch("/api/audience-context/complete", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ id: presignData.id }),
+                      });
+                      const completedData = (await completed.json()) as { error?: string };
+                      if (!completed.ok) {
+                        throw new Error(completedData.error ?? "не удалось подтвердить загрузку");
+                      }
+
+                      onContextFileChange({
+                        name: f.name,
+                        size: f.size,
+                        id: presignData.id,
+                        processing: "worker",
+                      });
+                    } catch (error) {
+                      setContextError((error as Error).message);
+                    } finally {
+                      setContextUploading(false);
+                    }
                   }}
                 />
               </label>
