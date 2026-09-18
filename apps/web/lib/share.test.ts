@@ -1,7 +1,15 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { shareUrl, ttlToExpiry, TTL_OPTIONS } from "./share.ts";
+import {
+  ACTIVE_SHARES_QUERY,
+  REVOKE_ALL_SHARES_QUERY,
+  REVOKE_SHARE_QUERY,
+  classifyShareState,
+  shareUrl,
+  ttlToExpiry,
+  TTL_OPTIONS,
+} from "./share.ts";
 import { hashToken, newToken } from "./server/share-token.ts";
 
 /**
@@ -96,4 +104,70 @@ test("все предложенные сроки разбираются", () => 
   for (const option of TTL_OPTIONS) {
     assert.doesNotThrow(() => ttlToExpiry(option.value, new Date()));
   }
+});
+
+test("запросы управления ссылками используют task_id, а не пустую reports", () => {
+  for (const query of [ACTIVE_SHARES_QUERY, REVOKE_ALL_SHARES_QUERY, REVOKE_SHARE_QUERY]) {
+    assert.match(query, /report_shares/);
+    assert.match(query, /task_id/);
+    assert.doesNotMatch(query, /\breports\b/);
+  }
+
+  assert.match(REVOKE_SHARE_QUERY, /id\s*=\s*\$1/);
+  assert.match(REVOKE_SHARE_QUERY, /task_id\s*=\s*\$2/);
+  assert.match(ACTIVE_SHARES_QUERY, /COUNT\(v\.id\)/i);
+});
+
+test("статус ссылки различает живую, истёкшую, отозванную и неизвестную", () => {
+  const now = new Date("2026-09-18T10:00:00Z");
+
+  assert.equal(
+    classifyShareState({ revokedAt: null, expiresAt: "2026-09-19T10:00:00Z" }, now),
+    "active",
+  );
+  assert.equal(
+    classifyShareState({ revokedAt: null, expiresAt: "2026-09-18T09:59:59Z" }, now),
+    "expired",
+  );
+  assert.equal(
+    classifyShareState({ revokedAt: "2026-09-17T10:00:00Z", expiresAt: null }, now),
+    "revoked",
+  );
+  assert.equal(classifyShareState(null, now), "missing");
+});
+
+test("закрытая ссылка классифицируется до чтения данных отчёта", async () => {
+  const { readFile } = await import("node:fs/promises");
+  const migration = await readFile(
+    new URL("../../../infra/postgres/init/52_share_state_is_readable.sql", import.meta.url),
+    "utf8",
+  );
+  const page = await readFile(
+    new URL("../app/share/[token]/page.tsx", import.meta.url),
+    "utf8",
+  );
+
+  const policy = migration.match(
+    /CREATE POLICY report_shares_public_read[\s\S]*?;/,
+  )?.[0];
+  assert.ok(policy, "миграция должна пересоздавать политику report_shares_public_read");
+  assert.match(
+    migration,
+    /DROP POLICY IF EXISTS report_shares_public_read ON report_shares/,
+  );
+  assert.match(policy, /FOR SELECT TO agora_share/);
+  assert.match(policy, /token_hash\s*=\s*app\.current_share_token_hash\(\)/);
+  assert.doesNotMatch(policy, /revoked_at|expires_at/);
+
+  const classifyAt = page.indexOf("const state = classifyShareState(");
+  const invalidAt = page.indexOf('if (state === "expired" || state === "revoked")');
+  const viewInsertAt = page.indexOf("INSERT INTO report_share_views");
+  const taskReadAt = page.indexOf("SELECT title, source_name FROM tasks");
+  const reportReadAt = page.indexOf("loadReport(session, grant.task_id)");
+
+  assert.ok(classifyAt >= 0, "страница должна классифицировать найденную ссылку");
+  assert.ok(invalidAt > classifyAt, "состояние нужно проверить после классификации");
+  assert.ok(viewInsertAt > invalidAt, "отзыв не должен записываться для закрытой ссылки");
+  assert.ok(taskReadAt > invalidAt, "задача не должна читаться для закрытой ссылки");
+  assert.ok(reportReadAt > classifyAt, "отчёт читается только после классификации ссылки");
 });

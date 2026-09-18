@@ -5,8 +5,10 @@ import { ReportBody } from "@/components/agora/ReportBody";
 import { Timeline } from "@/components/agora/Timeline";
 import { audienceNote } from "@/lib/audience-note";
 import { researchTitle } from "@/lib/research-title";
+import { classifyShareState, type ShareLinkState } from "@/lib/share";
 import { parseScope } from "@/lib/share-scope";
 import { loadTimelineDuration } from "@/lib/server/content-pack";
+import { notFound } from "next/navigation";
 
 /**
  * Отчёт по публичной ссылке (#29) — без входа в систему.
@@ -29,9 +31,10 @@ import { loadTimelineDuration } from "@/lib/server/content-pack";
  * держит. Теперь тело рисует общий `ReportBody`, а область решает
  * `lib/share-scope`.
  *
- * ─── Почему «ссылка недействительна» вместо «отчёт не найден» ─────────────
- * Разные ответы на «токена нет» и «токен просрочен» сообщали бы владельцу
- * ссылки, существовала ли она когда-нибудь. Ответ один.
+ * ─── Почему просроченная ссылка получает 410, а неизвестная 404 ───────────
+ * Токен содержит 32 случайных байта, поэтому держатель настоящего адреса уже
+ * знает, что ссылка существовала. 410 помогает ему понять, что нужно попросить
+ * новую ссылку, а 404 не подтверждает существование подобранного адреса.
  */
 
 export const dynamic = "force-dynamic";
@@ -48,13 +51,17 @@ const FIRST_PAGE = 50;
  * успешный ответ с чужой страницей внутри. Явный экран честнее: он говорит про
  * ссылку, а не про несуществующий адрес.
  */
-function Invalid() {
+function Invalid({ state }: { state: Exclude<ShareLinkState, "active" | "missing"> }) {
+  const revoked = state === "revoked";
   return (
     <div className="mx-auto max-w-md p-16 text-center">
-      <h1 className="text-lg font-semibold">Ссылка недействительна</h1>
+      <h1 className="text-lg font-semibold">
+        {revoked ? "Ссылка отозвана" : "Срок ссылки истёк"}
+      </h1>
       <p className="mt-2 text-sm leading-relaxed text-slate">
-        Она отозвана, у неё вышел срок, либо такой ссылки не существует.
-        Попросите владельца исследования выпустить новую.
+        {revoked
+          ? "Владелец исследования закрыл эту ссылку. Попросите выпустить новую."
+          : "Срок действия этой ссылки закончился. Попросите владельца выпустить новую."}
       </p>
     </div>
   );
@@ -76,21 +83,28 @@ export default async function SharedReportPage({
       tenant_id: string;
       task_id: string | null;
       scope: string;
+      revoked_at: Date | null;
+      expires_at: Date | null;
     }>(
-      `SELECT id, tenant_id, task_id, scope
+      `SELECT id, tenant_id, task_id, scope, revoked_at, expires_at
          FROM report_shares
-        WHERE token_hash = app.current_share_token_hash()
-          AND revoked_at IS NULL
-          AND (expires_at IS NULL OR expires_at > now())`,
+        WHERE token_hash = app.current_share_token_hash()`,
     );
-    if (!rows[0]?.task_id) return null;
+    const row = rows[0];
+    if (!row) return null;
+
+    const state = classifyShareState(
+      { revokedAt: row.revoked_at, expiresAt: row.expires_at },
+    );
+    if (state === "expired" || state === "revoked") return { state };
+    if (!row.task_id) return { state: "missing" as const };
 
     // Просмотр записывается: владелец ссылки вправе знать, что ею
     // воспользовались. IP и агент не собираем — колонки для них есть, но
     // заполнять их без явного решения не станем.
     await client.query(
       "INSERT INTO report_share_views (tenant_id, share_id) VALUES ($1, $2)",
-      [rows[0].tenant_id, rows[0].id],
+      [row.tenant_id, row.id],
     );
 
     // Название прогона. До миграции 39 роль `agora_share` не имела доступа к
@@ -98,19 +112,25 @@ export default async function SharedReportPage({
     // не хранится, а потому, что прочитать его было нечем.
     const { rows: taskRows } = await client.query<{ title: string | null; source_name: string | null }>(
       "SELECT title, source_name FROM tasks WHERE id = $1",
-      [rows[0].task_id],
+      [row.task_id],
     );
 
-    return { ...rows[0], task: taskRows[0] ?? null };
+    return { ...row, state, task: taskRows[0] ?? null };
   }).catch(() => null);
 
-  if (!grant?.task_id) return <Invalid />;
+  // `notFound` даёт подобранному токену настоящий HTTP 404. Рендер страницы не
+  // умеет выдать свой 410, поэтому обработчик таймлайна только для чтения возвращает
+  // 410 для того же состояния, когда видит истёкшую или отозванную строку.
+  if (!grant) notFound();
+  if (grant.state === "missing") notFound();
+  if (grant.state !== "active") return <Invalid state={grant.state} />;
+  if (!grant.task_id) notFound();
 
   // Отчёт лежит в MongoDB (#21). RLS туда не достаёт, поэтому фильтр по
   // арендатору обязателен — и берётся он из строки ссылки, а не из адреса.
   const session = { tenantId: grant.tenant_id, userId: "" };
   const envelope = await loadReport(session, grant.task_id);
-  if (!envelope) return <Invalid />;
+  if (!envelope) notFound();
 
   const scope = parseScope(grant.scope);
   const view = parseReport(envelope.report);
