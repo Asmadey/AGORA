@@ -8,12 +8,14 @@ import { MetricInfo } from "@/components/agora/MetricInfo";
 import { CRITERIA, CRITERIA_LABELS } from "@/lib/agora-types";
 import { contributions, type MetricKey } from "@/lib/provenance";
 import {
+  donatedValuesAbsence,
   formatAxisTimecode,
   formatTimecode,
   parseTimecode,
   riskMarkerOpacity,
   riskMarkerScale,
   riskPointPosition,
+  riskSectionState,
   segmentBarPercent,
   segmentDimensionLabel,
 } from "@/lib/report-charts";
@@ -519,6 +521,11 @@ export function ReportBody({
    * остальными числами о материале.
    */
   const donatedValues = view.survey ? surveyQuestion(view.survey, 8) : null;
+  const riskState = riskSectionState(
+    view.riskPoints.length,
+    view.retentionRate,
+    videoDurationSec,
+  );
 
   /**
    * Происхождение числа: раскрытие под метрикой ведёт к ответам, из которых
@@ -710,7 +717,20 @@ export function ReportBody({
               Плитки нет вовсе, когда анкеты в прогоне не было: пустой график
               утверждал бы, что вопрос задавали и никто не ответил.
             */}
-            {donatedValues && <SurveyValuesChart question={donatedValues} />}
+            {donatedValues ? (
+              <SurveyValuesChart question={donatedValues} />
+            ) : (
+              /*
+                Пустую плитку по-прежнему не рисуем — она утверждала бы, что
+                вопрос задавали и никто не ответил. Но и молчать нельзя: на
+                месте прежнего графика ценностей аудитории оставалась пустота,
+                и владелец законно спросил, куда делись графики. Причина
+                называется словами.
+              */
+              <p className="rounded-lg border border-dashed border-hairline bg-card px-4 py-3 text-xs leading-relaxed text-slate">
+                {donatedValuesAbsence(false, view.survey !== null)}
+              </p>
+            )}
           </div>
         </section>
 
@@ -750,20 +770,42 @@ export function ReportBody({
         </div>
 
         {/* Точки риска: где аудитория собиралась бросить */}
-        {show("riskPoints") && view.riskPoints.length > 0 && (
+        {show("riskPoints") && (
           <section className="rounded-lg border border-hairline bg-card p-6">
             <h2 className="text-sm font-semibold">Где собирались бросить</h2>
             <p className="mt-0.5 text-xs text-slate">
               Моменты, названные теми, кто не стал бы досматривать
             </p>
-            {videoDurationSec !== null && videoDurationSec > 0 && (
+            {/*
+              Раздел показывается всегда, а не только при непустом списке.
+
+              Ноль точек при измеренном удержании — это РЕЗУЛЬТАТ: никто не
+              заявил о намерении прекратить просмотр. Скрытый раздел выдавал
+              хороший результат за отсутствие данных, и владелец, открыв отчёт,
+              спросил, куда делись графики. Решение, что именно показать, живёт
+              в `riskSectionState` в lib: здесь только отрисовка (§11.7).
+            */}
+            {riskState.kind === "chart" && videoDurationSec !== null && (
               <RiskChart points={view.riskPoints} durationSec={videoDurationSec} />
             )}
-            {videoDurationSec === null || videoDurationSec <= 0 ? (
+            {riskState.kind === "list" && (
               <p className="mt-4 text-xs text-slate">
                 Шкала недоступна: длительность ролика не сохранена в пакете материала.
               </p>
-            ) : null}
+            )}
+            {riskState.kind === "none-stopped" && (
+              <p className="mt-4 text-xs leading-relaxed text-slate">
+                Ни одна персона не заявила о намерении прекратить просмотр
+                {view.retentionRate === null ? "" : ` — удержание ${view.retentionRate.toFixed(0)}%`}.
+                Это результат прогона, а не отсутствие данных.
+              </p>
+            )}
+            {riskState.kind === "not-measured" && (
+              <p className="mt-4 text-xs leading-relaxed text-slate">
+                Намерение прекратить просмотр в этом прогоне не измерялось, поэтому
+                точек риска нет.
+              </p>
+            )}
             <div className="mt-4 flex flex-wrap gap-2">
               {view.riskPoints.map((p) => (
                 <TimecodeRef
