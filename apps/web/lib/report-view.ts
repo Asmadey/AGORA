@@ -43,7 +43,6 @@ export interface ReportView {
   retentionRate: number | null;
   /** Средняя доля просмотренного. null — в анкете не было вопроса о ней. */
   watchedShare: number | null;
-  emotionalIndex: number | null;
   /**
    * Обоснования под числами: почему NPS такой, почему досмотр такой.
    *
@@ -52,7 +51,6 @@ export interface ReportView {
    * фразы: по выдуманной примут решение.
    */
   rationales: Record<string, string>;
-  topEmotions: { name: string; pct: number }[];
   sampleSize: number;
   excludedByQa: number;
   replicationCount: number;
@@ -637,18 +635,11 @@ export function parseReport(raw: Record<string, unknown>): ReportView {
     nps: num(agg.nps),
     retentionRate: num(agg.retention_rate),
     watchedShare: num(agg.watched_share_mean),
-    emotionalIndex: num(agg.emotional_index),
     rationales: Object.fromEntries(
       Object.entries(obj(raw.rationales)).flatMap(([k, v]) =>
         typeof v === "string" && v.trim() ? [[k, v.trim()]] : [],
       ),
     ),
-    topEmotions: (Array.isArray(agg.top_emotions) ? agg.top_emotions : []).flatMap((raw) => {
-      const e = obj(raw);
-      const name = str(e.name) ?? str(e.emotion);
-      const pct = num(e.pct) ?? num(e.share);
-      return name && pct !== null ? [{ name, pct }] : [];
-    }),
     sampleSize: num(agg.sample_size) ?? 0,
     excludedByQa: num(agg.excluded_by_qa) ?? 0,
     replicationCount: num(agg.replication_count) ?? 1,
@@ -780,71 +771,22 @@ export function parseAnswer(card: {
 }
 
 /**
- * Строка вопроса в том виде, в каком её печатает промпт респондента:
- * `[q-77] (scale) как дела?`. Модель охотно берёт её ключом ответа целиком.
- */
-const PROMPT_LINE = /^\[([^\]]+)\]\s*(?:\(([^)]*)\)\s*)?(.*)$/;
-
-/** Ключ ответа во всех видах, какими персона могла назвать вопрос. */
-function answerKeys(answers: Record<string, string>): Map<string, string> {
-  const out = new Map<string, string>();
-  for (const [raw, value] of Object.entries(answers)) {
-    const key = raw.trim();
-    const put = (k: string) => {
-      const norm = k.trim().toLocaleLowerCase();
-      if (norm && !out.has(norm)) out.set(norm, value);
-    };
-    put(key);
-    const m = PROMPT_LINE.exec(key);
-    if (m) {
-      put(m[1]);
-      put(m[3]);
-    }
-  }
-  return out;
-}
-
-const TYPED_IN_PERCEPTION: Record<string, "watchedShare" | "retentionIntent" | "recommendation"> = {
-  watched_share: "watchedShare",
-  retention: "retentionIntent",
-  nps: "recommendation",
-};
-
-/**
- * Ответ персоны на заданный вопрос — откуда бы он ни пришёл. `null` — не ответила.
- *
- * Три источника, потому что промпт кладёт ответы в три разных места: базовые
- * баллы в `scores`, типовые вопросы в `perception`, остальное в
- * `survey_answers` — и там ключом может оказаться идентификатор, формулировка
- * ЛИБО целая строка промпта «[q-77] (scale) как дела?».
- *
- * Живёт здесь, а не в карточке, ровно потому, что это уже четвёртый случай
- * одной семьи: тот же разрыв чинили в `qa/checks.py` дважды и в
- * `content/pack.py` один раз. Место, где он проверяется тестом, должно быть
- * одно.
+ * Ответ читается только по идентификатору вопроса. Старые формы намеренно
+ * показываются явно: прочерк в этом месте выглядел бы как «персона не
+ * ответила», хотя причина в несовместимом формате отчёта.
  */
 export function answerForQuestion(a: AnswerView, q: AskedQuestion): string | null {
-  if (q.baseKey) {
-    const score = a.scores?.[q.baseKey];
-    if (typeof score === "number") return `${score} из 10`;
-  }
-
-  const keys = answerKeys(a.surveyAnswers ?? {});
-  const direct = keys.get(q.id.trim().toLocaleLowerCase())
-    ?? keys.get(q.label.trim().toLocaleLowerCase());
-  if (direct) return direct;
-
-  switch (TYPED_IN_PERCEPTION[q.type]) {
-    case "watchedShare":
-      return a.watchedShare !== null && a.watchedShare !== undefined
-        ? `${a.watchedShare}%` : null;
-    case "retentionIntent":
-      return a.retentionIntent || null;
-    case "recommendation":
-      return a.nps !== null && a.nps !== undefined ? `${a.nps} из 10` : null;
-    default:
-      return null;
-  }
+  const answers = a.surveyAnswers ?? {};
+  const direct = answers[q.id];
+  if (typeof direct === "string" && direct.trim()) return direct;
+  const hasLegacySurveyAnswer = typeof answers[q.label] === "string" && Boolean(answers[q.label].trim())
+    || Object.keys(answers).some((key) => key.startsWith(`[${q.id}]`));
+  const hasOldAnswer = hasLegacySurveyAnswer
+    || q.baseKey !== undefined && typeof a.scores?.[q.baseKey] === "number"
+    || q.type === "watched_share" && a.watchedShare !== null && a.watchedShare !== undefined
+    || q.type === "retention" && Boolean(a.retentionIntent)
+    || q.type === "nps" && a.nps !== null && a.nps !== undefined;
+  return hasOldAnswer ? "ответ в старой форме" : null;
 }
 
 

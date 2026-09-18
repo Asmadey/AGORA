@@ -126,14 +126,14 @@ test("показатели больше не карточки каждый в с
   // в своей рамке читалась как отдельный сюжет.
   assert.ok(!/<StatCard\b/.test(body), "StatCard в сводке не используется");
   const group = /<Metric\b/g;
-  assert.ok((body.match(group) ?? []).length >= 6, "величины рисуются примитивом Metric");
+  assert.ok((body.match(group) ?? []).length >= 5, "величины рисуются примитивом Metric");
 });
 
 test("у каждого показателя есть попап «откуда число»", () => {
   assert.ok(/MetricInfo/.test(body), "попап подключён");
   const infoCalls = body.match(/info=\{info\(/g) ?? [];
   assert.ok(
-    infoCalls.length >= 6,
+    infoCalls.length >= 5,
     `пояснение заведено у всех показателей, а их ${infoCalls.length}`,
   );
 });

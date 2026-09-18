@@ -28,7 +28,6 @@ test("пустой отчёт не превращается в нули", () => 
   assert.equal(view.nps, null);
   assert.equal(view.retentionRate, null);
   assert.equal(view.watchedShare, null);
-  assert.equal(view.emotionalIndex, null);
   assert.equal(view.scores.overall_impression, null);
   assert.equal(view.disclaimer, null);
 });
@@ -53,7 +52,6 @@ test("NaN и Infinity — не числа", () => {
   // JSON.parse. Число, которое не число, дало бы на экране «NaN».
   const view = parseReport({ aggregate: { nps: Number.NaN, emotional_index: Infinity } });
   assert.equal(view.nps, null);
-  assert.equal(view.emotionalIndex, null);
 });
 
 test("разрез не считали — это не пустой разрез", () => {
@@ -273,27 +271,36 @@ test("заданные вопросы берутся из отчёта, а не 
  * `qa/checks.py` дважды и в `content/pack.py` один раз. Здесь он выглядел не
  * отбраковкой, а обвинением в подделке прогона.
  */
-test("ответ находится и в scores, и под строкой промпта", () => {
-  const answer = {
-    scores: { overall_impression: 7, plot: 6, acting: 5, music: 4, cinematography: 8 },
+test("для одного вопроса различаются новая форма, пропуск и старая форма", () => {
+  const q: AskedQuestion = { id: "q-77", label: "как дела?", type: "scale" };
+
+  assert.equal(answerForQuestion({
+    surveyAnswers: { "q-77": "7", "другой вопрос": "5" },
+  } as unknown as AnswerView, q), "7");
+
+  assert.equal(answerForQuestion({
+    surveyAnswers: { "другой вопрос": "5" },
+  } as unknown as AnswerView, q), null);
+
+  assert.match(answerForQuestion({
     surveyAnswers: { "[q-77] (scale) как дела?": "7" },
-    watchedShare: 75,
-    retentionIntent: "скорее досмотреть",
-    nps: 6,
-  } as unknown as AnswerView;
+  } as unknown as AnswerView, q) ?? "", /старой форме/);
+});
 
-  const base: AskedQuestion = {
-    id: "base-1", label: "Общее впечатление", type: "scale", baseKey: "overall_impression",
-  };
-  assert.equal(answerForQuestion(answer, base), "7 из 10");
-
-  const custom: AskedQuestion = { id: "q-77", label: "как дела?", type: "scale" };
-  assert.equal(answerForQuestion(answer, custom), "7");
-
-  const share: AskedQuestion = {
-    id: "base-6", label: "Какую часть ролика вы бы досмотрели", type: "watched_share",
-  };
-  assert.equal(answerForQuestion(answer, share), "75%");
+test("нулевой вариант не исчезает из строк закрытого вопроса", async () => {
+  const { optionRows } = await import("./report-survey.ts");
+  const stats = { n: 2, base: null, belowThreshold: false, mean: null, topBox: null,
+    groups: null, options: [{ id: "emotion-joy", share: 1, count: 2 }], errors: null,
+    texts: null, rows: null };
+  const rows = optionRows(
+    { id: "q-7", number: 7, label: "Эмоции", type: "single_choice", block: null,
+      total: stats, target: stats },
+    stats,
+  );
+  const absent = rows.find((row) => row.id !== "emotion-joy");
+  assert.ok(absent, "полный список вариантов должен быть представлен");
+  assert.equal(absent?.share, 0);
+  assert.equal(absent?.count, 0);
 });
 
 test("вопрос без ответа остаётся без ответа", () => {

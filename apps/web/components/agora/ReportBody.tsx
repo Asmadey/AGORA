@@ -536,12 +536,6 @@ export function ReportBody({
                     : view.recommendation < 5 ? "bad" : view.recommendation >= 8 ? "good" : "warn"
                 }
               />
-              <Metric
-                label="Эмоц. индекс"
-                value={fmt(view.emotionalIndex, 1)}
-                hint="из 10"
-                info={info("Эмоц. индекс", "из 10", view.rationales.emotional_index, undefined)}
-              />
             </div>
           </div>
 
@@ -649,30 +643,6 @@ export function ReportBody({
             </div>
           </section>
 
-          {/* Эмоции */}
-          <section className="rounded-lg border border-hairline bg-card p-6">
-            <h2 className="text-sm font-semibold">Преобладающие эмоции</h2>
-            {view.topEmotions.length === 0 ? (
-              <p className="mt-4 text-sm text-slate">Эмоции не названы.</p>
-            ) : (
-              <div className="mt-5 space-y-3">
-                {view.topEmotions.map((e) => (
-                  <div key={e.name} className="flex items-center gap-3">
-                    <span className="w-36 shrink-0 text-sm text-slate">{e.name}</span>
-                    <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-secondary">
-                      <div
-                        className="h-full rounded-full bg-foreground/70"
-                        style={{ width: `${e.pct}%` }}
-                      />
-                    </div>
-                    <span className="w-10 shrink-0 text-right text-sm tabular-nums">
-                      {e.pct.toFixed(0)}%
-                    </span>
-                  </div>
-                ))}
-              </div>
-            )}
-          </section>
         </div>
 
         {/* Точки риска: где аудитория собиралась бросить */}

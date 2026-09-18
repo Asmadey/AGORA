@@ -246,9 +246,10 @@ test("незнакомый вариант показывается иденти�
     ...q.total,
     options: [{ id: "z-1", share: 0.5, count: 1 }],
   });
-  assert.equal(rows.length, 1);
-  assert.equal(rows[0].label, "z-1");
-  assert.equal(rows[0].known, false);
+  const unknown = rows.find((row) => row.id === "z-1");
+  assert.ok(unknown);
+  assert.equal(unknown.label, "z-1");
+  assert.equal(unknown.known, false);
 });
 
 test("строки матрицы получают подписи подтем", () => {
