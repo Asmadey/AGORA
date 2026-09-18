@@ -19,13 +19,18 @@ import {
 } from "@/lib/survey-preview";
 import {
   addOption,
-  addRow,
+  addRowTo,
+  addTheme,
   draftForType,
   draftIssues,
   removeOption,
   removeRow,
+  removeTheme,
+  rowsOfTheme,
+  setOptionCount,
   setOptionLabel,
   setRowLabel,
+  setThemeLabel,
 } from "@/lib/survey-draft";
 
 /**
@@ -128,7 +133,26 @@ function OptionsEditor({
 
   return (
     <div className="space-y-2">
-      <span className="block text-xs text-slate">Варианты ответа</span>
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <span className="block text-xs text-slate">
+          {draft.type === "matrix_single"
+            ? "Варианты ответа — общие для всех вопросов матрицы"
+            : "Варианты ответа"}
+        </span>
+        {draft.type === "matrix_single" && (
+          <label className="flex items-center gap-2 text-xs text-slate">
+            Сколько вариантов
+            <input
+              id={`option-count-${draft.id}`}
+              type="number"
+              min={2}
+              value={draft.options?.length ?? 2}
+              onChange={(e) => onChange(setOptionCount(draft, Number(e.target.value)))}
+              className={cn(FIELD, "w-20 tabular-nums")}
+            />
+          </label>
+        )}
+      </div>
 
       <div className="space-y-1.5">
         {(draft.options ?? []).map((option, index) => (
@@ -165,8 +189,20 @@ function OptionsEditor({
   );
 }
 
-/** Строки матрицы: каждая получает свой ответ из общего списка вариантов. */
-function RowsEditor({
+/**
+ * Матрица как дерево: тема → вопросы.
+ *
+ * Список вариантов у матрицы ОДИН на всё дерево — так же, как у заказчика в
+ * вопросе 9 («поднималась / не поднималась / затрудняюсь»). Поэтому поле
+ * «сколько вариантов» стоит один раз, у списка, а не у каждого вопроса: у
+ * каждого оно обещало бы, что списки разные.
+ *
+ * Отступ и левая линия у вопросов не украшение: по ним видно, к какой теме
+ * относится вопрос. В отчёте интегральный показатель восприятия считается как
+ * максимум по вопросам ВНУТРИ темы, усреднённый по темам, — то есть вложенность
+ * здесь означает ровно то же, что и в расчёте.
+ */
+function MatrixEditor({
   draft,
   onChange,
 }: {
@@ -175,37 +211,69 @@ function RowsEditor({
 }) {
   return (
     <div className="space-y-2">
-      <span className="block text-xs text-slate">
-        Строки — на каждую персона отвечает отдельно
-      </span>
+      <span className="block text-xs text-slate">Темы и вопросы внутри них</span>
 
-      <div className="space-y-1.5">
-        {(draft.rows ?? []).map((row, index) => (
-          <div key={row.id} className="flex items-center gap-2.5">
-            <span className="w-5 shrink-0 text-right text-xs tabular-nums text-stone">
-              {index + 1}
-            </span>
-            <input
-              id={`row-${row.id}`}
-              value={row.label}
-              onChange={(e) => onChange(setRowLabel(draft, row.id, e.target.value))}
-              placeholder={`Строка ${index + 1}`}
-              aria-label={`Строка матрицы ${index + 1}`}
-              className={FIELD}
-            />
-            <button
-              type="button"
-              onClick={() => onChange(removeRow(draft, row.id))}
-              aria-label={`Удалить строку ${index + 1}`}
-              className="shrink-0 rounded p-1.5 text-slate transition-colors hover:bg-secondary hover:text-danger"
-            >
-              <Trash2 className="h-4 w-4" />
-            </button>
-          </div>
-        ))}
+      <div className="space-y-3">
+        {(draft.themes ?? []).map((theme, themeIndex) => {
+          const rows = rowsOfTheme(draft, theme.id);
+
+          return (
+            <div key={theme.id} className="space-y-1.5">
+              <div className="flex items-center gap-2.5">
+                <input
+                  id={`theme-${theme.id}`}
+                  value={theme.label}
+                  onChange={(e) => onChange(setThemeLabel(draft, theme.id, e.target.value))}
+                  placeholder={`Тема ${themeIndex + 1}`}
+                  aria-label={`Тема ${themeIndex + 1}`}
+                  className={cn(FIELD, "font-medium")}
+                />
+                <button
+                  type="button"
+                  onClick={() => onChange(removeTheme(draft, theme.id))}
+                  aria-label={`Удалить тему ${themeIndex + 1} вместе с её вопросами`}
+                  title="Удалить тему вместе с её вопросами"
+                  className="shrink-0 rounded p-1.5 text-slate transition-colors hover:bg-secondary hover:text-danger"
+                >
+                  <Trash2 className="h-4 w-4" />
+                </button>
+              </div>
+
+              <div className="ml-3 space-y-1.5 border-l border-hairline pl-4">
+                {rows.map((row, rowIndex) => (
+                  <div key={row.id} className="flex items-center gap-2.5">
+                    <span className="w-5 shrink-0 text-right text-xs tabular-nums text-stone">
+                      {rowIndex + 1}
+                    </span>
+                    <input
+                      id={`row-${row.id}`}
+                      value={row.label}
+                      onChange={(e) => onChange(setRowLabel(draft, row.id, e.target.value))}
+                      placeholder={`Вопрос ${rowIndex + 1}`}
+                      aria-label={`Вопрос ${rowIndex + 1} темы «${theme.label || themeIndex + 1}»`}
+                      className={FIELD}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => onChange(removeRow(draft, row.id))}
+                      aria-label={`Удалить вопрос ${rowIndex + 1}`}
+                      className="shrink-0 rounded p-1.5 text-slate transition-colors hover:bg-secondary hover:text-danger"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </button>
+                  </div>
+                ))}
+
+                <AddButton onClick={() => onChange(addRowTo(draft, theme.id))}>
+                  Добавить вопрос
+                </AddButton>
+              </div>
+            </div>
+          );
+        })}
       </div>
 
-      <AddButton onClick={() => onChange(addRow(draft))}>Добавить строку</AddButton>
+      <AddButton onClick={() => onChange(addTheme(draft))}>Добавить тему</AddButton>
     </div>
   );
 }
@@ -319,7 +387,7 @@ function QuestionEditor({
         </div>
       )}
 
-      {draft.type === "matrix_single" && <RowsEditor draft={draft} onChange={onChange} />}
+      {draft.type === "matrix_single" && <MatrixEditor draft={draft} onChange={onChange} />}
 
       {issues.length > 0 && (
         <ul className="space-y-1 text-xs text-slate">
@@ -430,7 +498,7 @@ function MandatoryRow({ q }: { q: SurveyQuestion }) {
       <summary className="flex cursor-pointer list-none items-start gap-3 [&::-webkit-details-marker]:hidden">
         {number}
         <MandatoryHead q={q} />
-        <ChevronDown className="mt-0.5 h-4 w-4 shrink-0 text-slate transition-transform group-open:rotate-180" />
+        <ChevronDown className="h-4 w-4 shrink-0 self-center text-slate transition-transform group-open:rotate-180" />
       </summary>
 
       <div className="mt-3 space-y-3 border-t border-hairline pt-3 pl-9">

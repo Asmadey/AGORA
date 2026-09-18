@@ -90,8 +90,15 @@ export function draftForType(
   if (type === "multi_choice") next.maxChoices = question.maxChoices ?? options.length;
 
   if (type === "matrix_single") {
+    // Матрица заводится темой с вопросом внутри, а не голой строкой. Вопрос без
+    // темы в отчёте не с чем группировать: интегральный показатель восприятия
+    // считается по темам, и такая строка молча выпала бы из него.
+    const themes = question.themes ?? [];
+    next.themes = themes.length > 0 ? [...themes] : [{ id: freeId("t", themes), label: "" }];
+
     const rows = question.rows ?? [];
-    next.rows = rows.length > 0 ? [...rows] : [{ id: freeId("r", rows), label: "" }];
+    next.rows =
+      rows.length > 0 ? [...rows] : [{ id: freeId("r", rows), label: "", themeId: next.themes[0].id }];
   }
 
   return next;
@@ -173,7 +180,21 @@ export function draftIssues(question: SurveyQuestion): string[] {
   }
 
   if (question.type === "matrix_single" && (question.rows ?? []).some((r) => !r.label.trim())) {
-    issues.push("у каждой строки должна быть подпись");
+    issues.push("у каждого вопроса матрицы должна быть подпись");
+  }
+
+  if (question.type === "matrix_single") {
+    const themes = question.themes ?? [];
+    if (themes.some((t) => !t.label.trim())) issues.push("у каждой темы должна быть подпись");
+
+    const empty = themes.filter((t) => rowsOfTheme(question, t.id).length === 0);
+    if (empty.length > 0) {
+      issues.push(
+        empty.length === 1
+          ? "в теме нет ни одного вопроса"
+          : `тем без вопросов: ${empty.length} — каждая даст в отчёте пустую группу`,
+      );
+    }
   }
 
   if (question.type === "multi_choice") {
@@ -187,4 +208,74 @@ export function draftIssues(question: SurveyQuestion): string[] {
   }
 
   return issues;
+}
+
+// ─── Матрица как дерево: тема → вопросы → общие варианты ──────────────────
+
+export function addTheme(question: SurveyQuestion): SurveyQuestion {
+  const themes = [...(question.themes ?? [])];
+  const theme = { id: freeId("t", themes), label: "" };
+  themes.push(theme);
+  return addRowTo({ ...question, themes }, theme.id);
+}
+
+export function setThemeLabel(
+  question: SurveyQuestion,
+  id: string,
+  label: string,
+): SurveyQuestion {
+  return {
+    ...question,
+    themes: (question.themes ?? []).map((t) => (t.id === id ? { ...t, label } : t)),
+  };
+}
+
+/**
+ * Удаление темы уносит её вопросы.
+ *
+ * Оставить их значило бы завести строки, не принадлежащие ни одной теме. В
+ * отчёте такие не попадут ни в одну группу и молча выпадут из интегрального
+ * показателя восприятия — он считается как максимум по подтемам внутри темы,
+ * усреднённый по темам. Потеря выглядела бы не потерей, а другим числом.
+ */
+export function removeTheme(question: SurveyQuestion, id: string): SurveyQuestion {
+  return {
+    ...question,
+    themes: (question.themes ?? []).filter((t) => t.id !== id),
+    rows: (question.rows ?? []).filter((r) => r.themeId !== id),
+  };
+}
+
+/** Вопрос внутрь конкретной темы. */
+export function addRowTo(question: SurveyQuestion, themeId: string): SurveyQuestion {
+  const rows: SurveyRow[] = [...(question.rows ?? [])];
+  rows.push({ id: freeId("r", rows), label: "", themeId });
+  return { ...question, rows };
+}
+
+/** Вопросы одной темы, в порядке добавления. */
+export function rowsOfTheme(question: SurveyQuestion, themeId: string): SurveyRow[] {
+  return (question.rows ?? []).filter((r) => r.themeId === themeId);
+}
+
+/**
+ * Длина общего списка вариантов.
+ *
+ * Список один на всю матрицу — так же, как у заказчика в вопросе 9
+ * («поднималась / не поднималась / затрудняюсь»). Поэтому поле ввода стоит один
+ * раз у списка, а не у каждого вопроса: у каждого оно обещало бы, что у
+ * вопросов списки разные.
+ *
+ * Ниже двух не опускается: закрытому вопросу нужно не меньше двух вариантов, и
+ * поле ввода не должно уметь собрать анкету, которую сервер отвергнет. Уже
+ * введённые подписи сохраняются — укорачивание режет с конца.
+ */
+export function setOptionCount(question: SurveyQuestion, count: number): SurveyQuestion {
+  const target = Math.max(SEEDED_OPTIONS, Math.floor(count) || SEEDED_OPTIONS);
+  let options = [...(question.options ?? [])];
+
+  while (options.length > target) options = options.slice(0, -1);
+  while (options.length < target) options.push({ id: freeId("o", options), label: "" });
+
+  return { ...question, options };
 }
