@@ -9,6 +9,7 @@ import {
   BASE_QUESTIONS,
   BASE_SCALE_LABEL,
   groundingIssues,
+  isMandatory,
   newQuestionDraft,
 } from "@/lib/survey-composition";
 
@@ -55,8 +56,6 @@ export const QUESTION_TYPES: {
 const TYPE_LABEL: Record<QuestionType, string> = Object.fromEntries(
   QUESTION_TYPES.map((t) => [t.v, t.label]),
 ) as Record<QuestionType, string>;
-
-/** Исходные пять критериев. Ключи зафиксированы acceptance-критерием задачи #10. */
 
 /** Базовый критерий считается изменённым, если разошлись подпись, тип или шкала. */
 function isModified(q: SurveyQuestion): boolean {
@@ -193,6 +192,44 @@ function QuestionEditor({
   );
 }
 
+// ─── Строка обязательного вопроса ─────────────────────────────────────────
+
+/**
+ * Обязательный вопрос заказчика: только чтение.
+ *
+ * Ни правки, ни удаления — решение владельца от 17.09.2026. Кнопок здесь нет
+ * не потому, что их «не успели добавить»: пятнадцать вопросов пронумерованы
+ * заказчиком, отчёт и выгрузка ссылаются на эти номера, и снятый вопрос сделал
+ * бы отчёт неполным незаметно для читателя.
+ *
+ * Формулировки заказчика длинные — по две-три строки. Обрезать их в одну, как
+ * у своих вопросов, нельзя: оператор должен видеть, что именно спросят, чтобы
+ * решить, нужны ли ему дополнительные вопросы.
+ */
+function MandatoryRow({ q }: { q: SurveyQuestion }) {
+  const rows = q.rows?.length ?? 0;
+  const options = q.options?.length ?? 0;
+
+  return (
+    <div className="flex items-start gap-3 rounded-md border border-hairline bg-secondary/20 px-4 py-2.5">
+      <span className="w-6 shrink-0 pt-0.5 text-right text-xs tabular-nums text-stone">
+        {q.number}
+      </span>
+
+      <div className="min-w-0 flex-1">
+        <p className="text-sm leading-snug">{q.label}</p>
+        <p className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-slate">
+          <span>{describe(q)}</span>
+          {rows > 0 && <span>{rows} строк</span>}
+          {options > 0 && <span>{options} вариантов</span>}
+          {q.maxChoices && <span>до {q.maxChoices} ответов</span>}
+          {q.baseKey && <span className="font-mono">{q.baseKey}</span>}
+        </p>
+      </div>
+    </div>
+  );
+}
+
 // ─── Строка вопроса ───────────────────────────────────────────────────────
 
 function QuestionRow({
@@ -279,8 +316,19 @@ export function SurveyBuilder({
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState<SurveyQuestion | null>(null);
 
-  const base = questions.filter((q) => q.baseKey);
-  const custom = questions.filter((q) => !q.baseKey);
+  /**
+   * Три группы, а не две.
+   *
+   * Обязательный блок заказчика несёт свои пять базовых критериев (его вопросы
+   * 1–5). Если делить только на «базовые» и «остальные», эти пять попадут в
+   * первую группу и покажутся дважды: один раз как обязательные, второй — как
+   * базовые. Поэтому обязательные отбираются первыми и из остальных групп
+   * вычитаются.
+   */
+  const mandatory = questions.filter(isMandatory);
+  const rest = questions.filter((q) => !isMandatory(q));
+  const base = rest.filter((q) => q.baseKey);
+  const custom = rest.filter((q) => !q.baseKey);
 
   const grounding = groundingIssues(questions);
   const groundingBroken = grounding.length > 0;
@@ -363,6 +411,27 @@ export function SurveyBuilder({
 
   return (
     <div className="space-y-6">
+      {mandatory.length > 0 && (
+        <div>
+          <div className="flex items-baseline justify-between gap-4">
+            <h2 className="text-sm font-semibold">Обязательные вопросы заказчика</h2>
+            <span className="text-xs tabular-nums text-slate">{mandatory.length}</span>
+          </div>
+          <p className="mt-1 text-xs leading-relaxed text-slate">
+            Эти вопросы задаются в каждом исследовании и не редактируются: отчёт и
+            выгрузка называют их номерами заказчика, и снятый вопрос сделал бы отчёт
+            неполным незаметно для читателя. Гибкость — в дополнительных вопросах ниже.
+          </p>
+
+          <div className="mt-3 space-y-2">
+            {mandatory.map((q) => (
+              <MandatoryRow key={q.id} q={q} />
+            ))}
+          </div>
+        </div>
+      )}
+
+      {(base.length > 0 || groundingBroken) && (
       <div>
         <div className="flex items-baseline justify-between gap-4">
           <h2 className="text-sm font-semibold">Базовые критерии</h2>
@@ -397,6 +466,7 @@ export function SurveyBuilder({
           </p>
         )}
       </div>
+      )}
 
       <div>
         <h2 className="text-sm font-semibold">Дополнительные вопросы</h2>
