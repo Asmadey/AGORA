@@ -27,7 +27,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from ..survey import question_label, question_rows, survey_questions
+from ..survey import parse_field_answer, question_label, question_rows, survey_questions
 
 #: Допуск к длительности ролика. Секунда, а не ноль: таймкод последней сцены
 #: округляется при склейке, и ссылка на 01:40 при длительности 99.6 с — это
@@ -389,6 +389,15 @@ def coverage_reasons(answer: dict[str, Any], survey: Any = None) -> list[str]:
     }
 
     missing: list[str] = []
+    parse_errors: list[str] = []
+
+    def check_parsed(field: str, question: dict[str, Any], raw: Any) -> None:
+        if raw is None:
+            return
+        parsed = parse_field_answer(question, raw)
+        if parsed.error:
+            parse_errors.append(f"ошибка разбора поля {field}: {parsed.error}")
+
     for question in survey_questions(survey):
         qid = str(question.get("id") or "")
         label = question_label(question)
@@ -407,10 +416,14 @@ def coverage_reasons(answer: dict[str, Any], survey: Any = None) -> list[str]:
         if base_key:
             if str(base_key) not in scored and not answered_directly:
                 missing.append(f"{qid or base_key} ({base_key})")
+            else:
+                raw = scores.get(str(base_key)) if str(base_key) in scored else given.get(qid)
+                check_parsed(qid or str(base_key), question, raw)
             continue
 
         field = TYPED_IN_PERCEPTION.get(qtype)
         if field and perception.get(field) is not None:
+            check_parsed(qid or field, question, perception.get(field))
             continue
 
         # Матрица закрывается ПОСТРОЧНО. `render_questions` печатает её строка
@@ -429,12 +442,20 @@ def coverage_reasons(answer: dict[str, Any], survey: Any = None) -> list[str]:
                 rid = str(row.get("id") or "")
                 if rid and _norm(rid) not in given_keys:
                     missing.append(f"{qid}/{rid}" if qid else rid)
+                elif rid:
+                    check_parsed(rid, question, given.get(rid))
             continue
 
         if not answered_directly:
             missing.append(qid or label or qtype or "вопрос без идентификатора")
+        else:
+            raw = given.get(qid)
+            if raw is None and label:
+                raw = given.get(label)
+            check_parsed(qid or label or qtype, question, raw)
 
     if missing:
         reasons.append(f"анкета покрыта не полностью, нет ответов: {', '.join(sorted(missing))}")
+    reasons.extend(parse_errors)
 
     return reasons

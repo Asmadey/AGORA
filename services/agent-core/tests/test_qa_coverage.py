@@ -236,3 +236,57 @@ def test_переспрос_знает_подсказку_для_покрыти�
     hint = hint_for({"coverage"})
     assert hint, "подсказки по покрытию нет — переспрос уйдёт впустую"
     assert "каждой строке" in hint or "каждый" in hint
+
+
+def test_ошибка_разбора_закрытого_поля_становится_гейтом():
+    from agent_core.qa.run import run_qa
+
+    survey = [{
+        "id": "q-choice",
+        "label": "Выбор",
+        "type": "single_choice",
+        "options": [{"id": "yes", "label": "Да"}],
+    }]
+    answer = {"persona_id": "p-1", "survey_answers": {"q-choice": "no"}}
+
+    outcome = run_qa(answers=[answer], pack={}, survey=survey)
+
+    flagged = [v for v in outcome.flagged if v["kind"] == "coverage"]
+    assert flagged
+    assert flagged[0]["source"] == "rule"
+    assert any("не из списка" in reason for reason in flagged[0]["reasons"])
+
+
+def test_ошибка_разбора_попадает_в_переспрос():
+    from agent_core.qa.run import run_qa
+    from agent_core.respondent.requestion import kinds_for
+
+    survey = [{
+        "id": "q-scale",
+        "label": "Оценка",
+        "type": "scale",
+        "scaleMin": 0,
+        "scaleMax": 10,
+    }]
+    answer = {"persona_id": "p-1", "replication": 2,
+              "survey_answers": {"q-scale": 11}}
+
+    outcome = run_qa(answers=[answer], pack={}, survey=survey)
+
+    assert "coverage" in kinds_for(outcome.flagged, ("p-1", 2))
+
+
+def test_успешно_разобранный_закрытый_ответ_не_гейтится():
+    from agent_core.qa.run import run_qa
+
+    survey = [{
+        "id": "q-choice",
+        "label": "Выбор",
+        "type": "single_choice",
+        "options": [{"id": "yes", "label": "Да"}],
+    }]
+    answer = {"persona_id": "p-1", "survey_answers": {"q-choice": "yes"}}
+
+    outcome = run_qa(answers=[answer], pack={}, survey=survey)
+
+    assert not [v for v in outcome.flagged if v["kind"] == "coverage"]
