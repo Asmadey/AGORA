@@ -216,6 +216,51 @@ CONTEXT_HEADING = "## Дополнительный контекст об ауд�
 MEMORY_HEADING = "## Мои ответы в родительском прогоне (только для режима «Допрос»)"
 
 
+def _shown_dna(dna: dict[str, Any]) -> dict[str, Any]:
+    """
+    DNA в том виде, в каком её видит персона на опросе.
+
+    ─── Что убрано и почему ───────────────────────────────────────────────────
+    `values_and_beliefs.important_values` и `narrative`. Оба называют персоне её
+    собственные ценности ровно в том окне, где её спрашивают про ценности
+    материала.
+
+    Прогон 0093, вопрос 8 анкеты заказчика: «Крепкая семья» — 100 %, все
+    девятнадцать персон. На экране при этом ни семьи, ни детей, ни дома —
+    женщина в машине, люди в камуфляже, поцелуй через окно; «Служение Отечеству»
+    (люди в форме занимают весь ролик) набрало 21 %. Ответ перевёрнут
+    относительно материала.
+
+    Замер эха: из 45 названных ценностей 40 — собственные ценности персоны.
+    89 % при случайном уровне 29 %.
+
+    Портрет убран вместе со списком, а не вместо него: 17 из 20 портретов
+    набора 170c318c перечисляют ценности прозой («…где на первом месте стоят
+    крепкая семья, справедливость и служение Отечеству»). Закрыть один канал из
+    двух значило бы поменять 89 % на 80 % и решить, что готово.
+
+    Заодно уходит чужое имя: портрет персоны «Наталья» звал её Анной, и
+    приезжал он к ней как описание себя.
+
+    ─── Что осталось ─────────────────────────────────────────────────────────
+    Всё остальное: демография, большая пятёрка, стиль общения, как решает, как
+    смотрит, чем пользуется, образ жизни — и внутри `values_and_beliefs`
+    мировоззрение, политическая ориентация, отношение к религии. Персона
+    остаётся собой; у неё забрали только готовый список, который она переписывала
+    в ответ.
+
+    Ценности не исчезают из продукта: они по-прежнему в DNA, в реестре
+    аудитории и в подборе к корпусу. Их перестают показывать на опросе.
+    """
+    shown = {k: v for k, v in dna.items() if k != "narrative"}
+    beliefs = shown.get("values_and_beliefs")
+    if isinstance(beliefs, dict):
+        shown["values_and_beliefs"] = {
+            k: v for k, v in beliefs.items() if k != "important_values"
+        }
+    return shown
+
+
 def build_slice(
     persona: dict[str, Any],
     pack: dict[str, Any],
@@ -225,6 +270,7 @@ def build_slice(
     user_template: str,
     extra_context: str | None = None,
     my_previous_answers: dict[str, Any] | None = None,
+    verbatims: list[str] | None = None,
 ) -> tuple[str, str]:
     """
     Собирает срез одной персоны: (system, user).
@@ -239,9 +285,12 @@ def build_slice(
 
     system = (
         system_template
-        .replace("{{persona_dna}}", json.dumps(dna, ensure_ascii=False, indent=2))
+        .replace("{{persona_dna}}", json.dumps(_shown_dna(dna), ensure_ascii=False, indent=2))
         .replace("{{segment}}", str(demographics.get("age_group", "не указан")))
-        .replace("{{verbatim_examples}}", str(dna.get("narrative", "")))
+        # Реплики корпуса, а не портрет персоны. Заголовок над этим плейсхолдером
+        # обещает «образцы живой речи людей твоего типа», и портрет от третьего
+        # лица им никогда не был — см. `_shown_dna`.
+        .replace("{{verbatim_examples}}", "\n".join(verbatims or []))
         .replace("{{score_priors}}", "средние по реальной аудитории: 6–8 из 10")
     )
 
@@ -514,6 +563,7 @@ def run_survey(
     user_template: str | None = None,
     extra_context: str | None = None,
     my_previous_answers: dict[str, dict[str, Any]] | None = None,
+    verbatims: list[str] | None = None,
 ) -> SurveyOutcome:
     """
     Прогоняет каждую персону через анкету replication_count раз.
@@ -555,6 +605,7 @@ def run_survey(
             system_template=system_template, user_template=user_template,
             extra_context=extra_context,
             my_previous_answers=(my_previous_answers or {}).get(str(personas[0].get("id"))),
+            verbatims=verbatims,
         )
         _ = probe_system
         outcome.asked = _asked_questions(probe_user, survey)
@@ -574,6 +625,7 @@ def run_survey(
             system_template=system_template, user_template=user_template,
             extra_context=extra_context,
             my_previous_answers=(my_previous_answers or {}).get(str(persona.get("id"))),
+            verbatims=verbatims,
         )
         return {
             "persona_id": persona.get("id"),

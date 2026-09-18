@@ -516,10 +516,9 @@ def _judge_pool(verbatims: list[str], n: int = 20) -> list[str]:
     17 из 20 приходились на «Константинополь». Шаг сохраняет детерминизм и даёт
     речь со всего корпуса.
     """
-    if not verbatims:
-        return []
-    step = max(1, len(verbatims) // n)
-    return verbatims[::step]
+    from .generator import even_sample
+
+    return even_sample(verbatims, n)
 
 
 def _load_portraits(tenant_id: str) -> dict[str, str]:

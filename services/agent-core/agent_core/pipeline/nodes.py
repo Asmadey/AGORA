@@ -1135,6 +1135,10 @@ def evaluate_personas(state: PipelineState) -> dict[str, Any]:
         # исполнением не должен — иначе половина ответов дана с ним, половина без.
         extra_context=_audience_context(state),
         my_previous_answers=my_previous_answers,
+        # Образцы речи — реплики корпуса, а не портрет персоны. Портрет
+        # перечислял ей её же ценности ровно там, где спрашивают про ценности
+        # материала; см. `_corpus_verbatims` и `respondent.run._shown_dna`.
+        verbatims=_corpus_verbatims(state, degraded),
     )
     update: dict[str, Any] = {
         # В режиме «Допрос» старые значения входят в итоговый ответ без нового
@@ -1211,6 +1215,64 @@ def _load_personas(state: PipelineState) -> list[dict[str, Any]]:
             (list(ids),),
         )
         return [{"id": r[0], "name": r[1], "dna": r[2]} for r in cur.fetchall()]
+
+
+#: Сколько реплик корпуса показывать персоне как образец речи. Двадцать — как у
+#: судьи связности: больше не помогает, а промпт респондента и так самый
+#: длинный в продукте.
+SPEECH_SAMPLES = 20
+
+
+def _corpus_verbatims(state: PipelineState, degraded: list[str]) -> list[str]:
+    """
+    Реплики корпуса для `{{verbatim_examples}}` — того, что промпт и обещает.
+
+    ─── Зачем ────────────────────────────────────────────────────────────────
+    Под заголовком «Так ты обычно говоришь и рассуждаешь (образцы живой речи
+    людей твоего типа)» стоял портрет персоны — описание человека от третьего
+    лица. Образцами речи он не был никогда, зато перечислял ценности персоны:
+    17 из 20 портретов набора 170c318c называют их прозой, и персона читала свой
+    список ровно там, где её спрашивают про ценности материала (эхо 89 % против
+    случайных 29 %, прогон 0093).
+
+    Пул берётся из слепка корпуса, снятого при создании набора, а не из файла в
+    образе: набор собран по слепку, и речь обязана быть из него же.
+
+    Отказ чтения не роняет прогон и не подставляет портрет обратно: пустой
+    раздел честнее, чем раздел, заполненный не тем.
+    """
+    import psycopg
+
+    from ..db import tenant_scope
+    from ..persona.generator import PersonaGenerator, even_sample
+
+    dsn = os.environ.get("DATABASE_URL")
+    if not dsn:
+        return []
+    try:
+        with psycopg.connect(dsn) as conn, tenant_scope(conn, state["tenant_id"]) as cur:
+            cur.execute(
+                """SELECT ps.corpus_snapshot_id::text
+                     FROM tasks t
+                     JOIN persona_sets ps ON ps.id = t.persona_set_id
+                    WHERE t.id = %s::uuid""",
+                (str(state["task_id"]),),
+            )
+            row = cur.fetchone()
+        snapshot_id = row[0] if row else None
+        if not snapshot_id:
+            degraded.append(
+                "опрос: у набора нет слепка корпуса, образцы речи персонам не показаны"
+            )
+            return []
+        gen = PersonaGenerator.from_snapshot(snapshot_id, state["tenant_id"])
+        return even_sample(gen.dist.verbatims, SPEECH_SAMPLES)
+    except Exception as exc:  # noqa: BLE001
+        degraded.append(
+            f"опрос: реплики корпуса не прочитаны ({type(exc).__name__}: {exc}); "
+            f"персоны отвечали без образцов речи"
+        )
+        return []
 
 
 def _personas_for_segments(
@@ -1443,6 +1505,10 @@ def _requestion_flagged(
             system_template=system_template,
             user_template=(user_template or "") + ("\n\n" + hint if hint else ""),
             my_previous_answers=retry_memory,
+            # Переспрос идёт тем же контекстом, что и первый вызов: иначе
+            # вторая попытка отвечает по другим правилам, и сравнить её с
+            # первой нельзя.
+            verbatims=_corpus_verbatims(state, degraded),
         )
     except Exception as exc:  # noqa: BLE001
         degraded.append(
