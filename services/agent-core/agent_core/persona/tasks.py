@@ -35,6 +35,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import tempfile
 from pathlib import Path
@@ -49,6 +50,8 @@ from ..portraits.distill import distill_context_file, load_prompt_template
 #: строке, которую в это же время опрашивает список. Каждая пятая — заметно для
 #: глаза (обновление раз в несколько секунд) и незаметно для базы.
 PROGRESS_EVERY = 5
+
+logger = logging.getLogger(__name__)
 
 
 def _mark_context_file_failed(file_id: str, tenant_id: str, reason: str) -> None:
@@ -162,13 +165,28 @@ def _prepare_generation_config(
     }
 
 
-def _update(tenant_id: str, sql: str, params: tuple[Any, ...]) -> None:
+class PersonaSetGone(RuntimeError):
     """
-    Короткая транзакция со своим тенант-контекстом.
+    Набор, который наполняет эта задача, исчез из базы.
+
+    Не отказ генерации, а её беспредметность: писать больше некуда, и каждый
+    следующий вызов модели оплачивается впустую. См. `_progress_reporter`.
+    """
+
+
+def _update(tenant_id: str, sql: str, params: tuple[Any, ...]) -> int:
+    """
+    Короткая транзакция со своим тенант-контекстом. Возвращает число строк.
 
     Отдельное соединение на операцию — намеренно. Долгоживущее соединение
     пришлось бы держать открытым всю генерацию, а тенант-контекст в нём живёт
     ровно транзакцию: продлить его без продления транзакции нельзя.
+
+    `rowcount` возвращается, а не выбрасывается: 18.09.2026 задача двадцать семь
+    минут писала прогресс в удалённый набор и считалась работающей, потому что
+    `UPDATE` в ноль строк не ошибка ни для psycopg, ни для celery. Смотреть на
+    число обязан вызывающий — здесь неизвестно, какой из вызовов имеет право
+    попасть в пустоту (`fail` по исчезнувшему набору имеет, прогресс — нет).
     """
     import psycopg
 
@@ -176,6 +194,47 @@ def _update(tenant_id: str, sql: str, params: tuple[Any, ...]) -> None:
 
     with psycopg.connect(os.environ["DATABASE_URL"]) as conn, tenant_scope(conn, tenant_id) as cur:
         cur.execute(sql, params)
+        return cur.rowcount
+
+
+#: Запись прогресса генерации. Отдельной константой, потому что её же читает
+#: тест исчезнувшего набора: SQL, набранный там заново, разошёлся бы с боевым.
+_PROGRESS_SQL = "UPDATE persona_sets SET generated_count = %s WHERE id = %s::uuid"
+
+
+def _progress_reporter(
+    tenant_id: str,
+    set_id: str,
+    *,
+    every: int = PROGRESS_EVERY,
+    update: Any = _update,
+) -> Any:
+    """
+    Обратный вызов прогресса для `enrich_personas` — и заодно перепроверка того,
+    что набор ещё существует.
+
+    ─── Почему проверка живёт здесь, а не отдельным SELECT ────────────────────
+    Ответ «набор на месте» уже приходит вместе с записью прогресса: `UPDATE …
+    WHERE id = …` возвращает единицу, если строка есть, и ноль, если её нет.
+    Отдельный SELECT был бы вторым походом в базу за тем же самым.
+
+    Проверка на старте задачи существует и работает — 18.09.2026 следующая
+    задача в очереди упала за 0,066 секунды с внятным «слепок корпуса не
+    найден». Но та, что уже стартовала, до конца своих двадцати семи минут ни
+    разу не спросила, есть ли ещё куда писать: набор удалили из интерфейса уже
+    после её старта, и ни одной персоны она не записала.
+    """
+
+    def report(done: int, total: int) -> None:  # noqa: ARG001
+        if done % every:
+            return
+        if update(tenant_id, _PROGRESS_SQL, (done, set_id)) == 0:
+            raise PersonaSetGone(
+                f"набор {set_id} исчез во время генерации: писать персон некуда, "
+                f"остановлено на {done}"
+            )
+
+    return report
 
 
 @app.task(name="agora.generate_audience", bind=True)
@@ -269,14 +328,7 @@ def generate_audience(self: Any, payload: dict[str, Any]) -> dict[str, Any]:
         if config.use_llm:
             from .enrich import enrich_personas
 
-            def report(done: int, total: int) -> None:  # noqa: ARG001
-                if done % PROGRESS_EVERY:
-                    return
-                _update(
-                    tenant_id,
-                    "UPDATE persona_sets SET generated_count = %s WHERE id = %s::uuid",
-                    (done, set_id),
-                )
+            report = _progress_reporter(tenant_id, set_id)
 
             try:
                 outcome = enrich_personas(
@@ -289,6 +341,17 @@ def generate_audience(self: Any, payload: dict[str, Any]) -> dict[str, Any]:
                     # реестр промптов утверждал обратное.
                     portraits=portraits,
                 )
+            except PersonaSetGone as gone:
+                # Отдельно от отказа: отказ пишется В НАБОР, а набора больше
+                # нет — `fail` ушёл бы тем же `UPDATE` в ноль строк, ради
+                # которого всё и затевалось. Причина обязана дойти хотя бы в
+                # результат задачи и в лог.
+                logger.warning("генерация аудитории прервана: %s", gone)
+                return {
+                    "persona_set_id": set_id,
+                    "status": "abandoned",
+                    "error": str(gone),
+                }
             except Exception as exc:  # noqa: BLE001
                 return fail(f"обогащение не удалось: {type(exc).__name__}: {exc}")
 

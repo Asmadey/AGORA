@@ -106,7 +106,16 @@ def _scale(question: dict[str, Any], raw_values: Iterable[Any]) -> dict[str, Any
         return {"n": 0, "mean": None, "top_box": None, "distribution": {}, "groups": {}}
 
     top = sum(1 for v in values if v >= TOP_BOX_MIN) / len(values)
-    distribution = {v: values.count(v) for v in sorted(set(values))}
+    # Ключ — СТРОКА, а не балл. Документ Mongo целых ключей не принимает
+    # вовсе, и один такой ключ стоил отчёта прогона 0093 целиком: запись
+    # упала на `InvalidDocument … key was 3`, задача при этом завершилась
+    # успехом, а экран сказал «отчёт ещё не готов».
+    #
+    # Соседний `_write` этого не показывал: `json.dumps` превращает целый
+    # ключ в строку молча, и в `report.json` на диске уже лежало `"3"`.
+    # Читатель отчёта в вебе тоже ждёт строку — в JSON другого ключа не
+    # бывает (см. lib/fixtures/survey-tally.json).
+    distribution = {str(v): values.count(v) for v in sorted(set(values))}
     groups = {
         "9-10": sum(1 for v in values if v >= NPS_PROMOTER_MIN) / len(values),
         "7-8": sum(1 for v in values if 7 <= v <= 8) / len(values),

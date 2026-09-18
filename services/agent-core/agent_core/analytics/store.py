@@ -49,6 +49,35 @@ REPORT_PERSONAS = "report_personas"
 CONTENT_PACKS = "content_packs"
 
 
+def mongo_keys(value: Any) -> Any:
+    """
+    Ключи документа — строками, рекурсивно.
+
+    ─── Зачем нужна граница, если источник исправлен ──────────────────────────
+    Прогон 0093 отработал семь минут, посчитал девятнадцать ответов и потерял
+    отчёт целиком из-за ОДНОГО ключа: распределение по шкале строилось как
+    `{балл: сколько раз}`, а Mongo целых ключей в документе не принимает. Запись
+    упала, `except` ниже честно записал причину в `degraded`, задача завершилась
+    успехом, статус стал REPORT_READY — и экран отчёта сказал «ещё не готов или
+    принадлежит другой команде».
+
+    Источник исправлен (`survey_stats._scale`). Но цена ошибки осталась
+    несоразмерной: любой новый счётчик, ключом которого окажется число или
+    кортеж, снова обменяет весь оплаченный прогон на одну строку в `degraded`.
+    Граница снимает именно это — не право писать что попало, а цену опечатки.
+
+    Преобразование не теряет данных: в JSON ключ и так может быть только
+    строкой, и `json.dumps` в `report.py::_write` делает ровно то же самое —
+    поэтому `report.json` на диске выглядел безупречно, пока запись в Mongo
+    падала. Веб читает те же строковые ключи (lib/fixtures/survey-tally.json).
+    """
+    if isinstance(value, dict):
+        return {str(k): mongo_keys(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [mongo_keys(v) for v in value]
+    return value
+
+
 def save_report(
     db: Any,
     *,
@@ -72,7 +101,7 @@ def save_report(
     db[REPORTS].update_one(
         assert_tenant_filter({"tenant_id": tenant_id, "task_id": task_id}),
         {"$set": {
-            "report": report,
+            "report": mongo_keys(report),
             "audience_size": len(answers),
             "updated_at": now,
         }},
@@ -94,8 +123,10 @@ def save_report(
                 # Срез DNA лежит в карточке, а не берётся из персоны при чтении.
                 # Персону могли отредактировать или удалить после прогона, а
                 # отчёт обязан показывать ту аудиторию, на которой посчитан.
-                "segment": item.get("segment") or {},
-                "answer": item.get("answer") if isinstance(item.get("answer"), dict) else item,
+                "segment": mongo_keys(item.get("segment") or {}),
+                "answer": mongo_keys(
+                    item.get("answer") if isinstance(item.get("answer"), dict) else item
+                ),
                 # Флаги кладутся рядом с карточкой, а не выводятся на экране из
                 # общего списка: аккордеон грузится постранично, и искать флаги
                 # персоны в списке, которого на странице нет, было бы нечем.
@@ -129,7 +160,7 @@ def save_content_pack(
     """
     db[CONTENT_PACKS].update_one(
         assert_tenant_filter({"tenant_id": tenant_id, "task_id": task_id}),
-        {"$set": {"pack": pack, "updated_at": datetime.now(UTC)}},
+        {"$set": {"pack": mongo_keys(pack), "updated_at": datetime.now(UTC)}},
         upsert=True,
     )
 
