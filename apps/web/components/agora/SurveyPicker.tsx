@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Loader2, ExternalLink } from "lucide-react";
+import { ChevronDown, Loader2, ExternalLink } from "lucide-react";
 import Link from "next/link";
 
 import { SurveyBuilder } from "@/components/agora/SurveyBuilder";
@@ -128,7 +128,7 @@ export function SurveyPicker({
   }
 
   const SELECT_CLASS =
-    "rounded-md border border-hairline bg-background px-3 py-2 text-sm outline-none transition-colors focus:border-muted-foreground/60";
+    "appearance-none rounded-md border border-hairline bg-background px-3 py-2 pr-10 text-sm outline-none transition-colors focus:border-muted-foreground/60";
 
   return (
     <div className="space-y-6">
@@ -136,26 +136,32 @@ export function SurveyPicker({
         <div className="flex flex-wrap items-end gap-3">
           <label className="flex flex-col gap-1.5">
             <span className="text-xs font-medium text-slate">Анкета</span>
-            <select
-              value={surveyId ?? ""}
-              onChange={(e) => pick(e.target.value)}
-              disabled={surveys === null}
-              className={SELECT_CLASS}
-            >
-              {surveys === null && <option value="">Загрузка…</option>}
-              {surveys?.map((s) => (
-                <option key={s.id} value={s.id}>
-                  {s.name} · {s.questions.length}{" "}
-                  {s.questions.length === 1 ? "вопрос" : s.questions.length < 5 ? "вопроса" : "вопросов"}
-                </option>
-              ))}
-              {/* Черновик предлагается, только когда сохранённых анкет нет:
-                  рядом с настоящими он был бы способом случайно завести
-                  двадцать безымянных копий. */}
-              {surveys?.length === 0 && (
-                <option value={DRAFT_SURVEY_ID}>Базовая анкета (будет создана)</option>
-              )}
-            </select>
+            <div className="relative">
+              <select
+                value={surveyId ?? ""}
+                onChange={(e) => pick(e.target.value)}
+                disabled={surveys === null}
+                className={SELECT_CLASS}
+              >
+                {surveys === null && <option value="">Загрузка…</option>}
+                {surveys?.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {s.name} · {s.questions.length}{" "}
+                    {s.questions.length === 1 ? "вопрос" : s.questions.length < 5 ? "вопроса" : "вопросов"}
+                  </option>
+                ))}
+                {/* Черновик предлагается, только когда сохранённых анкет нет:
+                    рядом с настоящими он был бы способом случайно завести
+                    двадцать безымянных копий. */}
+                {surveys?.length === 0 && (
+                  <option value={DRAFT_SURVEY_ID}>Базовая анкета (будет создана)</option>
+                )}
+              </select>
+              <ChevronDown
+                aria-hidden="true"
+                className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate"
+              />
+            </div>
           </label>
 
           {selected && (
@@ -172,7 +178,7 @@ export function SurveyPicker({
 
           <Link
             href="/surveys"
-            className="inline-flex items-center gap-1.5 text-sm text-slate underline underline-offset-4 hover:text-foreground"
+            className="mb-2 inline-flex items-center gap-1.5 text-sm text-slate underline underline-offset-4 hover:text-foreground"
           >
             Все анкеты <ExternalLink className="h-3.5 w-3.5" />
           </Link>

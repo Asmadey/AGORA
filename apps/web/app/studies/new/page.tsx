@@ -404,32 +404,54 @@ export default function NewStudyPage() {
       )}
 
       {/* Шаги */}
-      <ol className="mt-6 flex items-center gap-2">
-        {STEPS.map((s, i) => (
-          <li key={s} className="flex flex-1 items-center gap-2">
-            <button
-              onClick={() => setStep(i)}
-              className={cn(
-                "flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-xs font-medium transition-colors",
-                i < step && "bg-emerald-500/20 text-success",
-                i === step && "bg-foreground text-background",
-                i > step && "border border-hairline text-slate",
+      <div className="mt-6 flex min-w-0 items-center gap-1 sm:gap-2">
+        <button
+          onClick={() => setStep((s) => Math.max(0, s - 1))}
+          disabled={step === 0}
+          className="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md border border-hairline px-2 py-2 text-sm transition-colors hover:bg-secondary disabled:pointer-events-none disabled:opacity-40 sm:px-4"
+        >
+          <ChevronLeft className="h-4 w-4" />
+          Назад
+        </button>
+
+        <ol className="flex min-w-0 flex-1 items-center gap-1 sm:gap-2">
+          {STEPS.map((s, i) => (
+            <li key={s} className="flex min-w-0 flex-1 items-center gap-1 sm:gap-2">
+              <button
+                onClick={() => setStep(i)}
+                className={cn(
+                  "flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-xs font-medium transition-colors",
+                  i < step && "bg-emerald-500/20 text-success",
+                  i === step && "bg-foreground text-background",
+                  i > step && "border border-hairline text-slate",
+                )}
+              >
+                {i < step ? <Check className="h-3.5 w-3.5" /> : i + 1}
+              </button>
+              <span
+                className={cn(
+                  "hidden text-sm sm:block",
+                  i === step ? "text-foreground" : "text-slate",
+                )}
+              >
+                {s}
+              </span>
+              {i < STEPS.length - 1 && (
+                <span className="h-px min-w-0 flex-1 bg-border" />
               )}
-            >
-              {i < step ? <Check className="h-3.5 w-3.5" /> : i + 1}
-            </button>
-            <span
-              className={cn(
-                "hidden text-sm sm:block",
-                i === step ? "text-foreground" : "text-slate",
-              )}
-            >
-              {s}
-            </span>
-            {i < STEPS.length - 1 && <span className="h-px flex-1 bg-border" />}
-          </li>
-        ))}
-      </ol>
+            </li>
+          ))}
+        </ol>
+
+        <button
+          onClick={() => setStep((s) => Math.min(STEPS.length - 1, s + 1))}
+          disabled={step === STEPS.length - 1}
+          className="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md border border-hairline px-2 py-2 text-sm transition-colors hover:bg-secondary disabled:pointer-events-none disabled:opacity-40 sm:px-4"
+        >
+          Далее
+          <ChevronRight className="h-4 w-4" />
+        </button>
+      </div>
 
       <div className="mt-8 rounded-lg border border-hairline bg-card p-6">
         {/* Шаг 1 — контент */}
@@ -733,26 +755,6 @@ export default function NewStudyPage() {
             </button>
           </div>
         )}
-      </div>
-
-      {/* Навигация */}
-      <div className="mt-5 flex justify-between">
-        <button
-          onClick={() => setStep((s) => Math.max(0, s - 1))}
-          disabled={step === 0}
-          className="inline-flex items-center gap-1.5 rounded-md border border-hairline px-4 py-2 text-sm transition-colors hover:bg-secondary disabled:pointer-events-none disabled:opacity-40"
-        >
-          <ChevronLeft className="h-4 w-4" />
-          Назад
-        </button>
-        <button
-          onClick={() => setStep((s) => Math.min(STEPS.length - 1, s + 1))}
-          disabled={step === STEPS.length - 1}
-          className="inline-flex items-center gap-1.5 rounded-md border border-hairline px-4 py-2 text-sm transition-colors hover:bg-secondary disabled:pointer-events-none disabled:opacity-40"
-        >
-          Далее
-          <ChevronRight className="h-4 w-4" />
-        </button>
       </div>
     </div>
   );
