@@ -88,27 +88,14 @@ def test_unknown_retention_is_excluded_from_denominator():
 # ─── Эмоции ──────────────────────────────────────────────────────────────────
 
 
-def test_emotional_index_from_share_when_emotions_are_words():
+def test_агрегат_не_содержит_эмоциональный_индекс():
     answers = [answer("p0", emotions=["интерес"]), answer("p1", emotions=[])]
-    assert aggregate(answers)["emotional_index"] == 5.0
+    assert "emotional_index" not in aggregate(answers)
 
 
-def test_emotional_index_uses_numbers_when_corpus_put_them_there():
-    """В корпусе в emotions_evoked затесались подписи шкалы — известный дефект данных."""
-    answers = [answer("p0", emotions=[8]), answer("p1", emotions=[6])]
-    assert aggregate(answers)["emotional_index"] == 7.0
-
-
-def test_numbers_do_not_become_emotions_in_top():
-    answers = [answer("p0", emotions=[10]), answer("p1", emotions=["интерес"])]
-    names = [e["name"] for e in aggregate(answers)["top_emotions"]]
-    assert names == ["интерес"]
-
-
-def test_emotion_repeated_within_one_answer_counts_once():
-    answers = [answer("p0", emotions=["интерес", "Интерес", "интерес"])]
-    top = aggregate(answers)["top_emotions"]
-    assert top[0]["count"] == 1
+def test_агрегат_не_содержит_топ_эмоций():
+    answers = [answer("p0", emotions=[8]), answer("p1", emotions=["интерес"])]
+    assert "top_emotions" not in aggregate(answers)
 
 
 # ─── QA-флаги ────────────────────────────────────────────────────────────────
@@ -450,7 +437,7 @@ def test_no_personas_and_no_segment_still_gives_none():
 
 def test_numbers_carry_a_rationale_from_verbatims():
     """
-    Под NPS, долей досмотра и эмоциональным индексом стоит объяснение.
+    Под NPS и долей досмотра стоит объяснение.
 
     ─── Зачем ────────────────────────────────────────────────────────────────
     «NPS −33» — это результат, а не вывод. Решение по нему принимают, догадываясь
@@ -473,7 +460,6 @@ def test_numbers_carry_a_rationale_from_verbatims():
                 "rationales": {
                     "nps": "Рекомендовать мешает финальный призыв (2:12–2:17).",
                     "watched_share": "Внимание рассеивается к середине.",
-                    "emotional_index": "Преобладают интерес и скепсис.",
                 },
             }, ensure_ascii=False)
 
@@ -488,7 +474,6 @@ def test_numbers_carry_a_rationale_from_verbatims():
     assert isinstance(rationales, dict), "поле rationales обязано быть в отчёте"
     assert rationales.get("nps"), "у NPS нет обоснования"
     assert rationales.get("watched_share")
-    assert rationales.get("emotional_index")
 
 
 def test_rationales_are_present_even_without_a_model():

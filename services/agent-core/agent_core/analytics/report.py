@@ -239,7 +239,7 @@ def build_report(
     if isinstance(rationales, dict):
         report["rationales"] = {
             key: str(rationales[key]).strip()
-            for key in ("nps", "watched_share", "emotional_index")
+            for key in ("nps", "watched_share")
             if str(rationales.get(key) or "").strip()
         }
 
