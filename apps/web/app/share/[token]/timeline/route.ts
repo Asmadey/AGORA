@@ -1,6 +1,7 @@
 import { loadTimeline } from "@/lib/server/content-pack";
 import { createPresignedGetUrl } from "@/lib/server/s3";
 import { withShareToken } from "@/lib/server/db";
+import { classifyShareState } from "@/lib/share";
 import { parseScope } from "@/lib/share-scope";
 
 /**
@@ -41,15 +42,21 @@ export async function GET(
       task_id: string | null;
       tenant_id: string;
       scope: string;
+      revoked_at: Date | null;
+      expires_at: Date | null;
     }>(
-      `SELECT task_id, tenant_id, scope
+      `SELECT task_id, tenant_id, scope, revoked_at, expires_at
          FROM report_shares
-        WHERE token_hash = app.current_share_token_hash()
-          AND revoked_at IS NULL
-          AND (expires_at IS NULL OR expires_at > now())`,
+        WHERE token_hash = app.current_share_token_hash()`,
     );
     const row = rows[0];
-    if (!row?.task_id) return null;
+    if (!row) return { state: "missing" as const };
+
+    const state = classifyShareState(
+      { revokedAt: row.revoked_at, expiresAt: row.expires_at },
+    );
+    if (state === "expired" || state === "revoked") return { state };
+    if (!row.task_id) return { state: "missing" as const };
 
     // Область проверяется ЗДЕСЬ, а не политикой. Политика отвечает на вопрос
     // «какой прогон открывает этот токен»; «что из него показывать» — решение
@@ -65,17 +72,29 @@ export async function GET(
     return {
       taskId: row.task_id,
       tenantId: row.tenant_id,
+      state,
       // Копия для просмотра главнее исходника — та же причина, что во
       // внутреннем маршруте: она H.264 720p с индексом в начале файла.
       videoRef: taskRows[0]?.playback_ref ?? taskRows[0]?.video_ref ?? null,
     };
   }).catch(() => null);
 
-  // Один ответ на «ссылки нет», «ссылка отозвана», «область — только сводка» и
-  // «прогона не существует». Разные коды рассказали бы держателю ссылки, что
-  // именно не так, — то есть подтвердили бы существование того, чего он не
-  // должен видеть.
-  if (!grant) return Response.json({ error: "недоступно" }, { status: 404 });
+  // Неизвестный токен не подтверждаем. Настоящий, но закрытый адрес уже известен
+  // держателю, поэтому честно сообщаем, что ссылка больше не действует.
+  if (!grant || grant.state === "missing") {
+    return Response.json({ error: "ссылка не найдена" }, { status: 404 });
+  }
+  if (grant.state === "expired" || grant.state === "revoked") {
+    return Response.json(
+      {
+        error: grant.state === "expired" ? "срок ссылки истёк" : "ссылка отозвана",
+      },
+      { status: 410 },
+    );
+  }
+  if (!grant.taskId) {
+    return Response.json({ error: "ссылка не найдена" }, { status: 404 });
+  }
 
   // Отчёт и пакет материала лежат в MongoDB, куда RLS не достаёт. Фильтр по
   // арендатору берётся из строки ссылки, а не из адреса.

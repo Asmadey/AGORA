@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useCallback, useEffect } from "react";
 import { Share2, Copy, Check, ShieldAlert } from "lucide-react";
 
 /**
@@ -12,16 +13,61 @@ import { Share2, Copy, Check, ShieldAlert } from "lucide-react";
  * выбирается явно, а не прячется в умолчаниях.
  */
 
-import { TTL_OPTIONS, type Ttl } from "@/lib/share";
+import { TTL_OPTIONS, type ActiveShare, type Ttl } from "@/lib/share";
+
+const scopeLabels = {
+  full: "Весь отчёт",
+  aggregate: "Только сводка",
+} as const;
+
+function dateLabel(value: string | null): string {
+  if (!value) return "бессрочно";
+  return new Intl.DateTimeFormat("ru-RU", {
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(new Date(value));
+}
 
 export function ShareDialog({ runId }: { runId: string }) {
   const [open, setOpen] = useState(false);
   const [ttl, setTtl] = useState<Ttl>("7d");
   const [scope, setScope] = useState<"full" | "aggregate">("full");
   const [link, setLink] = useState<string | null>(null);
+  const [activeLinks, setActiveLinks] = useState<ActiveShare[]>([]);
+  const [loadingLinks, setLoadingLinks] = useState(false);
   const [copied, setCopied] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const loadLinks = useCallback(async () => {
+    setLoadingLinks(true);
+    try {
+      const res = await fetch(`/api/tasks/${runId}/share`);
+      const data = (await res.json()) as { active?: ActiveShare[]; error?: string };
+      if (!res.ok) {
+        setError(data.error ?? "не удалось загрузить список ссылок");
+        return;
+      }
+      setActiveLinks(data.active ?? []);
+    } catch {
+      setError("не удалось загрузить список ссылок");
+    } finally {
+      setLoadingLinks(false);
+    }
+  }, [runId]);
+
+  useEffect(() => {
+    if (open) void loadLinks();
+  }, [loadLinks, open]);
+
+  const close = () => {
+    // Адрес существует только в памяти после выпуска. После закрытия его
+    // намеренно нельзя снова получить из списка: потерянную ссылку выпускают заново.
+    setOpen(false);
+    setLink(null);
+    setCopied(false);
+    setError(null);
+  };
 
   /**
    * Ссылку выпускает СЕРВЕР.
@@ -47,6 +93,7 @@ export function ShareDialog({ runId }: { runId: string }) {
       }
       setLink(data.url);
       setCopied(false);
+      await loadLinks();
     } catch {
       setError("сервер не ответил");
     } finally {
@@ -55,11 +102,42 @@ export function ShareDialog({ runId }: { runId: string }) {
   };
 
   /** Отзыв: адрес перестаёт открываться сразу, проверку делает политика в базе. */
-  const revoke = async () => {
+  const revokeOne = async (shareId: string) => {
     setBusy(true);
+    setError(null);
     try {
-      await fetch(`/api/tasks/${runId}/share`, { method: "DELETE" });
+      const res = await fetch(
+        `/api/tasks/${runId}/share?shareId=${encodeURIComponent(shareId)}`,
+        { method: "DELETE" },
+      );
+      if (!res.ok) {
+        const data = (await res.json().catch(() => ({}))) as { error?: string };
+        setError(data.error ?? "не удалось отозвать ссылку");
+        return;
+      }
       setLink(null);
+      await loadLinks();
+    } catch {
+      setError("сервер не ответил");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const revokeAll = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/tasks/${runId}/share`, { method: "DELETE" });
+      if (!res.ok) {
+        const data = (await res.json().catch(() => ({}))) as { error?: string };
+        setError(data.error ?? "не удалось отозвать ссылки");
+        return;
+      }
+      setLink(null);
+      await loadLinks();
+    } catch {
+      setError("сервер не ответил");
     } finally {
       setBusy(false);
     }
@@ -84,7 +162,7 @@ export function ShareDialog({ runId }: { runId: string }) {
       {open && (
         <div
           className="fixed inset-0 z-50 grid place-items-center bg-black/60 p-4"
-          onClick={() => setOpen(false)}
+          onClick={close}
         >
           <div
             className="w-full max-w-md rounded-lg border border-hairline bg-card p-6"
@@ -146,7 +224,7 @@ export function ShareDialog({ runId }: { runId: string }) {
               </div>
             </div>
 
-            {link ? (
+            {link && (
               <div className="mt-5">
                 <div className="flex items-center gap-2 rounded-md border border-hairline bg-background px-3 py-2">
                   <span className="min-w-0 flex-1 truncate font-mono text-xs">{link}</span>
@@ -168,23 +246,67 @@ export function ShareDialog({ runId }: { runId: string }) {
                   хранится только её отпечаток, и восстановить адрес нельзя — потерянную
                   выпускают заново.
                 </p>
+              </div>
+            )}
+
+            <button
+              onClick={create}
+              disabled={busy}
+              className="mt-6 w-full rounded-md bg-foreground py-2.5 text-sm font-medium text-background transition-opacity hover:opacity-90 disabled:opacity-50"
+            >
+              {busy ? "Выпускаю…" : link ? "Создать ещё ссылку" : "Создать ссылку"}
+            </button>
+
+            <section className="mt-6" aria-label="active-share-list">
+              <div className="flex items-baseline justify-between gap-3">
+                <h3 className="text-sm font-medium">Действующие ссылки</h3>
+                <span className="text-xs text-slate">{activeLinks.length}</span>
+              </div>
+
+              {loadingLinks ? (
+                <p className="mt-3 text-xs text-slate">Загружаю список…</p>
+              ) : activeLinks.length === 0 ? (
+                <p className="mt-3 text-xs text-slate">Действующих ссылок пока нет.</p>
+              ) : (
+                <ul className="mt-3 space-y-2">
+                  {activeLinks.map((share) => (
+                    <li
+                      key={share.id}
+                      className="rounded-md border border-hairline bg-background p-3"
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0 text-xs">
+                          <p className="font-medium">{scopeLabels[share.scope]}</p>
+                          <p className="mt-1 text-slate">
+                            Выпущена {dateLabel(share.createdAt)}
+                          </p>
+                          <p className="mt-0.5 text-slate">
+                            До {dateLabel(share.expiresAt)} · Просмотров: {share.viewCount}
+                          </p>
+                        </div>
+                        <button
+                          onClick={() => void revokeOne(share.id)}
+                          disabled={busy}
+                          className="shrink-0 text-xs text-danger transition-colors hover:underline disabled:opacity-50"
+                        >
+                          Отозвать
+                        </button>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              )}
+
+              {activeLinks.length > 0 && (
                 <button
-                  onClick={revoke}
+                  onClick={() => void revokeAll()}
                   disabled={busy}
                   className="mt-3 w-full rounded-md border border-danger/40 py-2 text-sm text-danger transition-colors hover:bg-danger/5 disabled:opacity-50"
                 >
-                  Отозвать все ссылки на этот отчёт
+                  Отозвать все ссылки
                 </button>
-              </div>
-            ) : (
-              <button
-                onClick={create}
-                disabled={busy}
-                className="mt-6 w-full rounded-md bg-foreground py-2.5 text-sm font-medium text-background transition-opacity hover:opacity-90 disabled:opacity-50"
-              >
-                {busy ? "Выпускаю…" : "Создать ссылку"}
-              </button>
-            )}
+              )}
+            </section>
 
             {error && (
               <p className="mt-3 rounded-md border border-danger/40 bg-danger/5 p-2.5 text-xs text-danger">
@@ -193,7 +315,7 @@ export function ShareDialog({ runId }: { runId: string }) {
             )}
 
             <button
-              onClick={() => setOpen(false)}
+              onClick={close}
               className="mt-3 w-full rounded-md border border-hairline py-2 text-sm transition-colors hover:bg-secondary"
             >
               Закрыть
