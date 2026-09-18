@@ -41,6 +41,7 @@ const GEOS = ["столицы", "центры субъектов", "иные Н�
 export default function NewStudyPage() {
   const [step, setStep] = useState(0);
   const [mode, setMode] = useState<"short" | "long">("short");
+  const [memoryMode, setMemoryMode] = useState<"interrogation" | "clean">("clean");
   const [criteria, setCriteria] = useState<AudienceCriteria>(DEFAULT_CRITERIA);
   const [replication, setReplication] = useState(1);
   /**
@@ -157,6 +158,10 @@ export default function NewStudyPage() {
           // NULL, и переиспользование разбора видео родителя (#30) не
           // включается ни разу: оно ищет родителя, которого не записали.
           parentTaskId: parentTaskId ?? undefined,
+          memoryMode: parentTaskId ? memoryMode : "clean",
+          carryOverMemory: parentTaskId ? memoryMode === "interrogation" : false,
+          // Прежние ответы (`my_previous_answers`) не принимаются от браузера:
+          // их загружает воркер из родительского отчёта после проверки tenant_id.
           seed,
         }),
       });
@@ -360,6 +365,7 @@ export default function NewStudyPage() {
         setReplication(p.replicationCount);
         setTitle(p.title);
         setParentTaskId(rerunOf);
+        setMemoryMode(p.memoryMode);
         setRerunNote(p.warning);
       } catch {
         if (!cancelled) setRerunNote("не удалось прочитать исходный прогон");
@@ -636,6 +642,51 @@ export default function NewStudyPage() {
               </div>
             </div>
 
+            {parentTaskId && (
+              <div className="rounded-lg border border-hairline bg-surface p-4">
+                <h2 className="text-sm font-semibold">Память персон</h2>
+                <p className="mt-1 text-xs leading-relaxed text-slate">
+                  Это решение влияет на сопоставимость и стоимость повтора. Выберите режим до запуска.
+                </p>
+                <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                  <button
+                    type="button"
+                    aria-pressed={memoryMode === "interrogation"}
+                    onClick={() => setMemoryMode("interrogation")}
+                    className={cn(
+                      "rounded-md border p-4 text-left transition-colors",
+                      memoryMode === "interrogation"
+                        ? "border-ink bg-secondary"
+                        : "border-hairline hover:bg-secondary",
+                    )}
+                  >
+                    <span className="block text-sm font-medium">Допрос</span>
+                    <span className="mt-1 block text-xs leading-relaxed text-slate">
+                      Персона помнит, что отвечала раньше, и получает только новые вопросы.
+                      Старые баллы гарантированно те же, но ответы нельзя считать независимыми от первого прогона.
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    aria-pressed={memoryMode === "clean"}
+                    onClick={() => setMemoryMode("clean")}
+                    className={cn(
+                      "rounded-md border p-4 text-left transition-colors",
+                      memoryMode === "clean"
+                        ? "border-ink bg-secondary"
+                        : "border-hairline hover:bg-secondary",
+                    )}
+                  >
+                    <span className="block text-sm font-medium">Чистый прогон</span>
+                    <span className="mt-1 block text-xs leading-relaxed text-slate">
+                      Прежние ответы не попадают в контекст, вся анкета задаётся заново.
+                      Прежние баллы могут поехать, и разница между прогонами перестанет объясняться одними вопросами.
+                    </span>
+                  </button>
+                </div>
+              </div>
+            )}
+
             <dl className="space-y-2 rounded-md border border-hairline p-4 text-sm">
               {[
                 ["Проект", project?.name ?? "без проекта"],
@@ -680,6 +731,9 @@ export default function NewStudyPage() {
                 ],
                 ["Название", title.trim() || videoName || "по имени файла"],
                 ["Перекрытие", `×${replication}`],
+                ...(parentTaskId
+                  ? [["Память персон", memoryMode === "interrogation" ? "Допрос" : "Чистый прогон"]]
+                  : []),
                 [
                   "Вызовов модели",
                   // Прочерк, а не оценка по чужому числу: раньше здесь стояла

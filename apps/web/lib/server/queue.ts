@@ -40,6 +40,10 @@ export interface PipelinePayload {
   /** Настройки команды на момент запуска: кап вызовов VLM, модель Whisper. */
   settings_snapshot: Record<string, unknown>;
   parent_task_id?: string | null;
+  /** Режим памяти хранится в tasks и дублируется в сообщении для аудита очереди. */
+  carry_over_memory: boolean;
+  /** Заполняется воркером из родительского отчёта, а не вебом. */
+  my_previous_answers?: Record<string, Record<string, unknown>> | null;
 }
 
 /**

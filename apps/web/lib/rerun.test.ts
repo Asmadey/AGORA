@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { rerunPrefill, type SourceRun } from "./rerun.ts";
+import { compareScoreMaps, rerunPrefill, type SourceRun } from "./rerun.ts";
 
 /**
  * Перезапуск исследования с теми же персонами (#30).
@@ -78,4 +78,23 @@ test("исправный прогон предупреждений не поро
 test("пустое название исходника не даёт названия из одного слова «повтор»", () => {
   const p = rerunPrefill({ ...SOURCE, title: null, sourceName: "ролик.mp4" });
   assert.match(p.title, /ролик\.mp4/);
+});
+
+test("режим памяти по умолчанию чистый и не отправляет ответы родителя", () => {
+  const p = rerunPrefill(SOURCE);
+  assert.equal(p.memoryMode, "clean");
+  assert.equal(p.carryOverMemory, false);
+});
+
+test("сравнение отчётов различает null и ноль и считает дельту", () => {
+  assert.deepEqual(
+    compareScoreMaps(
+      { overall_impression: 8, plot: null },
+      { overall_impression: 6, plot: 0 },
+    ),
+    [
+      { key: "overall_impression", parent: 6, current: 8, delta: 2 },
+      { key: "plot", parent: 0, current: null, delta: null },
+    ],
+  );
 });
