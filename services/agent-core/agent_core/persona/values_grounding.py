@@ -129,6 +129,8 @@ def values_grounding(*, size: int, seed: int) -> dict[str, Any]:
             if v in counts:
                 counts[v] += 1
 
+    # value_counts уже собран только из личного вопроса корпуса. Не сверяемся
+    # напрямую с psychographics_and_values: это поле смешивает два вопроса.
     corpus = gen.dist.value_counts
     order = list(TRADITIONAL_VALUES)
     got = [counts[v] for v in order]

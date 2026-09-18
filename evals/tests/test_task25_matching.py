@@ -132,6 +132,11 @@ if corpus_ok and agent_core_ok:
         from agent_core.matching.finder import _proxy_big_five  # type: ignore
 
         records = json.loads(CORPUS_PATH.read_text("utf-8"))
+        from agent_core.persona.generator import TRADITIONAL_VALUES  # type: ignore
+        from agent_core.persona.value_source import (  # type: ignore
+            canonical_personal_values,
+        )
+
         check("корпус загружен", len(records) > 0, f"{len(records)} записей")
 
         # Тест 1: held-out — строим persona из реального респондента,
@@ -139,9 +144,15 @@ if corpus_ok and agent_core_ok:
         finder = RespondentFinder(records)
 
         # Берём первого респондента, делаем из него persona DNA
-        ref = records[0]
+        ref = next(
+            record
+            for record in records
+            if canonical_personal_values(record, TRADITIONAL_VALUES)
+        )
         ref_demo = ref.get("socio_demographics", {})
-        ref_vals = ref.get("psychographics_and_values", {})
+        ref_vals = {
+            "important_values": canonical_personal_values(ref, TRADITIONAL_VALUES),
+        }
         proxy_b5 = _proxy_big_five(ref)
 
         persona_dna = {

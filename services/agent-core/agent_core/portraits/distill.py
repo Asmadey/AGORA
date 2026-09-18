@@ -23,6 +23,8 @@ from pathlib import Path
 from typing import Any
 
 from ..paths import find_data_file, find_repo_file
+from ..persona import value_source
+from ..persona.generator import TRADITIONAL_VALUES
 
 #: Корпус и промпт ищутся через `agent_core.paths`, а не арифметикой по
 #: `parents[N]`.
@@ -184,11 +186,10 @@ def _collect_scores(records: list[dict[str, Any]]) -> dict[str, dict[str, float]
 
 
 def _collect_values(records: list[dict[str, Any]]) -> Counter:
-    """Aggregate psychographics values."""
+    """Aggregate canonical values from respondents' personal answers."""
     values = Counter()
     for r in records:
-        pv = r.get("psychographics_and_values", {})
-        for v in pv.get("important_values", []):
+        for v in value_source.canonical_personal_values(r, TRADITIONAL_VALUES):
             if isinstance(v, str):
                 values[v.strip()] += 1
     return values

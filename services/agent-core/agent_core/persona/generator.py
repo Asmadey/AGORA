@@ -44,6 +44,11 @@ from typing import Any
 
 # --- пути к репозиторию (относительно этого файла) ---
 from ..paths import find_data_file
+from . import value_source
+
+PERSONAL_VALUES_QUESTION = value_source.PERSONAL_VALUES_QUESTION
+canonical_personal_values = value_source.canonical_personal_values
+personal_value_answer = value_source.personal_value_answer
 
 _AGENT_CORE = Path(__file__).resolve().parent.parent.parent  # services/agent-core
 _REPO_ROOT = _AGENT_CORE.parent.parent  # AGORA/
@@ -95,8 +100,10 @@ VALUES_PER_PERSONA = 5
 #: Без неё «Созидательный труд» недостижим: его не выбрал ни один из 165
 #: респондентов, вес нулевой, и список из семнадцати был бы неполон на практике
 #: — молча. Единица читается как «будто одному человеку это было важно»: она
-#: даёт редким значениям право появиться, не переворачивая распределение
-#: («Крепкая семья» остаётся 28 % против 0.44 % у «Созидательного труда»).
+#: даёт редким значениям право появиться. После перехода на 28 личных ответов
+#: вес «Крепкой семьи» равен 6/38 = 15.79 % против прежних 65/231 = 28.14 %.
+#: Распределение стало почти равномерным, потому что личные ценности в корпусе
+#: почти не измерялись; это следствие решения, а не повод тайно менять сглаживание.
 VALUES_SMOOTHING = 1
 
 #: Путь к каноническому перечню. Данные, а не константа программы: у списка
@@ -252,13 +259,25 @@ class CorpusDistribution:
             sc_counter[(r["content_under_test"]["title"], r["socio_demographics"]["city"])] += 1
         serial_x_city = {k: v / total for k, v in sc_counter.items()}
 
-        # Ценности — топ-значения
+        # Ценности — только ответы на личный вопрос. Ответ остаётся одной
+        # опцией, даже когда внутри него есть запятые; считаются только
+        # канонические значения из Указа 809.
         vals_counter: Counter[str] = Counter()
+        personal_answer_records = 0
         for r in records:
-            for v in r.get("psychographics_and_values", {}).get("important_values", []):
+            if personal_value_answer(r):
+                personal_answer_records += 1
+            personal_values = canonical_personal_values(r, TRADITIONAL_VALUES)
+            for v in personal_values:
                 vals_counter[v] += 1
-        values = {k: v / total for k, v in vals_counter.most_common(15)}
-        value_counts = dict(vals_counter)
+        value_counts = {value: vals_counter.get(value, 0) for value in TRADITIONAL_VALUES}
+        value_order = {value: i for i, value in enumerate(TRADITIONAL_VALUES)}
+        ranked_values = sorted(
+            ((value, count) for value, count in value_counts.items() if count),
+            key=lambda item: (-item[1], value_order[item[0]]),
+        )
+        value_denominator = personal_answer_records or 1
+        values = {k: v / value_denominator for k, v in ranked_values[:15]}
 
         # Баллы
         score_fields = list(CORPUS_SCORE_MEANS.keys())

@@ -27,6 +27,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from ..persona import value_source
+from ..persona.generator import TRADITIONAL_VALUES
+
 # --- пути ---
 
 _AGENT_CORE = Path(__file__).resolve().parent.parent.parent  # services/agent-core
@@ -280,7 +283,7 @@ def _values_overlap(dna: dict[str, Any], respondent: dict[str, Any]) -> float:
 
     Args:
         dna: Persona DNA с values_and_beliefs.important_values.
-        respondent: запись корпуса с psychographics_and_values.important_values.
+        respondent: запись корпуса с ответом на личный вопрос о ценностях.
     """
     dna_vals: set[str] = set()
     try:
@@ -293,9 +296,7 @@ def _values_overlap(dna: dict[str, Any], respondent: dict[str, Any]) -> float:
     r_vals: set[str] = set()
     try:
         r_vals = set(
-            respondent.get("psychographics_and_values", {}).get(
-                "important_values", []
-            )
+            value_source.canonical_personal_values(respondent, TRADITIONAL_VALUES)
         )
     except (TypeError, AttributeError):
         pass
