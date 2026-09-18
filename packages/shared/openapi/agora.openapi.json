@@ -2328,6 +2328,73 @@
         }
       }
     },
+    "/api/audience-context": {
+      "post": {
+        "summary": "Подготовить загрузку контекста аудитории",
+        "description": "Резервирует tenant-scoped строку и возвращает presigned PUT для PDF/XLS/XLSX. Сам разбор выполняется в воркере.",
+        "tags": [
+          "Загрузка"
+        ],
+        "operationId": "presignAudienceContext",
+        "responses": {
+          "200": {
+            "description": "Ссылка, ключ и идентификатор файла"
+          },
+          "400": {
+            "description": "Некорректные параметры",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Нет действующей сессии"
+          }
+        }
+      },
+      "delete": {
+        "summary": "Отметить незавершённую загрузку контекста",
+        "tags": [
+          "Загрузка"
+        ],
+        "operationId": "discardAudienceContext",
+        "responses": {
+          "200": {
+            "description": "Резервация отмечена как неуспешная"
+          },
+          "401": {
+            "description": "Нет действующей сессии"
+          }
+        }
+      }
+    },
+    "/api/audience-context/complete": {
+      "post": {
+        "summary": "Подтвердить загрузку контекста аудитории",
+        "description": "Проверяет наличие S3-объекта и его размер; PDF/XLS разбирается позже в воркере.",
+        "tags": [
+          "Загрузка"
+        ],
+        "operationId": "completeAudienceContext",
+        "responses": {
+          "200": {
+            "description": "Загрузка принята"
+          },
+          "400": {
+            "description": "Объект отсутствует, пуст или имеет другой размер"
+          },
+          "401": {
+            "description": "Нет действующей сессии"
+          },
+          "404": {
+            "description": "Файл не найден у текущей команды"
+          }
+        }
+      }
+    },
     "/api/upload/complete": {
       "post": {
         "summary": "Подтвердить загрузку",

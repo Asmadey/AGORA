@@ -389,6 +389,9 @@ class GenerationConfig:
     #: на текст персоны, но не на её соцдем. Хранится здесь, а не отбрасывается,
     #: чтобы снимок конфигурации набора отражал то, что выбрал пользователь.
     education: list[str] = field(default_factory=list)
+    #: Дистиллированный audienceContext из приложенного файла. Он влияет только
+    #: на текстовый контекст persona.generate, а не на поля grounding.
+    audience_context: str | None = None
 
     def validate(self) -> None:
         if not (1 <= self.size <= 500):
@@ -884,7 +887,8 @@ class PersonaGenerator:
 
         Возвращает dict с ключами-переменными промпта:
         ``criteria``, ``portrait_md``, ``size``, ``seed``,
-        ``segment_distributions``, ``verbatim_pool``.
+        ``segment_distributions``, ``score_means``, ``verbatim_pool`` и
+        отдельный ``audience_context``.
         """
         recs = self._filter_records(config)
 
@@ -918,6 +922,7 @@ class PersonaGenerator:
             ensure_ascii=False,
             indent=2,
         )
+        score_means = json.dumps(self.dist.score_means, ensure_ascii=False, indent=2)
 
         # verbatim_pool
         verbatims = self._sample_verbatims(random.Random(config.seed), n=10)
@@ -933,13 +938,22 @@ class PersonaGenerator:
             criteria_parts.append(f"сегмент: {config.segment}")
         criteria = ", ".join(criteria_parts) if criteria_parts else "весь корпус"
 
+        # audienceContext приходит из файла и уже прошёл portrait.distill.
+        # Отдельный ключ не даёт смешать уточнение заказчика с корпусным
+        # портретом, распределениями и калибровкой score_means.
+        audience_context = (config.audience_context or "").strip()
+        if not audience_context:
+            audience_context = "Дополнительный контекст не приложен."
+
         return {
             "criteria": criteria,
             "portrait_md": portrait_md,
             "size": str(config.size),
             "seed": str(config.seed),
             "segment_distributions": seg_dist,
+            "score_means": score_means,
             "verbatim_pool": verbatim_pool,
+            "audience_context": audience_context,
         }
 
     def render_prompt(self, config: GenerationConfig) -> str:

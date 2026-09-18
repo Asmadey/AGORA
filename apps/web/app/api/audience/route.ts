@@ -96,6 +96,25 @@ export async function POST(request: Request) {
     // ── Генерация по критериям ─────────────────────────────────────────────
     const { criteria } = parsed.value;
 
+    // Бинарный файл уже загружен в S3, но одного UUID от браузера недостаточно:
+    // строка обязана быть видна в tenant-scoped транзакции, иначе чужой id мог
+    // попасть в очередь и превратиться в попытку чтения чужого ключа.
+    if (criteria.audienceContextFileId) {
+      const contextFile = await withTenant(tenantId, async (client) => {
+        const { rows } = await client.query<{ status: string }>(
+          "SELECT status FROM audience_context_files WHERE id = $1::uuid",
+          [criteria.audienceContextFileId],
+        );
+        return rows[0] ?? null;
+      });
+      if (!contextFile || !["uploaded", "distilled"].includes(contextFile.status)) {
+        return Response.json(
+          { error: "файл контекста не найден, не загружен или уже отклонён" },
+          { status: 400 },
+        );
+      }
+    }
+
     // Предупреждения считаются ДО генерации и отдаются вместе с результатом:
     // сообщать, что сегмент не заземлён, после запуска — поздно.
     const warnings = warningsFor({

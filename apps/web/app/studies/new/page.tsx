@@ -15,6 +15,7 @@ import { DRAFT_SURVEY_ID, draftSurveyName } from "@/lib/survey-sync";
 import { AudienceStep } from "@/components/agora/AudienceStep";
 import { ProjectPicker, type ProjectOption } from "@/components/agora/ProjectPicker";
 import { DEFAULT_CRITERIA, type AudienceCriteria } from "@/lib/audience";
+import type { ContextFileSelection } from "@/lib/context-file";
 import type { SurveyQuestion } from "@/lib/agora-types";
 import type { RerunPrefill } from "@/lib/rerun";
 
@@ -207,7 +208,7 @@ export default function NewStudyPage() {
    * `persona_sets.generation_config`.
    */
   const [personaSetConfig, setPersonaSetConfig] = useState<Record<string, unknown> | null>(null);
-  const [contextFile, setContextFile] = useState<{ name: string; size: number; text: string } | null>(null);
+  const [contextFile, setContextFile] = useState<ContextFileSelection | null>(null);
   const [videoRef, setVideoRef] = useState<string | null>(null);
   const [videoName, setVideoName] = useState<string | null>(null);
   // Размер держим отдельно от File: сам объект File живёт только до
