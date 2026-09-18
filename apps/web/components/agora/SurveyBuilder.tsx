@@ -478,7 +478,7 @@ export function SurveyBuilder({
         <div className="mt-3 space-y-2">
           {custom.length === 0 && !addingNew && (
             <p className="rounded-md border border-dashed border-hairline px-4 py-3 text-xs text-slate">
-              Пока ни одного. Анкета из пяти базовых критериев полностью рабочая.
+              Пока ни одного. Обязательных вопросов заказчика достаточно для полного отчёта.
             </p>
           )}
           {renderList(custom)}
