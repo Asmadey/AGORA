@@ -194,7 +194,17 @@ def aggregate(
         "replication_stability": None,
         "segment_breakdown": _segment_breakdown(kept, personas),
     }
-    _ = survey  # разбор ответов анкеты — задача отчёта (#21), не агрегата
+    # Импорт внутри функции, а не наверху файла: `survey_stats` сам тянет отсюда
+    # `surviving` (survey_stats.py:42), и модульный импорт замкнул бы цикл. Это не
+    # стилистическая небрежность, а единственный работающий порядок — переносить
+    # наверх нельзя, пока `surviving` живёт здесь.
+    from .survey_stats import survey_tally
+
+    # Считается по `kept`, а не по `answers`: в агрегат идут только ответы,
+    # пережившие правила QA. Иначе отбракованный ответ попал бы в доли анкеты,
+    # не попав в средние по критериям, и два числа в одном отчёте считались бы
+    # по разным выборкам.
+    result["survey"] = survey_tally(survey, kept, personas or []) if survey else None
 
     if replication_count > 1:
         result["per_persona"] = _per_persona_bounds(kept)
