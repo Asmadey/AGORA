@@ -278,18 +278,31 @@ check(
     "withTenant" in api_text,
 )
 
-# 15. SurveyBuilder component exists with BASE_QUESTIONS
+# 15. Состав анкеты объявлен и доезжает до конструктора
+#
+# BASE_QUESTIONS переехали из компонента в lib/survey-composition.ts: веб-тесты
+# собирают только `lib/**`, и логика, оставленная в .tsx, не покрыта ничем по
+# построению. Так и разошлась проверка заземления — константы ушли на 0–10,
+# а условие в компоненте осталось на 1–10.
+#
+# Гейт идёт за источником, а не за файлом: он читает то место, где константа
+# объявлена СЕЙЧАС, и отдельно проверяет, что конструктор её импортирует.
+# Иначе проверка молча стала бы проверять пустую строку.
+composition_path = REPO / "apps" / "web" / "lib" / "survey-composition.ts"
+comp_text = composition_path.read_text("utf-8") if composition_path.exists() else ""
 survey_builder_path = REPO / "apps" / "web" / "components" / "agora" / "SurveyBuilder.tsx"
 sb_text = survey_builder_path.read_text("utf-8") if survey_builder_path.exists() else ""
 check(
-    "SurveyBuilder компонент существует с BASE_QUESTIONS",
-    survey_builder_path.exists() and "BASE_QUESTIONS" in sb_text,
+    "BASE_QUESTIONS объявлены и конструктор их импортирует",
+    "BASE_QUESTIONS" in comp_text and "BASE_QUESTIONS" in sb_text,
+    f"объявление={'есть' if 'BASE_QUESTIONS' in comp_text else 'НЕТ'}, "
+    f"импорт={'есть' if 'BASE_QUESTIONS' in sb_text else 'НЕТ'}",
 )
 
 # 16. BASE_QUESTIONS has all 5 criteria with correct keys
-base_keys_in_component = re.findall(r'baseKey:\s*"(\w+)"', sb_text)
+base_keys_in_component = re.findall(r'baseKey:\s*"(\w+)"', comp_text)
 check(
-    "SurveyBuilder BASE_QUESTIONS содержит все 5 ключей",
+    "BASE_QUESTIONS содержат все 5 ключей",
     len(base_keys_in_component) >= 5 and set(base_keys_in_component) >= {
         "overall_impression", "plot", "acting", "music", "cinematography"
     },
