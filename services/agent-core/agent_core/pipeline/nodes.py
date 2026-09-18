@@ -629,7 +629,60 @@ def _vlm_cache(state: PipelineState) -> Any:
         return None
 
 
-def analyze_chunks(state: PipelineState) -> dict[str, Any]:
+def _parent_video_result(
+    state: PipelineState,
+    *,
+    load_pack: Any | None = None,
+) -> tuple[list[dict[str, Any]] | None, str | None]:
+    """Загружает готовый разбор родителя после сверки ссылки на материал.
+
+    Кэш по одному лишь содержимому панели нельзя использовать как доказательство
+    связи: одинаковый кадр мог встретиться в другом ролике. Поэтому перезапуск
+    сначала сверяет `tasks.video_ref`, а причину попадания пишет в деградации,
+    которые попадают в отчёт и журнал прогона.
+    """
+    parent_id = state.get("parent_task_id")
+    video_ref = state.get("video_ref")
+    dsn = os.environ.get("DATABASE_URL")
+    if not parent_id or not video_ref or not dsn:
+        return None, None
+    try:
+        import psycopg
+
+        from ..db import tenant_scope
+
+        with psycopg.connect(dsn) as conn, tenant_scope(conn, state["tenant_id"]) as cur:
+            cur.execute(
+                "SELECT video_ref, status FROM tasks WHERE id = %s::uuid",
+                (str(parent_id),),
+            )
+            row = cur.fetchone()
+        if not row:
+            return None, "разбор видео родителя не найден; материал разобран заново"
+        if row[0] != video_ref:
+            return None, "материал отличается от родительского; кэш разбора не использован"
+        if load_pack is None:
+            from ..mongo import mongo_db
+
+            load_pack = mongo_db().content_packs.find_one
+        document = load_pack({"tenant_id": str(state["tenant_id"]), "task_id": str(parent_id)})
+        pack = document.get("pack") if document else None
+        scenes = pack.get("scenes") if isinstance(pack, dict) else None
+        if not isinstance(scenes, list) or not scenes:
+            return None, "разбор видео родителя не найден; материал разобран заново"
+        return scenes, f"материал совпал с родителем {parent_id}"
+    except Exception as exc:  # noqa: BLE001 — кэш не должен ронять платный прогон
+        return None, (
+            f"кэш родительского разбора недоступен ({type(exc).__name__}); "
+            "материал разобран заново"
+        )
+
+
+def analyze_chunks(
+    state: PipelineState,
+    *,
+    parent_result_loader: Any | None = None,
+) -> dict[str, Any]:
     """MAP по панелям. Результат кладётся на диск: в state ему не место по объёму."""
     from ..frames.analyze import CallBudget, QwenVlmClient, analyze_panels
 
@@ -655,6 +708,17 @@ def analyze_chunks(state: PipelineState) -> dict[str, Any]:
         for i, r in enumerate(refs)
     ]
 
+    parent_scenes, parent_note = _parent_video_result(state, load_pack=parent_result_loader)
+    if parent_scenes is not None:
+        out = workdir(state) / "chunk_analyses.json"
+        out.write_text(json.dumps(parent_scenes, ensure_ascii=False), "utf-8")
+        update: dict[str, Any] = {"chunk_analyses_ref": str(out)}
+        if parent_note:
+            update["degraded"] = [
+                parent_note.replace("материал совпал", "разбор видео взят из кэша")
+            ]
+        return update
+    cache = _vlm_cache(state)
     result = analyze_panels(
         panels,
         client=QwenVlmClient(config=_model_config(state)),
@@ -662,7 +726,7 @@ def analyze_chunks(state: PipelineState) -> dict[str, Any]:
         # Кэш и кап были написаны и не подключены: разбор платил заново за уже
         # разобранные панели, а жёсткий кап из Настроек (#27) не действовал
         # вовсе — то есть настройка была, а ограничения не было.
-        cache=_vlm_cache(state),
+        cache=cache,
         budget=CallBudget.for_task(state.get("settings_snapshot")),
     )
     # Пути кадров кладутся рядом с описанием: следующий узел выгружает по
@@ -678,6 +742,13 @@ def analyze_chunks(state: PipelineState) -> dict[str, Any]:
 
     update: dict[str, Any] = {"chunk_analyses_ref": str(out)}
     reasons: list[str] = [degraded] if degraded else []
+    if parent_note:
+        if result.cache_hits and "совпал с родителем" in parent_note:
+            reasons.append(parent_note.replace("материал совпал", "разбор видео взят из кэша"))
+        elif "совпал с родителем" in parent_note:
+            reasons.append(parent_note + "; кэш не найден, материал разобран заново")
+        else:
+            reasons.append(parent_note)
 
     # Панели, которые провайдер отказался разбирать, обязаны быть названы в
     # отчёте. Иначе «модель не заметила финал» объясняется свойствами ролика, а

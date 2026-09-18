@@ -33,6 +33,7 @@ interface LaunchBody {
   replicationCount?: unknown;
   seed?: unknown;
   audienceContext?: unknown;
+  parentTaskId?: unknown;
 }
 
 const REPLICATION_BOUNDS = { min: 1, max: 10 } as const;
@@ -168,6 +169,7 @@ export async function POST(request: Request) {
         projectId: optionalId(body.projectId),
         replicationCount,
         seed: body.seed as number,
+        parentTaskId: optionalId(body.parentTaskId),
       };
 
       // Персоны набора читаются ДО создания задачи, внутри тенант-контекста:
@@ -214,7 +216,7 @@ export async function POST(request: Request) {
           ).rows[0]?.questions ?? null
         : null;
 
-      return { launched, personaIds, survey };
+      return { launched, personaIds, survey, parentTaskId: params.parentTaskId };
     });
 
     // Постановка в очередь — только для действительно созданного прогона.
@@ -236,6 +238,7 @@ export async function POST(request: Request) {
           // Кап вызовов VLM: до этого он оставался в интерфейсе и до воркера
           // не доезжал вовсе — то есть жёсткий потолок не действовал никогда.
           settings_snapshot: task.launched.settingsSnapshot,
+          parent_task_id: task.parentTaskId,
         });
         queued = true;
       } catch (e) {

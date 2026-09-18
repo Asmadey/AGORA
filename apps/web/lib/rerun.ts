@@ -42,6 +42,7 @@ export interface RerunPrefill {
   /** Анкета всегда пустая: см. докстринг модуля. */
   surveyQuestions: never[];
   title: string;
+  parentTaskId: string;
   /** Чего не хватает для честного повтора. null — всё на месте. */
   warning: string | null;
 }
@@ -68,6 +69,7 @@ export function rerunPrefill(source: SourceRun): RerunPrefill {
     whisperModel: source.whisperModel,
     surveyQuestions: [],
     title: rerunTitle(source),
+    parentTaskId: source.id,
     warning: missing.length > 0 ? missing.join("; ") : null,
   };
 }

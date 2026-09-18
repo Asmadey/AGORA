@@ -36,6 +36,7 @@ test("материал и аудитория переносятся, файл з
   assert.equal(p.sourceName, SOURCE.sourceName);
   assert.equal(p.personaSetId, SOURCE.personaSetId);
   assert.equal(p.mode, "long");
+  assert.equal(p.parentTaskId, SOURCE.id);
 });
 
 test("настройки прогона переносятся тоже", () => {

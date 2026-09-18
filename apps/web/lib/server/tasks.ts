@@ -54,6 +54,8 @@ export interface LaunchParams {
    * ещё в маршруте — сюда приходит готовый текст либо null.
    */
   audienceContext?: string | null;
+  /** Родительский прогон, чей разбор видео можно переиспользовать. */
+  parentTaskId?: string | null;
 }
 
 export interface LaunchedTask {
@@ -310,6 +312,7 @@ export function idempotencyKey(
     projectId: params.projectId,
     replicationCount: params.replicationCount,
     seed: params.seed,
+    parentTaskId: params.parentTaskId ?? null,
     // Сортировка обязательна: порядок ключей объекта в JS зависит от порядка
     // вставки, а он приходит из порядка строк базы и не гарантирован.
     prompts: Object.keys(snapshot)
@@ -400,9 +403,10 @@ export async function launchTask(
      )
      INSERT INTO tasks (project_id, persona_set_id, survey_id, mode, video_ref,
                         replication_count, prompts_snapshot, settings_snapshot,
-                        idempotency_key, created_by, tenant_id, seq_no, source_name, title)
+                        idempotency_key, created_by, tenant_id, seq_no, source_name, title,
+                        parent_task_id)
      SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
-             current_setting('app.tenant_id')::uuid, next.value, $11, $12
+             current_setting('app.tenant_id')::uuid, next.value, $11, $12, $13
      FROM next
      ON CONFLICT (tenant_id, idempotency_key) WHERE idempotency_key IS NOT NULL
      DO NOTHING
@@ -420,6 +424,7 @@ export async function launchTask(
       createdBy,
       params.sourceName ?? null,
       params.title ?? null,
+      params.parentTaskId ?? null,
     ],
   );
 
