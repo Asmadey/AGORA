@@ -39,6 +39,7 @@ export interface PipelinePayload {
   prompts_snapshot: Record<string, unknown>;
   /** Настройки команды на момент запуска: кап вызовов VLM, модель Whisper. */
   settings_snapshot: Record<string, unknown>;
+  parent_task_id?: string | null;
 }
 
 /**

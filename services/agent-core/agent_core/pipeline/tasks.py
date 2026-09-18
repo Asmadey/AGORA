@@ -205,6 +205,7 @@ def run_pipeline(self: Any, payload: dict[str, Any]) -> dict[str, Any]:
         replication_count=int(payload.get("replication_count") or 1),
         prompts_snapshot=payload.get("prompts_snapshot") or {},
         settings_snapshot=payload.get("settings_snapshot") or {},
+        parent_task_id=payload.get("parent_task_id"),
     )
 
     _set_task_status(task_id, tenant_id, STATUS_RUNNING)

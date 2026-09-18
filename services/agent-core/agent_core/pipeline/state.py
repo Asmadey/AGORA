@@ -48,6 +48,7 @@ class PipelineState(TypedDict, total=False):
     tenant_id: str
     mode: Mode
     video_ref: str | None
+    parent_task_id: str | None
 
     # ── Медиа (#14) ─────────────────────────────────────────────────────────
     proxy_ref: str | None
@@ -134,6 +135,7 @@ def new_state(
     replication_count: int = 1,
     prompts_snapshot: dict[str, Any] | None = None,
     settings_snapshot: dict[str, Any] | None = None,
+    parent_task_id: str | None = None,
 ) -> PipelineState:
     """
     Начальное состояние прогона.
@@ -147,6 +149,7 @@ def new_state(
         tenant_id=tenant_id,
         mode=mode,
         video_ref=video_ref,
+        parent_task_id=parent_task_id,
         proxy_ref=None,
         audio_ref=None,
         duration_sec=None,
