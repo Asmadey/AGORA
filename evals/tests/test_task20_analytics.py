@@ -158,8 +158,8 @@ AGG_CASES = [
     "средние по пяти критериям совпадают с посчитанными вручную",
     "NPS считается по стандартной формуле промоутеры минус детракторы",
     "ретеншн — доля намеренных досмотреть",
-    "эмоциональный индекс в шкале 0–10",
-    "топ-эмоции отсортированы по убыванию и с процентами",
+    "эмоциональный индекс удалён из агрегата",
+    "топ-эмоции удалены из агрегата",
     "ответы, забракованные QA, из агрегата исключены и посчитаны",
     "вход не мутируется расчётом",
 ]
@@ -193,16 +193,11 @@ if aggregate is not None:
               f"retention_rate={agg.get('retention_rate')}, "
               f"ожидался {EXPECTED_RETENTION_RATE}")
 
-        ei = agg.get("emotional_index")
-        check(AGG_CASES[3], isinstance(ei, (int, float)) and 0.0 <= ei <= 10.0,
-              f"emotional_index={ei}")
+        check(AGG_CASES[3], "emotional_index" not in agg,
+              f"ключ присутствует: {agg.get('emotional_index')}")
 
-        top = agg.get("top_emotions") or []
-        pcts = [e.get("pct") for e in top if isinstance(e, dict)]
-        check(AGG_CASES[4],
-              bool(top) and pcts == sorted(pcts, reverse=True)
-              and all(isinstance(p, (int, float)) for p in pcts),
-              f"top_emotions={top[:3]}")
+        check(AGG_CASES[4], "top_emotions" not in agg,
+              f"ключ присутствует: {agg.get('top_emotions')}")
 
         # Забракованный QA ответ в агрегат не идёт: отчёт, построенный на
         # ответах, которые сам же пометил на перегенерацию, противоречит себе.

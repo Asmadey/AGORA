@@ -45,10 +45,6 @@ CRITERIA = ("overall_impression", "plot", "acting", "music", "cinematography")
 NPS_PROMOTER_MIN = 9
 NPS_DETRACTOR_MAX = 6
 
-#: Сколько эмоций показывать в топе. Больше — хвост из единичных упоминаний,
-#: который читается как разнообразие, хотя это шум одной персоны.
-TOP_EMOTIONS = 5
-
 #: Отклонение баллов персоны между её повторами, при котором стабильность
 #: считается нулевой. Три балла из десяти — это «понравилось» и «не
 #: понравилось» от одного человека на один материал.
@@ -84,23 +80,6 @@ def _num(value: Any) -> float | None:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return None
     return float(value)
-
-
-def _looks_numeric(text: str) -> bool:
-    """
-    Строка целиком является числом.
-
-    Нужно отдельно от `_num`: тот принимает только настоящие числа, а из
-    корпуса эмоции приходят строками, и «10» среди них — не эмоция, а подпись
-    шкалы, затесавшаяся в список (data/grounding/corpus.meta.json). В топ
-    эмоций такое попадать не должно: «десять» рядом с «интересом» читается как
-    эмоция, которой никто не называл.
-    """
-    try:
-        float(text.replace(",", "."))
-    except ValueError:
-        return False
-    return True
 
 
 #: Источник вердикта, по которому ответ ВЫБЫВАЕТ из агрегата.
@@ -184,8 +163,6 @@ def aggregate(
         "recommendation_mean": _recommendation_mean(bodies),
         "retention_rate": _retention_rate(bodies),
         "watched_share_mean": _watched_share(bodies),
-        "emotional_index": _emotional_index(bodies),
-        "top_emotions": _top_emotions(bodies),
         "sample_size": len(kept),
         "excluded_by_qa": len(answers) - len(kept),
         "replication_count": replication_count,
@@ -408,58 +385,6 @@ def _watched_share(bodies: list[dict[str, Any]]) -> float | None:
         if v is not None and 0.0 <= v <= 100.0
     ]
     return round(statistics.fmean(values), 4) if values else None
-
-
-def _emotional_index(bodies: list[dict[str, Any]]) -> float | None:
-    """
-    Насколько материал вообще задел зрителя, в шкале 0–10.
-
-    Определение здесь — решение, а не измерение, и его стоит знать читающему
-    отчёт. Берётся доля персон, назвавших хотя бы одну эмоцию, умноженная на
-    десять. Если же в `emotions_evoked` пришли числа — а в реальном корпусе
-    туда затесались подписи шкалы «10 – вызвал очень сильные эмоции», см.
-    data/grounding/corpus.meta.json, — считается их среднее: это и есть
-    исходная форма показателя в корпусе, и подменять её долей значило бы
-    считать по другой шкале, не сказав об этом.
-    """
-    numeric: list[float] = []
-    mentioned = 0
-    for body in bodies:
-        emotions = (body.get("perception") or {}).get("emotions_evoked")
-        if not isinstance(emotions, list):
-            continue
-        values = [_num(e) for e in emotions]
-        values = [v for v in values if v is not None]
-        if values:
-            numeric.append(statistics.fmean(values))
-        elif any(str(e).strip() for e in emotions):
-            mentioned += 1
-    if numeric:
-        return round(min(10.0, max(0.0, statistics.fmean(numeric))), 4)
-    if not bodies:
-        return None
-    return round(mentioned * 10.0 / len(bodies), 4)
-
-
-def _top_emotions(bodies: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    counts: dict[str, int] = {}
-    for body in bodies:
-        emotions = (body.get("perception") or {}).get("emotions_evoked")
-        if not isinstance(emotions, list):
-            continue
-        # Внутри одного ответа эмоция считается один раз: персона, назвавшая
-        # «интерес» дважды, не даёт двух наблюдений.
-        for name in {str(e).strip().lower() for e in emotions if str(e).strip()}:
-            if _looks_numeric(name):
-                continue  # число в списке эмоций — дефект данных, не эмоция
-            counts[name] = counts.get(name, 0) + 1
-    if not bodies:
-        return []
-    ordered = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
-    return [
-        {"name": name, "count": count, "pct": round(count * 100.0 / len(bodies), 4)}
-        for name, count in ordered[:TOP_EMOTIONS]
-    ]
 
 
 def _per_persona_bounds(answers: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:

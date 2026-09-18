@@ -485,8 +485,7 @@ else:
         # прошли перепроверку, а у p2–p4 перепроверки нет.
         check(ESC_CASES[2],
               ids(True) == ["p0", "p1"]
-              and not any(v.get("escalated") for v in on.verdicts
-                          if v.get("persona_id") in {"p2", "p3", "p4"}),
+              and set(ids(False)) >= {"p2", "p3", "p4"},
               f"эскалированы {ids(True)} (ожидались низкие вердикты p0/p1 — confidence "
               f"0.4 при пороге 0.7), не эскалированы {ids(False)}")
 
