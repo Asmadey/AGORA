@@ -200,6 +200,22 @@ class ModelConfig:
             return {}
         return {"chat_template_kwargs": {"enable_thinking": False}}
 
+    def thinking_enabled(self, role: str) -> bool:
+        """
+        Размышляет ли модель в этой роли.
+
+        Выводится из `extra_body`, а не считается заново: правило «настройки
+        арендатора главнее умолчания по ролям» иначе жило бы в двух местах и
+        разошлось бы при первой правке — причём молча, потому что обе копии
+        выглядели бы работающими.
+
+        Спрашивает это потолок ответа в чате (`chat/client.py`): рассуждение
+        считается теми же токенами вывода, и потолок, не знающий про него,
+        отдаёт человеку пустой ответ вместо реплики персоны.
+        """
+        kwargs = self.extra_body(role).get("chat_template_kwargs") or {}
+        return bool(kwargs.get("enable_thinking", True))
+
     @property
     def vlm_shares_agent(self) -> bool:
         """True — кадры и текст обслуживает один агент, то есть одна модель."""
