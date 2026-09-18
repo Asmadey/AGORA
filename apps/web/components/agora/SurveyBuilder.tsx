@@ -5,13 +5,19 @@ import { Check, Pencil, Trash2, Plus, Info, RotateCcw } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Chip } from "@/components/agora/Primitives";
 import type { SurveyQuestion, QuestionType } from "@/lib/agora-types";
+import {
+  BASE_QUESTIONS,
+  BASE_SCALE_LABEL,
+  groundingIssues,
+  newQuestionDraft,
+} from "@/lib/survey-composition";
 
 /**
  * Конструктор анкеты (задача #10).
  *
  * Пять базовых критериев редактируемы наравне с пользовательскими вопросами, но
  * их правка помечается: средние по корпусу из 165 респондентов посчитаны именно
- * по паре «ключ + шкала 1–10», и при смене типа или удалении критерия сравнивать
+ * по паре «ключ + шкала», и при смене типа или удалении критерия сравнивать
  * результат прогона становится не с чем. Метрика persona_grounding в этом случае
  * теряет опору, поэтому последствие показано на экране, а не спрятано в
  * документации. Кнопка возврата к исходному состоянию есть у каждого изменённого
@@ -51,13 +57,6 @@ const TYPE_LABEL: Record<QuestionType, string> = Object.fromEntries(
 ) as Record<QuestionType, string>;
 
 /** Исходные пять критериев. Ключи зафиксированы acceptance-критерием задачи #10. */
-export const BASE_QUESTIONS: SurveyQuestion[] = [
-  { id: "base-1", baseKey: "overall_impression", label: "Общее впечатление", type: "scale", scaleMin: 0, scaleMax: 10 },
-  { id: "base-2", baseKey: "plot", label: "Сюжет", type: "scale", scaleMin: 0, scaleMax: 10 },
-  { id: "base-3", baseKey: "acting", label: "Актёрская игра", type: "scale", scaleMin: 0, scaleMax: 10 },
-  { id: "base-4", baseKey: "music", label: "Музыка", type: "scale", scaleMin: 0, scaleMax: 10 },
-  { id: "base-5", baseKey: "cinematography", label: "Операторская работа", type: "scale", scaleMin: 0, scaleMax: 10 },
-];
 
 /** Базовый критерий считается изменённым, если разошлись подпись, тип или шкала. */
 function isModified(q: SurveyQuestion): boolean {
@@ -283,12 +282,8 @@ export function SurveyBuilder({
   const base = questions.filter((q) => q.baseKey);
   const custom = questions.filter((q) => !q.baseKey);
 
-  const missingBase = BASE_QUESTIONS.filter(
-    (b) => !questions.some((q) => q.baseKey === b.baseKey),
-  );
-  const groundingBroken =
-    missingBase.length > 0 ||
-    base.some((q) => q.type !== "scale" || q.scaleMin !== 1 || q.scaleMax !== 10);
+  const grounding = groundingIssues(questions);
+  const groundingBroken = grounding.length > 0;
 
   const startEdit = (q: SurveyQuestion) => {
     setDraft({ ...q });
@@ -296,15 +291,9 @@ export function SurveyBuilder({
   };
 
   const startAdd = () => {
-    const q: SurveyQuestion = {
-      id: `q-${Date.now()}`,
-      label: "",
-      type: "scale",
-      scaleMin: 1,
-      scaleMax: 10,
-    };
-    setDraft(q);
-    setEditingId(q.id);
+    const draft = newQuestionDraft(`q-${Date.now()}`);
+    setDraft(draft);
+    setEditingId(draft.id);
   };
 
   const commit = () => {
@@ -389,7 +378,8 @@ export function SurveyBuilder({
         </div>
         <p className="mt-1 text-xs leading-relaxed text-slate">
           По этим пяти критериям посчитаны средние в корпусе 165 респондентов. Пока их
-          подписи и шкала 1–10 не тронуты, отчёт можно сравнивать с реальными данными.
+          тип и шкала {BASE_SCALE_LABEL} не тронуты, отчёт можно сравнивать с реальными
+          данными.
         </p>
 
         <div className="mt-3 space-y-2">{renderList(base)}</div>
@@ -398,14 +388,11 @@ export function SurveyBuilder({
           <p className="mt-3 flex gap-2 rounded-md border border-warning/30 bg-warning-soft/60 p-3 text-xs leading-relaxed text-warning">
             <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" />
             <span>
-              {missingBase.length > 0
-                ? `Удалено базовых критериев: ${missingBase.length}. `
-                : "Тип или шкала базового критерия изменены. "}
-              Сравнение с корпусом для затронутых критериев отключено — калибровка средних
-              привязана к шкале 1–10, и на другой шкале сопоставлять нечего. Проверка
-              заземления (persona_grounding) по ним не считается. Прогон при этом
-              выполнится: изменение легально, просто его цена — потеря опоры на реальные
-              данные.
+              {grounding.join("; ")}. Сравнение с корпусом для затронутых критериев
+              отключено — калибровка средних привязана к шкале {BASE_SCALE_LABEL}, и на
+              другой шкале сопоставлять нечего. Проверка заземления (persona_grounding)
+              по ним не считается. Прогон при этом выполнится: изменение легально, просто
+              его цена — потеря опоры на реальные данные.
             </span>
           </p>
         )}

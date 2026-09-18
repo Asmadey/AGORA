@@ -9,7 +9,7 @@ import { UploadProgress } from "@/components/agora/UploadProgress";
 import { putWithProgress, uploadPercent, type UploadState } from "@/lib/upload";
 import { cn } from "@/lib/utils";
 import { Chip } from "@/components/agora/Primitives";
-import { BASE_QUESTIONS } from "@/components/agora/SurveyBuilder";
+import { BASE_QUESTIONS } from "@/lib/survey-composition";
 import { SurveyPicker } from "@/components/agora/SurveyPicker";
 import { DRAFT_SURVEY_ID, draftSurveyName } from "@/lib/survey-sync";
 import { AudienceStep } from "@/components/agora/AudienceStep";
