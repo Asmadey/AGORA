@@ -8,7 +8,14 @@ import { ArrowRight, Loader2, Trash2, UsersRound } from "lucide-react";
 import { PageHeader } from "@/components/AppShell";
 import { Chip } from "@/components/agora/Primitives";
 import { EmptyState } from "@/components/agora/States";
+import { AudienceSetActions } from "@/components/agora/AudienceSetActions";
 import { blockedReason, type BlockedSet } from "@/lib/audience-delete";
+import {
+  failedAudienceSummary,
+  isFailedAudience,
+  splitAudienceSets,
+  type AudienceStatus,
+} from "@/lib/audience-resume";
 
 /**
  * Раздел «Аудитории»: наборы персон, выбор и удаление.
@@ -38,6 +45,9 @@ export interface AudienceCard {
   personaCount: number;
   seed: number | null;
   createdAt: string;
+  status: AudienceStatus;
+  generatedCount: number;
+  error: string | null;
 }
 
 
@@ -96,6 +106,94 @@ export function AudienceRegistry({ sets }: { sets: AudienceCard[] }) {
     }
   }
 
+  const groups = splitAudienceSets(sets);
+
+  function renderCards(cards: AudienceCard[]) {
+    return (
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+        {cards.map((s) => {
+          const incomplete = s.personaCount < s.size;
+          const failed = isFailedAudience(s.status);
+          const failure = failedAudienceSummary({
+            size: s.size,
+            status: s.status,
+            generatedCount: s.generatedCount,
+            error: s.error,
+          });
+          const picked = selected.has(s.id);
+          return (
+            // flex-col + mt-auto на подвале: без этого предупреждение о
+            // неполном наборе сдвигает дату и ссылку вниз, и в сетке они
+            // стоят на разной высоте.
+            <div
+              key={s.id}
+              className={`flex flex-col rounded-xl border bg-card p-5 transition-colors ${
+                picked ? "border-ink" : "border-hairline"
+              }`}
+            >
+              <div className="flex items-start gap-3">
+                <input
+                  type="checkbox"
+                  checked={picked}
+                  onChange={() => toggle(s.id)}
+                  aria-label={`Выбрать «${s.name}»`}
+                  className="mt-1 h-4 w-4 shrink-0 cursor-pointer accent-ink"
+                />
+                <h2 className="min-w-0 flex-1 truncate font-medium">{s.name}</h2>
+              </div>
+
+              <div className="mt-4 flex flex-wrap items-center gap-1.5">
+                {/* Просто число: «12 из 12» отвечает на вопрос, которого не
+                    задавали, и заставляет вычитать. Неполнота набора
+                    остаётся отдельной подписью ниже. */}
+                <Chip tone={incomplete ? "outline" : "muted"}>{s.personaCount} персон</Chip>
+                {s.seed !== null && <Chip tone="outline">seed {s.seed}</Chip>}
+              </div>
+
+              {failed && failure && (
+                <div className="mt-3 rounded-md border border-danger/20 bg-danger-soft/40 px-3 py-2 text-xs leading-relaxed">
+                  <p className="font-medium">Статус: {failure.status}</p>
+                  <p className="mt-1">{failure.reason}</p>
+                  <p className="mt-1 tabular-nums">Персоны: {failure.survivors}</p>
+                </div>
+              )}
+
+              {incomplete && !failed && (
+                <p className="mt-3 text-xs leading-relaxed text-warning">
+                  Заполнена не полностью: заказано {s.size}, генерация оборвалась
+                  или была остановлена.
+                </p>
+              )}
+
+              {failed && <AudienceSetActions id={s.id} status={s.status} />}
+
+              <div className="mt-4 flex items-center justify-between gap-2 pt-1 mt-auto">
+                <span className="text-xs text-slate">
+                  {new Date(s.createdAt).toLocaleDateString("ru-RU")}
+                </span>
+                <div className="flex items-center gap-2">
+                  <Link
+                    href={`/personas/sets/${s.id}`}
+                    className="text-xs text-slate underline underline-offset-4 transition-colors hover:text-ink"
+                  >
+                    Посмотреть персоны
+                  </Link>
+                  <Link
+                    href={`/personas/sets/${s.id}`}
+                    aria-label={`Открыть «${s.name}»`}
+                    className="grid h-7 w-7 shrink-0 place-items-center rounded-full border border-hairline text-slate transition-colors hover:border-ink hover:text-ink"
+                  >
+                    <ArrowRight className="h-3.5 w-3.5" />
+                  </Link>
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    );
+  }
+
   return (
     <>
       <PageHeader
@@ -149,69 +247,19 @@ export function AudienceRegistry({ sets }: { sets: AudienceCard[] }) {
             action={{ href: "/studies/new", label: "Открыть визард запуска" }}
           />
         ) : (
-          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-            {sets.map((s) => {
-              const incomplete = s.personaCount < s.size;
-              const picked = selected.has(s.id);
-              return (
-                // flex-col + mt-auto на подвале: без этого предупреждение о
-                // неполном наборе сдвигает дату и ссылку вниз, и в сетке они
-                // стоят на разной высоте.
-                <div
-                  key={s.id}
-                  className={`flex flex-col rounded-xl border bg-card p-5 transition-colors ${
-                    picked ? "border-ink" : "border-hairline"
-                  }`}
-                >
-                  <div className="flex items-start gap-3">
-                    <input
-                      type="checkbox"
-                      checked={picked}
-                      onChange={() => toggle(s.id)}
-                      aria-label={`Выбрать «${s.name}»`}
-                      className="mt-1 h-4 w-4 shrink-0 cursor-pointer accent-ink"
-                    />
-                    <h2 className="min-w-0 flex-1 truncate font-medium">{s.name}</h2>
-                  </div>
-
-                  <div className="mt-4 flex flex-wrap items-center gap-1.5">
-                    {/* Просто число: «12 из 12» отвечает на вопрос, которого не
-                        задавали, и заставляет вычитать. Неполнота набора
-                        остаётся отдельной подписью ниже. */}
-                    <Chip tone={incomplete ? "outline" : "muted"}>{s.personaCount} персон</Chip>
-                    {s.seed !== null && <Chip tone="outline">seed {s.seed}</Chip>}
-                  </div>
-
-                  {incomplete && (
-                    <p className="mt-3 text-xs leading-relaxed text-warning">
-                      Заполнена не полностью: заказано {s.size}, генерация оборвалась
-                      или была остановлена.
-                    </p>
-                  )}
-
-                  <div className="mt-4 flex items-center justify-between gap-2 pt-1 mt-auto">
-                    <span className="text-xs text-slate">
-                      {new Date(s.createdAt).toLocaleDateString("ru-RU")}
-                    </span>
-                    <div className="flex items-center gap-2">
-                      <Link
-                        href={`/personas/sets/${s.id}`}
-                        className="text-xs text-slate underline underline-offset-4 transition-colors hover:text-ink"
-                      >
-                        Посмотреть персоны
-                      </Link>
-                      <Link
-                        href={`/personas/sets/${s.id}`}
-                        aria-label={`Открыть «${s.name}»`}
-                        className="grid h-7 w-7 shrink-0 place-items-center rounded-full border border-hairline text-slate transition-colors hover:border-ink hover:text-ink"
-                      >
-                        <ArrowRight className="h-3.5 w-3.5" />
-                      </Link>
-                    </div>
-                  </div>
-                </div>
-              );
-            })}
+          <div className="space-y-8">
+            {groups.active.length > 0 && (
+              <section aria-labelledby="audience-active-heading">
+                <h2 id="audience-active-heading" className="mb-3 text-sm font-semibold">Готовые и текущие аудитории</h2>
+                {renderCards(groups.active)}
+              </section>
+            )}
+            {groups.failed.length > 0 && (
+              <section aria-labelledby="audience-failed-heading">
+                <h2 id="audience-failed-heading" className="mb-3 text-sm font-semibold text-danger">Сорвавшиеся аудитории</h2>
+                {renderCards(groups.failed)}
+              </section>
+            )}
           </div>
         )}
       </div>

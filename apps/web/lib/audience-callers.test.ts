@@ -60,6 +60,7 @@ test("генерация набора вызывается только отту
   const allowed = [
     "components/agora/AudienceStep.tsx",
     "components/agora/AudienceRegistry.tsx",
+    "components/agora/AudienceSetActions.tsx",
   ];
   assert.deepEqual(
     callers.map(rel).sort(),
@@ -75,7 +76,7 @@ test("создаёт набор только визард, остальные �
   // а это ровно та разница, ради которой проверка и писалась.
   const posts = sources.filter((f) => {
     const src = stripComments(read(f));
-    return /fetch\(\s*["'`]\/api\/audience/.test(src) && /method:\s*["'`]POST["'`]/.test(src);
+    return /fetch\(\s*["'`]\/api\/audience["'`]\s*,\s*\{[\s\S]*?method:\s*["'`]POST["'`]/.test(src);
   });
   assert.deepEqual(
     posts.map(rel),

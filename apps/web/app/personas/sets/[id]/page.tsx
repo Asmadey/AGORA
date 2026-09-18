@@ -4,6 +4,7 @@ import { ArrowLeft, ArrowUpRight } from "lucide-react";
 
 import { PageHeader } from "@/components/AppShell";
 import { Chip } from "@/components/agora/Primitives";
+import { AudienceSetActions } from "@/components/agora/AudienceSetActions";
 import { GenerationCriteria } from "@/components/agora/GenerationCriteria";
 import { EmptyState } from "@/components/agora/States";
 import { withTenant } from "@/lib/server/db";
@@ -12,6 +13,7 @@ import { listPersonas, listPersonaSets } from "@/lib/server/personas";
 import { snapshotRecordsOfPersonaSet } from "@/lib/server/corpus-db";
 import { groundingReport, GROUNDING_PROP_TOL } from "@/lib/persona-grounding";
 import { avatarHue, initials } from "@/lib/report-view";
+import { failedAudienceSummary, isFailedAudience } from "@/lib/audience-resume";
 
 /**
  * Состав одного набора персон.
@@ -59,6 +61,7 @@ export default async function PersonaSetPage({
   if (!set) notFound();
 
   const incomplete = set.personaCount < set.size;
+  const failure = failedAudienceSummary(set);
 
   /*
     Заземление считается по СЛЕПКУ, с которого собран набор, а не по датасету на
@@ -136,6 +139,15 @@ export default async function PersonaSetPage({
             оборвалась или была остановлена. Прогон на таком наборе пройдёт, но
             распределения по сегментам будут смещены относительно заданных критериев.
           </p>
+        )}
+
+        {isFailedAudience(set.status) && failure && (
+          <section className="rounded-lg border border-danger/30 bg-danger-soft/40 p-5">
+            <p className="text-sm font-semibold">Статус: {failure.status}</p>
+            <p className="mt-2 text-sm leading-relaxed">{failure.reason}</p>
+            <p className="mt-2 text-sm tabular-nums">Уцелело персон: {failure.survivors}</p>
+            <AudienceSetActions id={set.id} status={set.status} />
+          </section>
         )}
 
         {/* Критерии генерации показываются как есть, а не пересказом: по ним

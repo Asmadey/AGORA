@@ -148,6 +148,8 @@ export interface AudiencePayload {
    * часть под другим — внутри набора, который потом сравнивают как целое.
    */
   settings_snapshot?: Record<string, unknown>;
+  /** Продолжить существующий failed-набор, дописав только недостающих персон. */
+  resume?: boolean;
 }
 
 /**

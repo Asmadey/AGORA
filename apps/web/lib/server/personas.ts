@@ -50,6 +50,10 @@ export interface PersonaSet {
   generatedCount: number;
   /** Причина отказа генерации. Без неё «failed» не подсказывает следующий шаг. */
   error: string | null;
+  /** Снимок настроек, с которыми этот набор был начат. */
+  settingsSnapshot: Record<string, unknown>;
+  /** Снимок корпуса, на котором был собран этот набор. */
+  corpusSnapshotId: string | null;
 }
 
 export interface Persona {
@@ -75,6 +79,8 @@ interface PersonaSetRow {
   status: string;
   generated_count: number;
   error: string | null;
+  settings_snapshot: Record<string, unknown> | null;
+  corpus_snapshot_id: string | null;
 }
 
 interface PersonaRow {
@@ -106,6 +112,8 @@ function toSet(row: PersonaSetRow): PersonaSet {
     status: (row.status as PersonaSet["status"]) ?? "ready",
     generatedCount: Number(row.generated_count ?? 0),
     error: row.error ?? null,
+    settingsSnapshot: row.settings_snapshot ?? {},
+    corpusSnapshotId: row.corpus_snapshot_id ?? null,
   };
 }
 
@@ -133,6 +141,7 @@ export async function listPersonaSets(
   // существующую» не показывал бы только что созданный набор.
   const { rows } = await client.query<PersonaSetRow>(
     `SELECT ps.id, ps.name, ps.size, ps.generation_config, ps.seed, ps.created_at, status, generated_count, error,
+            ps.settings_snapshot, ps.corpus_snapshot_id,
             (SELECT count(*) FROM personas p WHERE p.persona_set_id = ps.id) AS persona_count
        FROM persona_sets ps
       WHERE ($1::uuid IS NULL OR ps.id = $1::uuid)
@@ -170,14 +179,25 @@ export async function createPersonaSet(
    * понять, чья аудитория, прежде чем её удалять.
    */
   createdBy: string | null = null,
+  settingsSnapshot: Record<string, unknown> = {},
 ): Promise<PersonaSet> {
   const { rows } = await client.query<PersonaSetRow>(
     `INSERT INTO persona_sets (tenant_id, name, size, generation_config, seed, status,
-                               corpus_snapshot_id, created_by)
-     VALUES (app.current_tenant(), $1, $2, $3::jsonb, $4, $5, $6, $7)
+                               corpus_snapshot_id, created_by, settings_snapshot)
+     VALUES (app.current_tenant(), $1, $2, $3::jsonb, $4, $5, $6, $7, $8::jsonb)
      RETURNING id, name, size, generation_config, seed, created_at, status,
-               generated_count, error, 0::bigint AS persona_count`,
-    [name, size, JSON.stringify(generationConfig), seed, status, corpusSnapshotId, createdBy],
+               generated_count, error, settings_snapshot, corpus_snapshot_id,
+               0::bigint AS persona_count`,
+    [
+      name,
+      size,
+      JSON.stringify(generationConfig),
+      seed,
+      status,
+      corpusSnapshotId,
+      createdBy,
+      JSON.stringify(settingsSnapshot),
+    ],
   );
   return toSet(rows[0]);
 }
