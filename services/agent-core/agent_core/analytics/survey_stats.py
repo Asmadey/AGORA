@@ -140,11 +140,12 @@ def _collapse_values(values: list[Any]) -> Any:
         for value in present
     ):
         mean = statistics.mean(present)
-        return (
-            int(round(mean))
-            if all(isinstance(value, int) for value in present)
-            else round(mean, 2)
-        )
+        # Округления до целого здесь НЕТ, хотя исходные баллы целые.
+        # Ответы 7 и 8 дают 7.5, а порог верхней доли — 8: округление
+        # отправляло персону в долю «8–10», которой она не заслужила. Ошибка
+        # систематическая и в одну сторону — тот же класс, что у правила QA,
+        # выбрасывавшего низкие оценки и двигавшего средний балл вверх.
+        return round(mean, 2)
     winner = Counter(map(str, present)).most_common(1)[0][0]
     return next(value for value in present if str(value) == winner)
 
@@ -155,7 +156,7 @@ def _collapse_values(values: list[Any]) -> Any:
 def _scale(
     question: dict[str, Any], raw_values: Iterable[Any], base: int
 ) -> dict[str, Any]:
-    values: list[int] = []
+    values: list[float] = []
     for raw in raw_values:
         parsed = parse_field_answer(question, raw)
         if parsed.value is not None:
@@ -175,7 +176,12 @@ def _scale(
     # ключ в строку молча, и в `report.json` на диске уже лежало `"3"`.
     # Читатель отчёта в вебе тоже ждёт строку — в JSON другого ключа не
     # бывает (см. lib/fixtures/survey-tally.json).
-    distribution = {str(v): values.count(v) for v in sorted(set(values))}
+    # Столбик распределения — целый балл: дробное среднее повторов даёт 7.5, и
+    # отдельный столбик «7.5» читался бы как отдельная оценка, которой в анкете
+    # нет. Среднее и верхняя доля при этом считаются по ТОЧНЫМ значениям —
+    # округлять их значило бы вернуть ту самую систематическую ошибку.
+    buckets = [int(round(v)) for v in values]
+    distribution = {str(v): buckets.count(v) for v in sorted(set(buckets))}
     groups = (
         {
             "9-10": sum(1 for v in values if v >= NPS_PROMOTER_MIN) / base,
@@ -446,8 +452,13 @@ def survey_tally(
     по разным выборкам, и разошлись бы они молча.
     """
     qs = survey_questions(questions)
+    # Считается ДО схлопывания повторов и по тому же списку, что и результат
+    # `surviving`: схлопывание уменьшает число записей, ничего не исключая, и
+    # разность «пришло минус осталось» приписывала бы правилам проверки чужую
+    # работу. На экране это читалось как «выбыло 2 ответа» на чистом прогоне.
     total_answers = len(answers)
     answers = surviving(list(answers), qa_flags)
+    excluded_by_qa = total_answers - len(answers)
     by_persona = {str(p.get("id")): p for p in personas}
 
     target_ids = {pid for pid, p in by_persona.items() if cut(p)}
@@ -491,7 +502,7 @@ def survey_tally(
         audience[key] = dict(sorted(counts.items()))
 
     return {
-        "excluded_by_qa": total_answers - len(answers),
+        "excluded_by_qa": excluded_by_qa,
         "questions": questions_out,
         "indices": {
             name: {"total": total_i[name], "target": None if below else target_i[name]}
