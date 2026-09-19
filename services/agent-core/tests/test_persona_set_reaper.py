@@ -86,9 +86,28 @@ def test_preflight_rejects_generating_persona_sets_and_accepts_ready_only() -> N
     assert seen[-1][1] == "ok"
 
 
-def test_deploy_runs_preflight_before_compose_build() -> None:
+def test_deploy_checks_both_tables_before_compose_build() -> None:
+    """Ворота стоят до сборки и смотрят ОБЕ таблицы.
+
+    Раньше здесь проверялось, что deploy.sh зовёт `python3 infra/preflight.py`.
+    Проверка была верной по смыслу и неверной по существу: preflight ходит в
+    базу по адресу из .env.local, а это имя докер-сети (`postgres:5432`),
+    которое с хоста не резолвится. На боевом сервере ворота падали с
+    «Temporary failure in name resolution» ДО любой сборки, то есть развернуть
+    было нельзя вообще ничего, и тест этого не ловил — он читал текст скрипта,
+    а не его поведение.
+
+    Поэтому теперь проверяется то, что ворота действительно делают: спрашивают
+    обе таблицы у базы тем способом, который с хоста работает.
+    """
     source = DEPLOY.read_text("utf-8")
-    assert source.index("python3 infra/preflight.py") < source.index("docker compose -f")
+    gate = source.index("docker exec agora-postgres-1 psql")
+    build = source.index("docker compose -f")
+    assert gate < build, "ворота обязаны стоять до сборки"
+    prefix = source[:build]
+    assert "persona_sets" in prefix, "ворота не смотрят в persona_sets"
+    assert "tasks" in prefix, "ворота не смотрят в tasks"
+    assert "generating" in prefix and "RUNNING" in prefix
 
 
 def test_celery_wires_persona_set_reaper() -> None:

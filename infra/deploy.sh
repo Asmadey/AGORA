@@ -41,14 +41,38 @@ cd "$REPO"
 
 [ -f .env.local ] || { echo ".env.local не найден в $REPO" >&2; exit 1; }
 
-# Предполётная проверка обязательна до сборки. В частности, генерация аудитории
-# живёт в persona_sets, а не в tasks; пересборка воркера посреди неё теряет
-# модельную работу и оставляет набор в generating навсегда.
-set -a
-# shellcheck disable=SC1091
-. "$REPO/.env.local"
-set +a
-python3 infra/preflight.py
+# ─── Ворота: не пересобирать посреди работы ─────────────────────────────────
+#
+# Генерация аудитории живёт в persona_sets, а не в tasks; пересборка воркера
+# посреди неё теряет модельную работу и оставляет набор в generating навсегда.
+# Именно так 18.09.2026 погибли два набора по сорок персон.
+#
+# Запрос идёт через `docker exec` в контейнер базы, а не через preflight.py.
+# Причина конкретная и стоила одного заблокированного развёртывания: адреса в
+# .env.local — это имена докер-сети (`postgres:5432`), и с хоста они не
+# резолвятся. preflight.py, поставленный сюда обязательными воротами, падал с
+# «Temporary failure in name resolution» на каждом запуске, то есть развернуть
+# нельзя было вообще ничего. Проверять инфраструктуру снаружи сети, которой она
+# принадлежит, — не строгость, а неработающая проверка.
+#
+# preflight.py никуда не делся: он проверяет Mongo, S3 и Redis и запускается
+# оттуда, где эти имена видны. Здесь нужны ровно две таблицы, и до них есть
+# прямой путь.
+busy=$(docker exec agora-postgres-1 psql -U agora -d agora -t -A -c \
+  "SELECT (SELECT count(*) FROM tasks WHERE status IN ('RUNNING','QUEUED'))
+        + (SELECT count(*) FROM persona_sets WHERE status = 'generating')")
+if [ "${busy:-0}" != "0" ]; then
+  echo "ОТКАЗ: идёт работа — прогонов RUNNING/QUEUED и генераций аудитории: $busy" >&2
+  docker exec agora-postgres-1 psql -U agora -d agora -c \
+    "SELECT 'tasks' AS где, status, count(*) FROM tasks
+       WHERE status IN ('RUNNING','QUEUED') GROUP BY status
+     UNION ALL
+     SELECT 'persona_sets', status, count(*) FROM persona_sets
+       WHERE status = 'generating' GROUP BY status" >&2
+  echo "Пересборка убьёт эту работу посреди задачи. Дождитесь завершения." >&2
+  exit 1
+fi
+echo "  OK  ворота: активных прогонов и генераций нет"
 
 SERVICES=("$@")
 # Умолчание перечисляет ВСЕ службы, которые собираются из этого репозитория.
