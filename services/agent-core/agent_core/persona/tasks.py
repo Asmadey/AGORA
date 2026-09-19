@@ -26,10 +26,11 @@
    отвергает, а обёртка прогресса исключение глотает: прогресс молча не
    писался, и заметить это можно было только по нулю на экране.
 
-Поэтому здесь: генерация и обогащение идут ВНЕ транзакции, каждое обновление
-прогресса — своя короткая транзакция со своим тенант-контекстом, запись персон —
-одна транзакция в конце. Держать транзакцию открытой минутами вредно и само по
-себе: она держит снимок и мешает автовакууму.
+Поэтому здесь: генерация и обогащение идут ВНЕ транзакции, а персоны пишутся
+партиями по пять. Каждая партия — своя короткая транзакция со своим
+тенант-контекстом; `generated_count` означает только число уже записанных строк.
+Держать транзакцию открытой минутами вредно и само по себе: она держит снимок
+и мешает автовакууму.
 """
 
 from __future__ import annotations
@@ -50,6 +51,11 @@ from ..portraits.distill import distill_context_file, load_prompt_template
 #: строке, которую в это же время опрашивает список. Каждая пятая — заметно для
 #: глаза (обновление раз в несколько секунд) и незаметно для базы.
 PROGRESS_EVERY = 5
+
+# Celery повторяет только два раза: вместе с первым заходом это три попытки.
+# Небольшая пауза не даёт мгновенно долбить временно недоступную базу или модель.
+MAX_RETRIES = 2
+RETRY_DELAY_SEC = int(os.environ.get("AUDIENCE_RETRY_DELAY_SEC", 30))
 
 logger = logging.getLogger(__name__)
 
@@ -173,6 +179,8 @@ class PersonaSetGone(RuntimeError):
     следующий вызов модели оплачивается впустую. См. `_progress_reporter`.
     """
 
+    stop_generation = True
+
 
 def _update(tenant_id: str, sql: str, params: tuple[Any, ...]) -> int:
     """
@@ -199,7 +207,16 @@ def _update(tenant_id: str, sql: str, params: tuple[Any, ...]) -> int:
 
 #: Запись прогресса генерации. Отдельной константой, потому что её же читает
 #: тест исчезнувшего набора: SQL, набранный там заново, разошёлся бы с боевым.
-_PROGRESS_SQL = "UPDATE persona_sets SET generated_count = %s WHERE id = %s::uuid"
+_PROGRESS_SQL = (
+    "UPDATE persona_sets SET generated_count = %s, progress_at = now(), "
+    "status = CASE WHEN %s >= size THEN 'ready' ELSE 'generating' END, "
+    "finished_at = CASE WHEN %s >= size THEN now() ELSE NULL END "
+    "WHERE id = %s::uuid AND status = 'generating'"
+)
+_HEARTBEAT_SQL = (
+    "UPDATE persona_sets SET progress_at = now() "
+    "WHERE id = %s::uuid AND status = 'generating'"
+)
 
 
 def _progress_reporter(
@@ -214,7 +231,7 @@ def _progress_reporter(
     что набор ещё существует.
 
     ─── Почему проверка живёт здесь, а не отдельным SELECT ────────────────────
-    Ответ «набор на месте» уже приходит вместе с записью прогресса: `UPDATE …
+    Ответ «набор на месте» уже приходит вместе с отметкой движения: `UPDATE …
     WHERE id = …` возвращает единицу, если строка есть, и ноль, если её нет.
     Отдельный SELECT был бы вторым походом в базу за тем же самым.
 
@@ -228,7 +245,7 @@ def _progress_reporter(
     def report(done: int, total: int) -> None:  # noqa: ARG001
         if done % every:
             return
-        if update(tenant_id, _PROGRESS_SQL, (done, set_id)) == 0:
+        if update(tenant_id, _HEARTBEAT_SQL, (set_id,)) == 0:
             raise PersonaSetGone(
                 f"набор {set_id} исчез во время генерации: писать персон некуда, "
                 f"остановлено на {done}"
@@ -237,268 +254,345 @@ def _progress_reporter(
     return report
 
 
+def _begin_generation(tenant_id: str, set_id: str) -> dict[str, Any]:
+    """Снять неизменяемые параметры набора и вернуть его в generating."""
+    import psycopg
+
+    from ..db import tenant_scope
+
+    with psycopg.connect(os.environ["DATABASE_URL"]) as conn, tenant_scope(
+        conn, tenant_id
+    ) as cur:
+        cur.execute(
+            "SELECT size, generation_config, seed, corpus_snapshot_id::text, "
+            "       status, "
+            "       (SELECT count(*) FROM personas p "
+            "          WHERE p.persona_set_id = persona_sets.id) "
+            "FROM persona_sets WHERE id = %s::uuid",
+            (set_id,),
+        )
+        row = cur.fetchone()
+        if row is None:
+            raise PersonaSetGone(f"набор {set_id} исчез до начала генерации")
+
+        size, generation_config, seed, snapshot_id, status, count = row
+        count = int(count or 0)
+        cur.execute(
+            "UPDATE persona_sets "
+            "SET status = CASE WHEN %s >= size THEN 'ready' ELSE 'generating' END, "
+            "    generated_count = %s, error = NULL, "
+            "    finished_at = CASE WHEN %s >= size THEN now() ELSE NULL END, "
+            "    progress_at = now() "
+            "WHERE id = %s::uuid",
+            (count, count, count, set_id),
+        )
+        if cur.rowcount == 0:
+            raise PersonaSetGone(f"набор {set_id} исчез при запуске генерации")
+
+    stored_config = dict(generation_config or {})
+    return {
+        "size": int(size),
+        "generation_config": stored_config,
+        # На resume источник истины именно снимок конфигурации набора. Колонка
+        # seed остаётся запасным путём для старых строк до появления этого
+        # поля в JSON-снимке.
+        "seed": stored_config.get("seed", seed),
+        "corpus_snapshot_id": snapshot_id,
+        "status": "ready" if count >= int(size) else "generating",
+        "generated_count": count,
+        "previous_status": status,
+    }
+
+
+def _write_persona_batch(
+    tenant_id: str,
+    set_id: str,
+    *,
+    names: list[str],
+    personas: list[dict[str, Any]],
+    verdicts: list[Any],
+    expected_start: int,
+    total: int,
+) -> int:
+    """Атомарно записать одну партию и вернуть фактическое число строк."""
+    import psycopg
+
+    from ..db import tenant_scope
+
+    if len(names) != len(personas) or len(verdicts) != len(personas):
+        raise ValueError("партия персон имеет рассогласованные списки")
+
+    with psycopg.connect(os.environ["DATABASE_URL"]) as conn, tenant_scope(
+        conn, tenant_id
+    ) as cur:
+        # Блокировка только на короткую запись партии делает повтор Celery
+        # идемпотентным: две доставки не вставят один и тот же хвост дважды.
+        cur.execute(
+            "SELECT size FROM persona_sets WHERE id = %s::uuid FOR UPDATE",
+            (set_id,),
+        )
+        row = cur.fetchone()
+        if row is None:
+            raise PersonaSetGone(f"набор {set_id} исчез перед записью персон")
+        set_size = int(row[0])
+        cur.execute(
+            "SELECT count(*) FROM personas WHERE persona_set_id = %s::uuid",
+            (set_id,),
+        )
+        current = int(cur.fetchone()[0] or 0)
+        batch_end = expected_start + len(personas)
+        if current >= batch_end:
+            return current
+        if current != expected_start:
+            raise RuntimeError(
+                f"набор {set_id}: ожидалось {expected_start} персон, найдено {current}"
+            )
+
+        for name, dna, verdict in zip(names, personas, verdicts, strict=True):
+            validation = verdict.to_json() if hasattr(verdict, "to_json") else verdict
+            cur.execute(
+                "INSERT INTO personas (tenant_id, persona_set_id, name, dna, "
+                "                      narrative, seed, validation, created_by) "
+                "VALUES (app.current_tenant(), %s::uuid, %s, %s, %s, %s, %s, "
+                "        (SELECT created_by FROM persona_sets WHERE id = %s::uuid))",
+                (
+                    set_id,
+                    name,
+                    json.dumps(dna, ensure_ascii=False),
+                    dna.get("narrative"),
+                    dna.get("seed"),
+                    json.dumps(validation or {}, ensure_ascii=False),
+                    set_id,
+                ),
+            )
+
+        new_count = current + len(personas)
+        if new_count > set_size or new_count > total:
+            raise RuntimeError(f"набор {set_id}: записано больше заказанного размера")
+        cur.execute(
+            _PROGRESS_SQL,
+            (new_count, new_count, new_count, set_id),
+        )
+        if cur.rowcount == 0:
+            raise PersonaSetGone(f"набор {set_id} исчез при записи прогресса")
+        return new_count
+
+
+def _fail_set(tenant_id: str, set_id: str, reason: str) -> None:
+    rowcount = _update(
+        tenant_id,
+        "UPDATE persona_sets SET status='failed', error=%s, finished_at=now() "
+        "WHERE id = %s::uuid",
+        (reason, set_id),
+    )
+    if rowcount == 0:
+        raise PersonaSetGone(f"набор {set_id} исчез при записи отказа")
+
+
 @app.task(name="agora.generate_audience", bind=True)
 def generate_audience(self: Any, payload: dict[str, Any]) -> dict[str, Any]:
-    """
-    Наполняет уже созданный набор персонами.
+    """Запустить генерацию или докачать только хвост существующего набора."""
+    set_id = str(payload["persona_set_id"])
+    tenant_id = str(payload["tenant_id"])
 
-    `payload`: persona_set_id, tenant_id, config (критерии генерации).
+    try:
+        state = _begin_generation(tenant_id, set_id)
+        if state["status"] == "ready":
+            return {"persona_set_id": set_id, "status": "ready", "size": state["size"]}
+        return _generate_audience_once(payload, state)
+    except PersonaSetGone as gone:
+        # Набор удалён: повторять нечего, и писать в него уже нельзя.
+        logger.warning("генерация аудитории прервана: %s", gone)
+        return {"persona_set_id": set_id, "status": "abandoned", "error": str(gone)}
+    except Exception as exc:  # noqa: BLE001 - Celery должен получить retry
+        retries = int(getattr(getattr(self, "request", None), "retries", 0) or 0)
+        if retries < MAX_RETRIES:
+            retry_payload = {**payload, "resume": True}
+            raise self.retry(
+                args=(retry_payload,), exc=exc, countdown=RETRY_DELAY_SEC
+            ) from exc
 
-    Отказ помечает набор `failed` с причиной. Пустой набор — заведомо
-    провальный прогон (маршрут запуска его теперь и не примет), поэтому
-    состояние обязано быть видно на экране, а не только в логах воркера.
-    """
+        reason = (
+            f"генерация аудитории не удалась после {MAX_RETRIES + 1} попыток: "
+            f"{type(exc).__name__}: {exc}"
+        )
+        try:
+            _fail_set(tenant_id, set_id, reason)
+        except PersonaSetGone:
+            return {"persona_set_id": set_id, "status": "abandoned", "error": str(exc)}
+        return {"persona_set_id": set_id, "status": "failed", "error": reason}
+
+
+def _generate_audience_once(
+    payload: dict[str, Any], state: dict[str, Any]
+) -> dict[str, Any]:
+    """Сгенерировать полный детерминированный скелет и обработать только хвост."""
+    from dataclasses import fields
+
     from .. import tracing
+    from ..config import PersonaAttemptsConfig, TemperatureConfig
+    from .enrich import QwenTextClient, enrich_personas
     from .generator import GenerationConfig, PersonaGenerator
+    from .validate import validate_set
 
     set_id = str(payload["persona_set_id"])
     tenant_id = str(payload["tenant_id"])
-    raw_config = payload.get("config") or {}
-    snapshot_id = payload.get("corpus_snapshot_id")
+    allowed = {field.name for field in fields(GenerationConfig)}
+    raw_config = {
+        key: value for key, value in state["generation_config"].items() if key in allowed
+    }
+    raw_config["size"] = state["size"]
+    if state["seed"] is not None:
+        raw_config["seed"] = int(state["seed"])
+    raw_config = _prepare_generation_config(raw_config, tenant_id)
+    config = GenerationConfig(**raw_config)
 
-    def fail(reason: str) -> dict[str, Any]:
-        _update(
-            tenant_id,
-            "UPDATE persona_sets SET status='failed', error=%s, finished_at=now() "
-            "WHERE id = %s::uuid",
-            (reason, set_id),
+    snapshot_id = state.get("corpus_snapshot_id")
+    gen = (
+        PersonaGenerator.from_snapshot(snapshot_id, tenant_id)
+        if snapshot_id
+        else PersonaGenerator.from_corpus()
+    )
+    named = gen.generate_named(config)
+    if len(named) != state["size"]:
+        raise RuntimeError(
+            f"генератор вернул {len(named)} персон вместо {state['size']}"
         )
-        return {"persona_set_id": set_id, "status": "failed", "error": reason}
 
-    # ── Скелеты ──────────────────────────────────────────────────────────────
-    try:
-        # Контекст файла не должен ехать сырым в persona.generate. Сначала
-        # пропускаем context_file через существующий portrait.distill (#24),
-        # затем передаём короткий портрет отдельным ключом генератора.
-        raw_config = _prepare_generation_config(raw_config, tenant_id)
-        config = GenerationConfig(**raw_config)
-        # Слепок корпуса, снятый при создании аудитории, — главнее файла в
-        # образе. Файл остаётся запасным путём для наборов, созданных до того,
-        # как корпус переехал в базу; молча предпочитать его слепку значило бы
-        # собирать персон не по тому корпусу, который выбрал пользователь.
-        gen = (
-            PersonaGenerator.from_snapshot(str(snapshot_id), tenant_id)
-            if snapshot_id
-            else PersonaGenerator.from_corpus()
-        )
-        named = gen.generate_named(config)
-    except Exception as exc:  # noqa: BLE001 — причина обязана дойти до экрана
-        return fail(f"{type(exc).__name__}: {exc}")
+    resume = bool(payload.get("resume"))
+    start = int(state["generated_count"])
+    if resume:
+        logger.info("Докачка набора %s начинается с персон %s", set_id, start)
+    names = [name for name, _ in named][start:]
+    personas = [dna for _, dna in named][start:]
+    settings_snapshot = payload.get("settings_snapshot")
+    temperatures = TemperatureConfig.for_task(settings_snapshot)
+    attempts = PersonaAttemptsConfig.for_task(settings_snapshot).attempts
+    portraits = _load_portraits(tenant_id)
+    enrichment_meta: dict[str, Any] = {
+        "enriched": False,
+        "llm_calls": 0,
+        "cache_hits": 0,
+    }
+    validation_meta: dict[str, Any] = {
+        "checked": 0,
+        "regenerated": 0,
+        "failed": 0,
+        "calls": 0,
+    }
 
-    names = [n for n, _ in named]
-    personas = [dna for _, dna in named]
-
-    # Температуры снимаются из снимка настроек, положенного в задание при
-    # постановке в очередь, а не читаются из настроек на лету: пока набор
-    # считается, значение можно сменить, и тогда часть аудитории получилась бы
-    # под одним разбросом формулировок, а часть под другим — внутри набора,
-    # который потом сравнивают как целое.
-    from ..config import PersonaAttemptsConfig, TemperatureConfig
-
-    temperatures = TemperatureConfig.for_task(payload.get("settings_snapshot"))
-    # Число попыток — из того же снимка, что и температуры: пока задача стоит в
-    # очереди, настройку можно сменить, и тогда часть персон пересоздана по одному
-    # правилу, часть по другому — внутри одного набора.
-    attempts = PersonaAttemptsConfig.for_task(payload.get("settings_snapshot")).attempts
-
-    # ── Обогащение с прогрессом ──────────────────────────────────────────────
-    #
-    # Корневой спан открывается здесь, а не в начале задачи: до этой точки
-    # модель не зовут ни разу — скелеты собираются из корпуса механически.
-    # Спан, открытый раньше, показывал бы в трассе работу, которой в ней нет.
     trace = tracing.run(
         task_id=set_id,
         tenant_id=tenant_id,
-        # Своё имя трассы: сборка аудитории и прогон исследования — разные
-        # операции, и под одним именем их метрики сложились бы в одну кучу.
         trace_name="аудитория",
         kind="generate_audience",
         size=len(personas),
         tags=["audience"],
     )
-    # Всё, что ниже, зовёт модель: обогащение, проверка связности и
-    # пересоздание непрошедших персон. Один спан на набор, а не на персону —
-    # иначе набор из двадцати даёт двадцать трасс, и вопрос «почему аудитория
-    # собиралась двенадцать минут» снова остаётся без ответа.
     with trace:
-            # Один запрос на набор, а не на персону: словарь один и тот же.
-        portraits = _load_portraits(tenant_id)
+        for batch_start in range(0, len(personas), PROGRESS_EVERY):
+            batch_names = names[batch_start:batch_start + PROGRESS_EVERY]
+            batch_personas = personas[batch_start:batch_start + PROGRESS_EVERY]
 
-        meta: dict[str, Any] = {"enriched": False, "llm_calls": 0, "cache_hits": 0}
-        if config.use_llm:
-            from .enrich import enrich_personas
-
-            report = _progress_reporter(tenant_id, set_id)
-
-            try:
+            if config.use_llm and batch_personas:
                 outcome = enrich_personas(
-                    personas,
-                    # Имена едут вместе с персонами, а не приклеиваются в конце.
-                    # Без этого модель писала портрет, не зная, как человека
-                    # зовут: в наборе 170c318c ни один из двадцати портретов не
-                    # назвал собственное имя персоны, зато пять назвали чужое.
-                    names=names,
-                    on_progress=report,
-                    temperature=temperatures.personaCreation,  # стадия personaCreation
-                    # Портреты сегментов из базы арендатора. До 19.08 раздел
-                    # «Портреты» был отключён от продукта целиком: ни один узел
-                    # конвейера и ни одна строка генератора его не читали, хотя
-                    # реестр промптов утверждал обратное.
+                    batch_personas,
+                    names=batch_names,
+                    on_progress=_progress_reporter(tenant_id, set_id),
+                    temperature=temperatures.personaCreation,
                     portraits=portraits,
                 )
-            except PersonaSetGone as gone:
-                # Отдельно от отказа: отказ пишется В НАБОР, а набора больше
-                # нет — `fail` ушёл бы тем же `UPDATE` в ноль строк, ради
-                # которого всё и затевалось. Причина обязана дойти хотя бы в
-                # результат задачи и в лог.
-                logger.warning("генерация аудитории прервана: %s", gone)
-                return {
-                    "persona_set_id": set_id,
-                    "status": "abandoned",
-                    "error": str(gone),
-                }
-            except Exception as exc:  # noqa: BLE001
-                return fail(f"обогащение не удалось: {type(exc).__name__}: {exc}")
+                batch_personas = outcome.personas
+                enrichment_meta["enriched"] = enrichment_meta["enriched"] or outcome.enriched
+                enrichment_meta["llm_calls"] += outcome.calls_made
+                enrichment_meta["cache_hits"] += outcome.cache_hits
+                if outcome.degraded_reason:
+                    enrichment_meta["degraded_reason"] = outcome.degraded_reason
 
-            personas = outcome.personas
-            meta = {
-                "enriched": outcome.enriched,
-                "llm_calls": outcome.calls_made,
-                "cache_hits": outcome.cache_hits,
-                "degraded_reason": outcome.degraded_reason,
-            }
+            batch_verdicts: list[Any] = [{} for _ in batch_personas]
+            if config.use_llm and batch_personas:
+                validated_names = list(batch_names)
+                absolute_start = start + batch_start
 
-        # ── Фаза 2: проверка связности ───────────────────────────────────────────
-        # Идёт только после обогащения: проверять нечего, пока narrative скелетный —
-        # он собран из тех же атрибутов механически и разойтись с ними не может.
-        #
-        # Пересоздание берёт ДРУГОЙ seed, а не повторяет вызов модели на тех же
-        # атрибутах: расхождение могло прийти и от самих атрибутов — редкое
-        # сочетание, которое связным текстом не описывается.
-        verdicts: list[Any] = []
-        validation_meta: dict[str, Any] = {"checked": 0, "regenerated": 0, "failed": 0}
-        if config.use_llm and personas:
-            from ..schemas.responses import MAX_TOKENS, PERSONA_VALIDATION
-            from .enrich import QwenTextClient, enrich_personas
-            from .validate import validate_set
-
-            # Commit names together with validation.personas only after the
-            # whole phase returns. On failure both must keep the original set.
-            validated_names = list(names)
-
-            def regenerate(index: int, attempt: int) -> dict[str, Any] | None:
-                """Пересоздаёт одну персону с другим seed и заново обогащает её."""
-                try:
-                    shifted = GenerationConfig(
-                        **{
-                            **raw_config,
-                            "size": 1,
-                            # Сдвиг по попытке И по позиции: без позиции две
-                            # непрошедшие персоны получили бы на одной попытке
-                            # одинаковый seed, то есть одну и ту же замену.
-                            "seed": (config.seed or 0) + 10_000 * attempt + index,
-                        }
-                    )
-                    fresh = gen.generate_named(shifted)
-                    if not fresh:
+                def regenerate(
+                    index: int,
+                    attempt: int,
+                    *,
+                    absolute_start: int = absolute_start,
+                    validated_names: list[str] = validated_names,
+                ) -> dict[str, Any] | None:
+                    absolute = absolute_start + index
+                    try:
+                        shifted = GenerationConfig(
+                            **{
+                                **raw_config,
+                                "size": 1,
+                                "seed": (config.seed or 0) + 10_000 * attempt + absolute,
+                            }
+                        )
+                        fresh = gen.generate_named(shifted)
+                        if not fresh:
+                            return None
+                        replacement_name, replacement_dna = fresh[0]
+                        replacement = enrich_personas(
+                            [replacement_dna],
+                            names=[replacement_name],
+                            temperature=temperatures.personaCreation,
+                            portraits=portraits,
+                        ).personas[0]
+                        validated_names[index] = replacement_name
+                        return replacement
+                    except Exception:  # noqa: BLE001 - keep the original persona
                         return None
-                    replacement_name, replacement_dna = fresh[0]
-                    replacement = enrich_personas(
-                        [replacement_dna],
-                        # Имя пересозданной персоны, а не прежнее: `generate_named`
-                        # выдал новую пару, и портрет обязан быть про неё.
-                        names=[replacement_name],
-                        temperature=temperatures.personaCreation,
-                        portraits=portraits,
-                    ).personas[0]
-                    validated_names[index] = replacement_name
-                    return replacement
-                except Exception:  # noqa: BLE001 — не сумели пересоздать, не отказ фазы
-                    return None
 
-            try:
-                validation = validate_set(
-                    personas,
-                    client=QwenTextClient(
-                        temperature=temperatures.personaValidation,
-                        # Схема, а не уговоры: первый же боевой набор потерял один
-                        # вердикт на разборе — модель вернула JSON в ```json и, судя
-                        # по обрыву, не закрыла ограду. Внутри была настоящая
-                        # претензия, и она пропала по дороге.
-                        response_schema=("PersonaValidation", PERSONA_VALIDATION),
-                        # Потолок обязателен при схеме — см. MAX_TOKENS.
-                        max_tokens=MAX_TOKENS["persona_validation"],
-                    ),
-                    regenerate=regenerate,
-                    verbatim_pool=_judge_pool(gen.dist.verbatims),
-                    max_attempts=attempts,
-                )
-                personas = validation.personas
-                names = validated_names
-                verdicts = validation.verdicts
-                validation_meta = {
-                    "checked": validation.checked,
-                    "regenerated": validation.regenerated,
-                    "failed": validation.failed,
-                    "calls": validation.calls,
-                }
-            except Exception as exc:  # noqa: BLE001
-                # Проверка — улучшение качества, а не условие работоспособности:
-                # сорвать из-за неё оплаченную генерацию значит поменять надёжный
-                # результат на аккуратный.
-                validation_meta = {"checked": 0, "regenerated": 0, "failed": 0,
-                                   "degraded_reason": f"{type(exc).__name__}: {exc}"}
+                from ..schemas.responses import MAX_TOKENS, PERSONA_VALIDATION
 
-        # ── Запись персон одной транзакцией ──────────────────────────────────────
-        # Все или ни одной: наполовину записанный набор выглядит готовым и даёт
-        # отчёт по случайной части аудитории.
-        import psycopg
-
-        from ..db import tenant_scope
-
-        try:
-            with psycopg.connect(os.environ["DATABASE_URL"]) as conn, tenant_scope(
-                conn, tenant_id
-            ) as cur:
-                for index, (name, dna) in enumerate(zip(names, personas, strict=True)):
-                    # Пустой объект — «не проверялась». Отличать это от «проверена,
-                    # претензий нет» обязательно: иначе набор, созданный без фазы
-                    # валидации, выглядел бы прошедшим проверку, которой не было.
-                    verdict = verdicts[index].to_json() if index < len(verdicts) else {}
-                    # Автор наследуется от набора подзапросом, а не приезжает в
-                    # payload: в очереди он мог бы разойтись со строкой набора, если
-                    # набор пересоздали, — а истина о том, чья это аудитория, живёт
-                    # в базе, не в сообщении.
-                    cur.execute(
-                        "INSERT INTO personas (tenant_id, persona_set_id, name, dna, "
-                        "                      narrative, seed, validation, created_by) "
-                        "VALUES (app.current_tenant(), %s::uuid, %s, %s, %s, %s, %s, "
-                        "        (SELECT created_by FROM persona_sets WHERE id = %s::uuid))",
-                        (
-                            set_id,
-                            name,
-                            json.dumps(dna, ensure_ascii=False),
-                            dna.get("narrative"),
-                            dna.get("seed"),
-                            json.dumps(verdict, ensure_ascii=False),
-                            set_id,
+                # Отказ проверки не роняет партию. Проверка связности —
+                # улучшение качества, а не условие работоспособности: сорвать
+                # из-за неё оплаченную генерацию значит поменять надёжный
+                # результат на аккуратный. Партионная запись этого правила не
+                # отменяет — наоборот, теперь на кону ещё и уже записанные
+                # партии, которые пришлось бы бросить в статусе generating.
+                try:
+                    validation = validate_set(
+                        batch_personas,
+                        client=QwenTextClient(
+                            temperature=temperatures.personaValidation,
+                            response_schema=("PersonaValidation", PERSONA_VALIDATION),
+                            max_tokens=MAX_TOKENS["persona_validation"],
                         ),
+                        regenerate=regenerate,
+                        verbatim_pool=_judge_pool(gen.dist.verbatims),
+                        max_attempts=attempts,
                     )
-                cur.execute(
-                    "UPDATE persona_sets SET status='ready', generated_count=%s, finished_at=now() "
-                    "WHERE id = %s::uuid",
-                    (len(personas), set_id),
-                )
-        except Exception as exc:  # noqa: BLE001
-            return fail(f"персоны не сохранены: {type(exc).__name__}: {exc}")
+                except Exception as exc:  # noqa: BLE001 — см. комментарий выше
+                    validation_meta["degraded_reason"] = (
+                        f"{type(exc).__name__}: {exc}"
+                    )
+                else:
+                    batch_personas = validation.personas
+                    batch_names = validated_names
+                    batch_verdicts = validation.verdicts
+                    for key in ("checked", "regenerated", "failed", "calls"):
+                        validation_meta[key] += getattr(validation, key)
 
-        return {
-            "persona_set_id": set_id,
-            "status": "ready",
-            "size": len(personas),
-            "enrichment": meta,
-            "validation": validation_meta,
-        }
+            _write_persona_batch(
+                tenant_id,
+                set_id,
+                names=batch_names,
+                personas=batch_personas,
+                verdicts=batch_verdicts,
+                expected_start=start + batch_start,
+                total=state["size"],
+            )
+
+    return {
+        "persona_set_id": set_id,
+        "status": "ready",
+        "size": state["size"],
+        "enrichment": enrichment_meta,
+        "validation": validation_meta,
+    }
 
 
 def _judge_pool(verbatims: list[str], n: int = 20) -> list[str]:

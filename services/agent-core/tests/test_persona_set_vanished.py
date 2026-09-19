@@ -68,7 +68,9 @@ def test_written_progress_passes_quietly() -> None:
 
     report = _progress_reporter(TENANT, SET_ID, update=alive)
     report(PROGRESS_EVERY, 100)
-    assert written == [PROGRESS_EVERY]
+    # `generated_count` меняется только после фактической записи партии;
+    # callback обогащения обновляет heartbeat и передаёт только id набора.
+    assert written == [SET_ID]
 
 
 def test_between_checkpoints_the_base_is_not_touched() -> None:

@@ -504,7 +504,9 @@ def enrich_personas(
             return
         try:
             on_progress(done, total)
-        except Exception:  # noqa: BLE001 — см. докстринг: прогресс не роняет работу
+        except Exception as exc:  # noqa: BLE001 — служебный прогресс обычно не роняет работу
+            if getattr(exc, "stop_generation", False):
+                raise
             pass
 
     result = EnrichResult()

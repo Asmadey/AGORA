@@ -152,11 +152,13 @@ cd ../AGORA-task04 && npm ci
 
 ```bash
 docker exec agora-postgres-1 psql -U agora -d agora \
-  -c "SELECT status, count(*) FROM tasks GROUP BY status;"
+  -c "SELECT status, count(*) FROM tasks GROUP BY status; \
+      SELECT status, count(*) FROM persona_sets GROUP BY status;"
 ```
 
-`RUNNING` или `QUEUED` означают «подождите»: пересборка убьёт прогон посреди
-работы, и выглядеть это будет случайным сбоем.
+`RUNNING` или `QUEUED` в `tasks`, а также `generating` в `persona_sets` означают
+«подождите»: пересборка убьёт прогон или генерацию посреди работы, и выглядеть
+это будет случайным сбоем.
 
 Скрипт — `./infra/deploy.sh` (веб ~1 мин, воркер ~10 мин из-за torch). Миграции
 он не применяет намеренно: «развернуть» и «поменять схему» — разные решения.

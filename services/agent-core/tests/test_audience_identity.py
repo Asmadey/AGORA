@@ -26,9 +26,45 @@ def test_saved_name_belongs_to_final_persona(monkeypatch, rejections, seed, fail
     inserted = []
 
     class Cursor:
+        """Заглушка курсора.
+
+        Различает ТРИ запроса, а не один: партионная запись персон читает
+        строку набора при старте (`_begin_generation`), затем размер набора под
+        блокировкой и число уже записанных персон перед каждой партией. Один
+        ответ на все три давал бы «уже записано 3 из 3» на первой же партии, и
+        задача честно не вставляла бы ничего — дефект двойника, неотличимый от
+        дефекта кода.
+        """
+
+        def __init__(self):
+            self.row = None
+            # Ноль затронутых строк значит «набор исчез» (PersonaSetGone).
+            self.rowcount = 1
+
         def execute(self, sql, params):
             if sql.startswith("INSERT INTO personas"):
                 inserted.append(params)
+                self.row = None
+            elif sql.startswith("SELECT size, generation_config"):
+                # size, generation_config, seed, corpus_snapshot_id, status,
+                # сколько персон уже записано.
+                self.row = (
+                    config["size"],
+                    dict(config),
+                    config["seed"],
+                    None,
+                    "generating",
+                    len(inserted),
+                )
+            elif "SELECT size FROM persona_sets" in sql:
+                self.row = (config["size"],)
+            elif "count(*) FROM personas" in sql:
+                self.row = (len(inserted),)
+            else:
+                self.row = None
+
+        def fetchone(self):
+            return self.row
 
     class Client:
         def __init__(self, **kwargs):

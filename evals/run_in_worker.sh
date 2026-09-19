@@ -59,6 +59,7 @@ fi
 opts=(--rm -i
       -w /repo
       -e PYTHONPATH=/repo/services/agent-core
+      -e AGORA_WORKER_ENV=1
       -e PYTHONDONTWRITEBYTECODE=1)
 
 # Сеть контейнеров: внутри неё резолвятся `postgres`, `valkey` и прочие имена

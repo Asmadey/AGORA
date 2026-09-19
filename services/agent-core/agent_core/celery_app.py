@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import os
+from datetime import UTC, datetime
 from typing import Any
 
 from celery import Celery
@@ -134,6 +135,13 @@ app.conf.update(
             "task": "agora.reap_zombies",
             "schedule": REAP_INTERVAL_SEC,
         },
+        # Генерация аудитории живёт в persona_sets, а не в tasks. Отдельный
+        # проход нужен, иначе пересборка воркера оставляет экран в generating
+        # навсегда и запрет удаления не даёт человеку исправить ситуацию.
+        "reap-persona-sets": {
+            "task": "agora.reap_persona_sets",
+            "schedule": REAP_INTERVAL_SEC,
+        },
         # Раз в сутки, а не раз в четверть часа: проход обходит бакет целиком
         # постраничным листингом, а мусор копится днями, не минутами. И в
         # отличие от двух соседей выше, этот НИЧЕГО НЕ УДАЛЯЕТ — он называет
@@ -201,6 +209,54 @@ def reap_zombies() -> dict[str, Any]:
         )
 
     return {"zombies": result["total"], "stale": len(result["stale"])}
+
+
+@app.task(name="agora.reap_persona_sets")
+def reap_persona_sets() -> dict[str, Any]:
+    """Переводит в failed наборы, застывшие без движения дольше пяти минут."""
+    import psycopg
+
+    from .maintenance.persona_sets import reap_stale
+
+    dsn = os.environ.get("POSTGRES_ADMIN_URL")
+    if not dsn:
+        raise RuntimeError(
+            "POSTGRES_ADMIN_URL не задан — реаперу наборов нужен владелец схемы"
+        )
+
+    now = datetime.now(UTC)
+    with psycopg.connect(dsn) as conn, conn.cursor() as cur:
+        cur.execute(
+            "SELECT id::text, status, progress_at, generated_count "
+            "FROM persona_sets WHERE status = 'generating'"
+        )
+        rows = [
+            {
+                "id": row[0],
+                "status": row[1],
+                "progress_at": row[2],
+                "generated_count": row[3],
+            }
+            for row in cur.fetchall()
+        ]
+        found = reap_stale(rows, now=now)
+        failed = 0
+        for item in found:
+            cur.execute(
+                "UPDATE persona_sets "
+                "SET status='failed', error=%s, finished_at=now() "
+                "WHERE id=%s::uuid AND status='generating' AND progress_at=%s",
+                (item["reason"], item["id"], item["progress_at"]),
+            )
+            if cur.rowcount:
+                failed += 1
+                logger.warning(
+                    "Зависший набор %s переведён в failed: %s",
+                    item["id"][:8],
+                    item["reason"],
+                )
+
+    return {"persona_sets": failed}
 
 
 @app.task(name="agora.sweep_storage")
