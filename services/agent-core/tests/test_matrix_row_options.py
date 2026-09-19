@@ -126,7 +126,7 @@ def test_доли_считаются_по_вариантам_своей_стро
             "survey_answers": {"r1": "Поднималась", "r2": ["Финал", "Музыка"]},
         }
     ]
-    tally = survey_tally(SURVEY, answers, [])
+    tally = survey_tally(SURVEY, answers, [{"id": "p-1"}])
     rows = tally["questions"]["q-tree"]["total"]["rows"]
 
     assert set(rows["r1"]["shares"]) == {"r1-a", "r1-b"}

@@ -177,11 +177,14 @@ def aggregate(
     # наверх нельзя, пока `surviving` живёт здесь.
     from .survey_stats import survey_tally
 
-    # Считается по `kept`, а не по `answers`: в агрегат идут только ответы,
-    # пережившие правила QA. Иначе отбракованный ответ попал бы в доли анкеты,
-    # не попав в средние по критериям, и два числа в одном отчёте считались бы
-    # по разным выборкам.
-    result["survey"] = survey_tally(survey, kept, personas or []) if survey else None
+    # Передаём исходные ответы и те же флаги QA: survey_tally сам применяет
+    # surviving, поэтому анкета и средние по критериям считаются по одной
+    # выборке, а число исключённых не теряется по дороге.
+    result["survey"] = (
+        survey_tally(survey, answers, personas or [], qa_flags=qa_flags)
+        if survey
+        else None
+    )
 
     if replication_count > 1:
         result["per_persona"] = _per_persona_bounds(kept)
