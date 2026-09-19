@@ -9,7 +9,6 @@ import time
 
 from agent_core.persona.enrich import MemoryCache, enrich_personas
 
-
 PROMPT = "Город: {{city}}. Скелет: {{skeleton_json}}. Не короче {{min_len}}."
 
 
