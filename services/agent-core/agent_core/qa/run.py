@@ -4,8 +4,8 @@
 Собирает два слоя в один вердикт на каждый ответ и один на выборку целиком.
 
 ─── Порядок слоёв ────────────────────────────────────────────────────────────
-Сначала правила (`checks.py`), судья — только по тем ответам, где правила
-ничего не нашли. Порядок не про экономию, хотя экономия и получается: обратный
+Сначала правила (`checks.py`), судья — только по тем ответам, где гейтящие
+правила ничего не нашли. Порядок не про экономию, хотя экономия и получается: обратный
 порядок означал бы, что арифметически доказанный дефект — таймкод за пределами
 ролика — можно замять мнением модели. Судья, сказавший «ok» на ответе с
 07:45 при столетнем ролике, не прав; принимать его сторону не за что.
@@ -37,7 +37,7 @@ from pathlib import Path
 from typing import Any
 
 from ..respondent.diversity import diversity_report
-from .checks import consistency_reasons, coverage_reasons, grounding_reasons
+from .checks import consistency_reason_groups, coverage_reasons, grounding_reasons
 from .judge import JUDGE_ROLE, JudgeClient, load_templates, parse_verdict, render
 
 #: Минимальный размер выборки, на котором разнообразие вообще измеримо. Ниже
@@ -50,6 +50,9 @@ KIND_GROUNDING = "grounding"
 KIND_DIVERSITY = "diversity"
 #: Покрытие анкеты — отдельный вид, чтобы переспрос подсказывал по адресу.
 KIND_COVERAGE = "coverage"
+# Детерминированное правило остаётся видимым в списке флагов, но не входит в
+# analytics.aggregate.GATING_SOURCES, когда оно говорит только о вкусе зрителя.
+INFORMING_RULE_SOURCE = "rule_informative"
 
 
 @dataclass
@@ -184,11 +187,15 @@ def run_qa(
     clean: list[dict[str, Any]] = []
     for item in answers:
         body = _body(item)
-        c_reasons = consistency_reasons(body, survey)
+        c_gating, c_informing = consistency_reason_groups(body, survey)
+        c_reasons = c_gating + c_informing
         g_reasons = grounding_reasons(body, pack)
         v_reasons = coverage_reasons(body, survey)
+        consistency_source = (
+            INFORMING_RULE_SOURCE if c_informing and not c_gating else "rule"
+        )
         outcome.verdicts.append(_verdict(
-            KIND_CONSISTENCY, source="rule",
+            KIND_CONSISTENCY, source=consistency_source,
             verdict="regenerate" if c_reasons else "ok",
             confidence=1.0, reasons=c_reasons, item=item,
         ))
@@ -202,7 +209,7 @@ def run_qa(
             verdict="regenerate" if v_reasons else "ok",
             confidence=1.0, reasons=v_reasons, item=item,
         ))
-        if not c_reasons and not g_reasons and not v_reasons:
+        if not c_gating and not g_reasons and not v_reasons:
             clean.append(item)
 
     # ── Слой судьи ───────────────────────────────────────────────────────────
@@ -317,6 +324,14 @@ def _replace(outcome: QaOutcome, fresh: dict[str, Any]) -> None:
     key = (fresh["kind"], fresh["persona_id"], fresh["replication"])
     for i, existing in enumerate(outcome.verdicts):
         if (existing["kind"], existing["persona_id"], existing["replication"]) == key:
+            # Информирующее правило и вердикт судьи отвечают на разные вопросы.
+            # Не затираем первое вторым, иначе оператор потеряет полезный
+            # сигнал ровно на тех ответах, которые дошли до судьи.
+            if (
+                fresh["source"] in {"judge", "escalated"}
+                and existing.get("source") == INFORMING_RULE_SOURCE
+            ):
+                continue
             outcome.verdicts[i] = fresh
             return
     outcome.verdicts.append(fresh)
