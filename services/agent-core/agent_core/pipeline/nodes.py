@@ -1211,14 +1211,20 @@ def _load_personas(state: PipelineState) -> list[dict[str, Any]]:
 
     dsn = os.environ.get("DATABASE_URL")
     if not dsn:
-        return []
+        raise RuntimeError("DATABASE_URL не задан")
 
     with psycopg.connect(dsn) as conn, tenant_scope(conn, state["tenant_id"]) as cur:
         cur.execute(
             "SELECT id::text, name, dna FROM personas WHERE id = ANY(%s::uuid[])",
             (list(ids),),
         )
-        return [{"id": r[0], "name": r[1], "dna": r[2]} for r in cur.fetchall()]
+        rows = cur.fetchall()
+        expected = {str(persona_id) for persona_id in ids}
+        if len(rows) != len(expected):
+            raise RuntimeError(
+                f"реестр персон неполный: ожидалось {len(expected)}, прочитано {len(rows)}"
+            )
+        return [{"id": r[0], "name": r[1], "dna": r[2]} for r in rows]
 
 
 #: Сколько реплик корпуса показывать персоне как образец речи. Двадцать — как у
@@ -1296,7 +1302,10 @@ def _personas_for_segments(
     оплачены.
     """
     try:
-        return _load_personas(state)
+        personas = _load_personas(state)
+        if state.get("persona_ids") and not personas:
+            raise RuntimeError("реестр персон пуст")
+        return personas
     except Exception as exc:  # noqa: BLE001
         degraded.append(
             f"analytics: персоны не прочитаны ({type(exc).__name__}: {exc}); "

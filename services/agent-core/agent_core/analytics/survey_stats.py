@@ -36,6 +36,7 @@ NPS, ретеншн, посегментный срез. Он стоит на ф�
 from __future__ import annotations
 
 import statistics
+from collections import Counter
 from collections.abc import Callable, Iterable
 from typing import Any
 
@@ -92,6 +93,60 @@ def _answers_of(answer: dict[str, Any]) -> dict[str, Any]:
             if key:
                 out[key] = pair.get("answer")
     return out
+
+
+def _collapse_repeated_answers(answers: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Сводит повторы одной персоны в одну запись анкеты.
+
+    В выгрузке заказчик видит одну строку на персону. Анкета должна иметь тот
+    же контракт: повтор измеряет устойчивость ответа, но не добавляет ещё
+    одного человека в долю. Числовые значения усредняются, категории берутся
+    по моде с детерминированным первым значением при ничьей.
+    """
+    by_persona: dict[str, list[dict[str, Any]]] = {}
+    for answer in answers:
+        by_persona.setdefault(str(answer.get("persona_id")), []).append(answer)
+
+    collapsed: list[dict[str, Any]] = []
+    for persona_id, replications in by_persona.items():
+        by_field: dict[str, list[Any]] = {}
+        for answer in replications:
+            for field, value in _answers_of(answer).items():
+                by_field.setdefault(field, []).append(value)
+
+        collapsed.append(
+            {
+                "persona_id": persona_id,
+                "answer": {
+                    "survey_answers": {
+                        field: _collapse_values(values)
+                        for field, values in by_field.items()
+                    }
+                },
+            }
+        )
+    return collapsed
+
+
+def _collapse_values(values: list[Any]) -> Any:
+    """Значения повторов по правилам строки персоны в выгрузке."""
+    present = [value for value in values if value is not None and value != ""]
+    if not present:
+        return None
+    if len(present) == 1:
+        return present[0]
+    if all(
+        isinstance(value, (int, float)) and not isinstance(value, bool)
+        for value in present
+    ):
+        mean = statistics.mean(present)
+        return (
+            int(round(mean))
+            if all(isinstance(value, int) for value in present)
+            else round(mean, 2)
+        )
+    winner = Counter(map(str, present)).most_common(1)[0][0]
+    return next(value for value in present if str(value) == winner)
 
 
 # ─── Редьюсеры по типу вопроса ───────────────────────────────────────────────
@@ -366,6 +421,12 @@ def survey_tally(
         a for a in answers if str(a.get("persona_id")) in target_ids
     ]
 
+    # Один человек с несколькими повторами остаётся одной строкой отчёта.
+    # Иначе числитель рос бы по replication_count, а знаменатель оставался бы
+    # числом уникальных персон, и доли могли бы превысить единицу.
+    answers = _collapse_repeated_answers(answers)
+    target_answers = _collapse_repeated_answers(target_answers)
+
     total_q, total_i = _tally_scope(qs, answers, len(personas))
     target_q, target_i = _tally_scope(qs, target_answers, len(target_ids))
     target_size = len(target_ids)
@@ -381,7 +442,7 @@ def survey_tally(
             "block": q.get("block"),
             "label": q.get("label"),
             "total": total_q[qid],
-            "target": _suppressed(target_stats, target_size) if below else target_stats,
+            "target": _suppressed(target_stats, target_stats["n"]) if below else target_stats,
         }
 
     audience: dict[str, Any] = {
