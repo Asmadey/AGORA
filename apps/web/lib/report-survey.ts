@@ -145,22 +145,25 @@ export interface SurveyPairRow {
   known: boolean;
   service: boolean;
   total: number | null;
+  totalCount: number | null;
   /** `null` — в срезе этого варианта нет: он подавлен порогом или не спрошен. */
   target: number | null;
+  targetCount: number | null;
 }
 
 /**
- * Две эксклюзивные доли вопроса 7.
+ * Две эксклюзивные доли вопроса с reporting.polarity = "emotions".
  *
  * Значения приходят готовыми из `survey_tally`. Функция только даёт им подписи
  * и добавляет колонку среза, сохраняя `null`: подавленный срез нельзя выдавать
  * за измеренный ноль или подменять значением всей аудитории.
  */
 export function polarityPairs(
-  _question: SurveyQuestionView,
+  question: SurveyQuestionView,
   total: SurveyStats,
   target: SurveyStats,
 ): SurveyPairRow[] {
+  if (spec(question)?.reporting?.polarity !== "emotions") return [];
   if (total.onlyPositive === null && total.onlyNegative === null) return [];
   return [
     {
@@ -169,7 +172,9 @@ export function polarityPairs(
       known: true,
       service: false,
       total: total.onlyPositive,
+      totalCount: null,
       target: target.onlyPositive,
+      targetCount: null,
     },
     {
       id: "only_negative",
@@ -177,7 +182,9 @@ export function polarityPairs(
       known: true,
       service: false,
       total: total.onlyNegative,
+      totalCount: null,
       target: target.onlyNegative,
+      targetCount: null,
     },
   ];
 }
@@ -218,14 +225,16 @@ export function optionPairs(
   total: SurveyStats,
   target: SurveyStats,
 ): SurveyPairRow[] {
-  const inTarget = new Map(optionRows(question, target).map((o) => [o.id, o.share]));
+  const inTarget = new Map(optionRows(question, target).map((o) => [o.id, o]));
   return optionRows(question, total).map((o) => ({
     id: o.id,
     label: o.label,
     known: o.known,
     service: o.service,
     total: o.share,
-    target: inTarget.has(o.id) ? (inTarget.get(o.id) ?? null) : null,
+    totalCount: o.count,
+    target: inTarget.has(o.id) ? (inTarget.get(o.id)?.share ?? null) : null,
+    targetCount: inTarget.has(o.id) ? (inTarget.get(o.id)?.count ?? null) : null,
   }));
 }
 

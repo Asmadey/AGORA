@@ -7,15 +7,17 @@ import type { SurveyMatrixGroup, SurveySample } from "./types";
 export interface SurveyMatrixChartProps {
   title: string;
   groups: readonly SurveyMatrixGroup[];
+  targetN?: number | null;
   sample: SurveySample;
 }
 
-export function SurveyMatrixChart({ title, groups, sample }: SurveyMatrixChartProps) {
+export function SurveyMatrixChart({ title, groups, targetN, sample }: SurveyMatrixChartProps) {
   const rows = groups.flatMap((group) => group.rows);
   return (
     <ChartCard
       title={title}
       sample={sample}
+      targetN={targetN}
       legend={<Legend items={[{ label: "Общая выборка", tone: "positive" }, { label: TARGET_LABEL, tone: "slice" }]} />}
       table={(
         <DataDetails

@@ -1,4 +1,4 @@
-import { formatShare, npsPoints, sharePercent } from "@/lib/survey-charts";
+import { formatMean, formatShare, npsPoints, sharePercent } from "@/lib/survey-charts";
 
 import {
   ChartCard,
@@ -16,6 +16,8 @@ import type { SurveyNpsTarget, SurveyNpsValues, SurveySample } from "./types";
 export interface SurveyNpsChartProps {
   title: string;
   values: SurveyNpsValues;
+  mean?: number | null;
+  topBox?: number | null;
   target: SurveyNpsTarget;
   sample: SurveySample;
 }
@@ -70,7 +72,7 @@ function Ring({ values, title }: { values: SurveyNpsValues; title: string }) {
   );
 }
 
-export function SurveyNpsChart({ title, values, target, sample }: SurveyNpsChartProps) {
+export function SurveyNpsChart({ title, values, mean = null, topBox = null, target, sample }: SurveyNpsChartProps) {
   const targetNote = targetUnavailableNote(target);
   const overallNps = npsPoints(values.promoters, values.detractors);
   const targetNps = npsPoints(target.values.promoters, target.values.detractors);
@@ -79,6 +81,7 @@ export function SurveyNpsChart({ title, values, target, sample }: SurveyNpsChart
     <ChartCard
       title={title}
       sample={sample}
+      targetN={target.n}
       legend={<Legend items={NPS_PARTS.map(({ label, tone }) => ({ label, tone }))} />}
       note={targetNote}
       table={(
@@ -86,6 +89,8 @@ export function SurveyNpsChart({ title, values, target, sample }: SurveyNpsChart
           headers={["Показатель", "Общая выборка", TARGET_LABEL]}
           rows={[
             ["NPS", npsLabel(overallNps), targetNote ? targetNote : npsLabel(targetNps)],
+            ["Среднее", formatMean(mean), targetNote ? targetNote : formatMean(target.mean ?? null)],
+            ["Доля 9-10", formatShare(topBox), targetNote ? targetNote : formatShare(target.topBox ?? null)],
             ...NPS_PARTS.map((part) => [
               part.label,
               formatShare(values[part.id as keyof SurveyNpsValues]),
@@ -100,6 +105,16 @@ export function SurveyNpsChart({ title, values, target, sample }: SurveyNpsChart
           <p className="text-xs text-slate">Индекс готовности рекомендовать</p>
           <p className="mt-1 break-words text-3xl font-bold tabular-nums">{npsLabel(overallNps)}</p>
           <p className="mt-1 text-[11px] text-slate">в процентных пунктах</p>
+          <dl className="mt-4 space-y-1 text-xs">
+            <div className="flex justify-between gap-3">
+              <dt className="text-slate">Среднее</dt>
+              <dd className="tabular-nums">{formatMean(mean)}</dd>
+            </div>
+            <div className="flex justify-between gap-3">
+              <dt className="text-slate">Доля 9-10</dt>
+              <dd className="tabular-nums">{formatShare(topBox)}</dd>
+            </div>
+          </dl>
         </div>
         <div className="min-w-0">
           <Ring values={values} title={title} />

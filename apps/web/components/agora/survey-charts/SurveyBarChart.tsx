@@ -10,14 +10,20 @@ import {
   toneColor,
   toneOpacity,
 } from "./shared";
-import type { SurveyBarRow, SurveyBarTarget, SurveySample } from "./types";
+import type { SurveyBarRow, SurveyBarTarget, SurveyMetricPair, SurveySample } from "./types";
 
 export interface SurveyBarChartProps {
   title: string;
   note?: string;
   rows: readonly SurveyBarRow[];
   target: SurveyBarTarget;
+  secondaryMetrics?: readonly SurveyMetricPair[];
   sample: SurveySample;
+}
+
+function barValueLabel(row: { share: number | null; count?: number | null }): string {
+  const share = formatShare(row.share);
+  return row.count === undefined ? share : `${row.count ?? "—"} · ${share}`;
 }
 
 function BarValue({ row, max }: { row: SurveyBarRow; max: number }) {
@@ -31,19 +37,19 @@ function BarValue({ row, max }: { row: SurveyBarRow; max: number }) {
               className="block h-full rounded-sm"
               style={{
                 width: `${width}%`,
-                backgroundColor: toneColor(row.tone === "key" ? "key" : "bar"),
-                opacity: toneOpacity(row.tone === "key" ? "key" : "bar"),
+                backgroundColor: toneColor(row.service ? "unknown" : row.tone === "key" ? "key" : "bar"),
+                opacity: toneOpacity(row.service ? "unknown" : row.tone === "key" ? "key" : "bar"),
               }}
             />
           ) : null}
         </div>
-        <span className="w-10 shrink-0 text-right text-xs tabular-nums">{formatShare(row.share)}</span>
+        <span className="w-20 shrink-0 text-right text-xs tabular-nums">{barValueLabel(row)}</span>
       </div>
     </div>
   );
 }
 
-export function SurveyBarChart({ title, note, rows, target, sample }: SurveyBarChartProps) {
+export function SurveyBarChart({ title, note, rows, target, secondaryMetrics = [], sample }: SurveyBarChartProps) {
   const overallMax = maxMeasuredShare(rows.map((row) => row.share));
   const targetMax = maxMeasuredShare(target.rows.map((row) => row.share));
   const targetNote = targetUnavailableNote(target);
@@ -53,6 +59,7 @@ export function SurveyBarChart({ title, note, rows, target, sample }: SurveyBarC
     <ChartCard
       title={title}
       sample={sample}
+      targetN={target.n}
       legend={<Legend items={[{ label: "Общая выборка", tone: "bar" }, { label: "Ключевой вариант", tone: "key" }, { label: TARGET_LABEL, tone: "slice" }]} />}
       note={targetNote ?? note ?? null}
       table={(
@@ -60,8 +67,8 @@ export function SurveyBarChart({ title, note, rows, target, sample }: SurveyBarC
           headers={["Вариант", "Общая выборка", TARGET_LABEL]}
           rows={rows.map((row) => [
             row.label,
-            formatShare(row.share),
-            targetNote ? targetNote : formatShare(targetById.get(row.id)?.share ?? null),
+            barValueLabel(row),
+            targetNote ? targetNote : barValueLabel(targetById.get(row.id) ?? { share: null }),
           ])}
         />
       )}
@@ -73,7 +80,7 @@ export function SurveyBarChart({ title, note, rows, target, sample }: SurveyBarC
           const targetRow = targetById.get(row.id);
           return (
             <div key={row.id} className="contents">
-              <div className="min-w-0 self-center break-words text-xs leading-snug">{row.label}</div>
+              <div className={`min-w-0 self-center break-words text-xs leading-snug ${row.service ? "text-slate" : ""}`}>{row.label}</div>
               <div className="min-w-0 space-y-1">
                 <BarValue row={row} max={overallMax} />
                 {targetNote ? (
@@ -88,8 +95,8 @@ export function SurveyBarChart({ title, note, rows, target, sample }: SurveyBarC
                         />
                       ) : null}
                     </div>
-                    <span className="w-10 shrink-0 text-right text-[11px] tabular-nums">
-                      {formatShare(targetRow?.share ?? null)}
+                    <span className="w-20 shrink-0 text-right text-[11px] tabular-nums">
+                      {barValueLabel(targetRow ?? { share: null })}
                     </span>
                   </div>
                 )}
@@ -98,6 +105,27 @@ export function SurveyBarChart({ title, note, rows, target, sample }: SurveyBarC
           );
         })}
       </div>
+      {secondaryMetrics.length > 0 ? (
+        <div className="mt-4 border-t border-hairline pt-3">
+          <p className="text-[10px] uppercase tracking-wide text-slate">Производные показатели</p>
+          <div className="mt-2 grid min-w-0 grid-cols-[minmax(0,1fr)_auto_auto] gap-x-3 text-[10px] uppercase tracking-wide text-slate">
+            <span />
+            <span>Общая выборка</span>
+            <span>{TARGET_LABEL}</span>
+          </div>
+          <div className="mt-1 space-y-2 text-xs">
+            {secondaryMetrics.map((metric) => (
+              <div key={metric.id} className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto_auto] gap-x-3 gap-y-1">
+                <span className="min-w-0 break-words">{metric.label}</span>
+                <span className="tabular-nums">{barValueLabel({ share: metric.total })}</span>
+                <span className="tabular-nums">
+                  {targetNote ? targetNote : barValueLabel({ share: metric.target })}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
     </ChartCard>
   );
 }

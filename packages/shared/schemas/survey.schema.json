@@ -361,6 +361,13 @@
         "center": {
           "$ref": "#/$defs/ReportingGroup"
         },
+        "polarity": {
+          "type": "string",
+          "enum": [
+            "emotions"
+          ],
+          "description": "Специальные показатели полярности эмоций, которые показываются только для этого вопроса."
+        },
         "groups": {
           "type": "object",
           "additionalProperties": false,

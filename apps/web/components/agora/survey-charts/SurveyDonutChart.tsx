@@ -109,6 +109,7 @@ export function SurveyDonutChart({
     <ChartCard
       title={title}
       sample={sample}
+      targetN={target.n}
       legend={<Legend items={parts.map((part) => ({ label: part.label, tone: part.tone }))} />}
       note={targetNote ?? dataNote}
       table={(

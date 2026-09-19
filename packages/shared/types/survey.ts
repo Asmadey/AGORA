@@ -528,6 +528,10 @@ export interface Theme {
 export interface Reporting {
   chart: ReportingChart;
   center?: ReportingGroup;
+  /**
+   * Специальные показатели полярности эмоций, которые показываются только для этого вопроса.
+   */
+  polarity?: "emotions";
   groups?: {
     positive?: string[];
     negative?: string[];

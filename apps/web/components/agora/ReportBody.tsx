@@ -3,6 +3,7 @@ import type { ReactNode } from "react";
 import { Chip, Metric, ScoreBar, TimecodeRef } from "@/components/agora/Primitives";
 import { PersonaAccordion } from "@/components/agora/PersonaAccordion";
 import { SurveyValuesChart } from "@/components/agora/SurveyValuesChart";
+import { SurveyQuestionChart } from "@/components/agora/SurveyQuestionChart";
 import { ValuesChart } from "@/components/agora/ValuesChart";
 import { MetricProvenance } from "@/components/agora/MetricProvenance";
 import { MetricInfo } from "@/components/agora/MetricInfo";
@@ -21,12 +22,10 @@ import {
   segmentDimensionLabel,
 } from "@/lib/report-charts";
 import {
-  matrixPairs,
-  optionPairs,
-  polarityPairs,
   surveyBlocks,
   surveyQuestion,
 } from "@/lib/report-survey";
+import { surveyQuestionCharts } from "@/lib/report-survey-charts";
 import { showsSection, type ReportScope } from "@/lib/share-scope";
 import { GROUNDING_PROP_TOL, type GroundingReport } from "@/lib/persona-grounding";
 import type { PersonaValuesInput } from "@/lib/values-chart";
@@ -34,8 +33,6 @@ import type {
   AnswerView,
   ReportView,
   SurveyIndexKey,
-  SurveyQuestionView,
-  SurveyStats,
   SurveyView,
 } from "@/lib/report-view";
 
@@ -129,192 +126,6 @@ function pct(share: number | null): string {
 }
 
 /**
- * Строка показателя: подпись и два числа — по всей аудитории и по срезу.
- *
- * Колонка среза у КАЖДОГО показателя — требование заказчика, а не украшение.
- * Поэтому она рисуется одной функцией на все типы вопросов: скопированная по
- * четырём веткам, она разошлась бы в половине из них при первой же правке.
- */
-function SurveyRow({
-  label,
-  total,
-  target,
-  muted = false,
-}: {
-  label: string;
-  total: string;
-  target: string;
-  muted?: boolean;
-}) {
-  return (
-    <div className="grid grid-cols-[1fr_auto_auto] items-baseline gap-x-4 py-[3px] text-sm">
-      <span className={`min-w-0 truncate ${muted ? "text-slate" : ""}`} title={label}>
-        {label}
-      </span>
-      <span className="w-14 text-right tabular-nums">{total}</span>
-      <span className="w-14 text-right tabular-nums text-slate">{target}</span>
-    </div>
-  );
-}
-
-/**
- * Сколько человек стоит за числом.
- *
- * `n` — ответившие, `base` — опрошенные. Заказчик подписывает доли «в % от
- * опрошенных», поэтому доля уже посчитана от `base`; оба числа нужны, чтобы
- * пропуск не выглядел измеренным мнением.
- */
-function surveySize(stats: SurveyStats): string {
-  return stats.base === null ? `${stats.n}` : `${stats.n} из ${stats.base}`;
-}
-
-/**
- * Один вопрос анкеты: заголовок, размеры охватов и числа по типу вопроса.
- *
- * Подавленный срез не рисуется прочерками молча — под вопросом стоит строка о
- * том, что срез меньше порога. Молчаливые прочерки в колонке читаются как сбой
- * расчёта, а это решение, принятое намеренно.
- */
-function SurveyQuestionCard({
-  question,
-  targetLabel,
-  minSegment,
-}: {
-  question: SurveyQuestionView;
-  targetLabel: string;
-  minSegment: number;
-}) {
-  // Колонка среза заполняется только из среза: сведение пар живёт в `lib`,
-  // потому что подстановку «нет среза — покажем общее» разметка не сторожит
-  // ничем, а выглядит такая подстановка как посчитанный срез.
-  const options = optionPairs(question, question.total, question.target);
-  const polarity = polarityPairs(question, question.total, question.target);
-  const rows = matrixPairs(question, question.total, question.target);
-  const unlabelled = [...options, ...rows].some((r) => !r.known);
-
-  return (
-    <div>
-      <h4 className="text-sm font-medium">
-        {question.number === null ? "" : `${question.number}. `}
-        {question.label}
-      </h4>
-      {/*
-        Размеры охватов стоят строкой над числами, а не в шапке колонок: «3 из
-        3» не влезает в колонку шириной под «100 %», а обрезанное n читается
-        как другое число.
-      */}
-      <p className="mt-0.5 text-[11px] text-slate">
-        Ответили: {surveySize(question.total)} · в срезе «{targetLabel}»:{" "}
-        {surveySize(question.target)}
-      </p>
-      <div className="mt-1 grid grid-cols-[1fr_auto_auto] gap-x-4 text-[11px] uppercase tracking-wide text-slate">
-        <span>Показатель</span>
-        <span className="w-14 text-right">Все</span>
-        <span className="w-14 text-right normal-case tracking-normal">{targetLabel}</span>
-      </div>
-
-      <div className="mt-1 divide-y divide-hairline/60">
-        {question.type === "scale" && (
-          <>
-            <SurveyRow
-              label="Среднее"
-              total={fmt(question.total.mean, 2)}
-              target={fmt(question.target.mean, 2)}
-            />
-            <SurveyRow
-              label="Доля 8–10"
-              total={pct(question.total.topBox)}
-              target={pct(question.target.topBox)}
-            />
-            {(question.total.groups ?? []).map((g) => (
-              <SurveyRow
-                key={g.id}
-                label={`Баллы ${g.id}`}
-                total={pct(g.share)}
-                target={pct(
-                  question.target.groups?.find((t) => t.id === g.id)?.share ?? null,
-                )}
-                muted
-              />
-            ))}
-          </>
-        )}
-
-        {options.map((o) => (
-          <SurveyRow
-            key={o.id}
-            label={o.label}
-            total={pct(o.total)}
-            target={pct(o.target)}
-            muted={o.service}
-          />
-        ))}
-
-        {polarity.map((row) => (
-          <SurveyRow
-            key={row.id}
-            label={row.label}
-            total={pct(row.total)}
-            target={pct(row.target)}
-          />
-        ))}
-
-        {rows.map((row) => (
-          <div key={row.id} className="py-1">
-            <p className="min-w-0 truncate text-xs text-slate" title={row.label}>
-              {row.label}
-            </p>
-            {row.options.map((o) => (
-              <SurveyRow
-                key={o.id}
-                label={o.label}
-                total={pct(o.total)}
-                target={pct(o.target)}
-                muted={o.service}
-              />
-            ))}
-          </div>
-        ))}
-
-        {question.type === "open" && (
-          <SurveyRow
-            label="Ответов в свободной форме"
-            total={String(question.total.n)}
-            target={String(question.target.n)}
-          />
-        )}
-      </div>
-
-      <div className="mt-1 space-y-0.5 text-[11px] text-slate">
-        {question.target.belowThreshold && (
-          <p>
-            Срез «{targetLabel}»: {question.target.n} персон — меньше порога{" "}
-            {minSegment}. Доли по нему не считались: доля по такой группе шагает
-            слишком крупно, чтобы её можно было читать наравне с остальными.
-          </p>
-        )}
-        {question.total.errors !== null && question.total.errors > 0 && (
-          <p>
-            Не разобрано по форме: {question.total.errors}. Такой ответ нарушил
-            правило вопроса и в доли не идёт — он остаётся здесь числом, чтобы
-            доля не выглядела посчитанной по всем.
-          </p>
-        )}
-        {unlabelled && (
-          <p>
-            Подписи части вариантов в анкете заказчика не нашлись — на их месте
-            стоят идентификаторы. Доли при этом посчитаны.
-          </p>
-        )}
-        {question.type === "open" && (
-          <p>Сами ответы стоят в карточках персон ниже.</p>
-        )}
-      </div>
-    </div>
-  );
-}
-
-/**
  * Секция «Ответы на анкету».
  *
  * Числа приходят посчитанными из `aggregate.survey` — это вывод `survey_tally`
@@ -323,6 +134,7 @@ function SurveyQuestionCard({
  */
 function SurveySection({ survey }: { survey: SurveyView }) {
   const targetLabel = survey.audience.targetRange ?? "срез";
+  const charts = new Map(surveyQuestionCharts(survey).map((chart) => [chart.id, chart]));
   const indices: { key: SurveyIndexKey; label: string; hint: string }[] = [
     {
       key: "satisfaction",
@@ -381,12 +193,7 @@ function SurveySection({ survey }: { survey: SurveyView }) {
             <h3 className="text-xs uppercase tracking-wide text-slate">{block.label}</h3>
             <div className="mt-4 space-y-5">
               {block.questions.map((q) => (
-                <SurveyQuestionCard
-                  key={q.id}
-                  question={q}
-                  targetLabel={targetLabel}
-                  minSegment={survey.minSegment}
-                />
+                <SurveyQuestionChart key={q.id} chart={charts.get(q.id)!} />
               ))}
             </div>
           </div>
