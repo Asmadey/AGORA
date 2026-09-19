@@ -3,7 +3,12 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { BLOCKED_SETS_QUERY, blockedReason, toBlocked } from "./audience-delete.ts";
+import {
+  BLOCKED_SETS_QUERY,
+  blockedReason,
+  canDeleteAudienceSet,
+  toBlocked,
+} from "./audience-delete.ts";
 
 /**
  * Набор, который СЕЙЧАС генерируется, удалять нельзя.
@@ -51,6 +56,19 @@ test("у каждой причины свой текст — «на них сч�
   // ради которого причина стала различаться.
   assert.ok(!/прогон/i.test(gen), `текст про генерацию не упоминает прогоны: ${gen}`);
   assert.match(runs, /прогон/i);
+});
+
+test("сорвавшийся набор без прогонов можно удалить", () => {
+  const blocked = toBlocked([
+    { id: "failed", name: "Сорвавшаяся аудитория", runs: "0", status: "failed" },
+  ]);
+  assert.deepEqual(blocked, []);
+});
+
+test("правило удаления сохраняет оба запрета", () => {
+  assert.equal(canDeleteAudienceSet({ status: "failed", runs: 0 }), true);
+  assert.equal(canDeleteAudienceSet({ status: "generating", runs: 0 }), false);
+  assert.equal(canDeleteAudienceSet({ status: "failed", runs: 1 }), false);
 });
 
 test("запрос отбирает и прогоны, и генерацию", () => {

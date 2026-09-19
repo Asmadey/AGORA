@@ -30,7 +30,17 @@ export interface BlockedRow {
   id: string;
   name: string;
   runs: string;
-  status: string;
+  status: "generating" | "ready" | "failed";
+}
+
+export interface AudienceDeletionState {
+  status: BlockedRow["status"];
+  runs: number;
+}
+
+/** Удаление разрешено только если набор не строится и не используется прогоном. */
+export function canDeleteAudienceSet({ status, runs }: AudienceDeletionState): boolean {
+  return status !== "generating" && runs === 0;
 }
 
 /**
@@ -51,16 +61,17 @@ export const BLOCKED_SETS_QUERY = `
 `;
 
 export function toBlocked(rows: BlockedRow[]): BlockedSet[] {
-  return rows.map((row) => {
+  return rows.flatMap((row) => {
     const runs = Number(row.runs);
-    return {
+    if (canDeleteAudienceSet({ status: row.status, runs })) return [];
+    return [{
       id: row.id,
       name: row.name,
       runs,
       // Прогоны важнее генерации: незаконченную аудиторию можно собрать заново,
       // а отчёт, потерявший ссылку на свою аудиторию, восстановить нечем.
       reason: runs > 0 ? "runs" : "generating",
-    };
+    }];
   });
 }
 

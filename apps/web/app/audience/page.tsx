@@ -32,6 +32,9 @@ export default async function AudiencePage() {
         personaCount: s.personaCount,
         seed: s.seed,
         createdAt: s.createdAt,
+        status: s.status,
+        generatedCount: s.generatedCount,
+        error: s.error,
       }))}
     />
   );

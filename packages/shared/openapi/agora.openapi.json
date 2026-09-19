@@ -565,6 +565,62 @@
         ]
       }
     },
+    "/api/persona-sets/{id}/resume": {
+      "post": {
+        "summary": "Продолжить сборку набора",
+        "description": "Добавляет только недостающих персон из сохранённых критериев, снимка корпуса и снимка настроек. Чужой набор не подтверждается.",
+        "tags": [
+          "Персоны"
+        ],
+        "operationId": "resumePersonaSet",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Продолжение поставлено в очередь"
+          },
+          "401": {
+            "description": "Нет действующей сессии",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Набор не существует или принадлежит другой команде",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Продолжение возможно только для failed-набора",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/personas": {
       "get": {
         "summary": "Персоны арендатора",

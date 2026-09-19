@@ -193,6 +193,12 @@ export async function POST(request: Request) {
       return Response.json({ error: snapshotError, warnings }, { status: 400 });
     }
 
+    // Снимок настроек должен попасть в строку persona_sets вместе с корпусом:
+    // продолжение позже не имеет права читать уже изменённые настройки команды.
+    const settings = await withTenant(tenantId, (client) =>
+      buildSettingsSnapshot(client),
+    );
+
     const set = await withTenant(tenantId, (client) =>
       createPersonaSet(
         client,
@@ -204,16 +210,8 @@ export async function POST(request: Request) {
         "generating",
         snapshotId,
         userId,
+        settings,
       ),
-    );
-
-    // Настройки пиннятся на задание генерации так же, как на прогон: пока
-    // набор считается, команда может сменить температуру создания персон, и
-    // тогда часть аудитории получилась бы под одним разбросом формулировок, а
-    // часть под другим — внутри одного набора, который потом сравнивают как
-    // целое.
-    const settings = await withTenant(tenantId, (client) =>
-      buildSettingsSnapshot(client),
     );
 
     try {
