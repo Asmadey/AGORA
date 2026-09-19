@@ -22,7 +22,9 @@
  * дефект, поэтому его сверяет тест `values-chart.test.ts`.
  */
 
-/** Семнадцать традиционных ценностей. Порядок — как в справочнике. */
+import rawValuesSource from "../../../data/values/values_by_age_vciom.json" with { type: "json" };
+
+/** Семнадцать традиционных ценностей. Порядок - как в справочнике. */
 export const TRADITIONAL_VALUES = [
   "Жизнь",
   "Достоинство",
@@ -42,6 +44,141 @@ export const TRADITIONAL_VALUES = [
   "Историческая память и преемственность поколений",
   "Единство народов России",
 ] as const;
+
+export interface ValuesByAgeSource {
+  source: string;
+  respondents: number;
+  groups: readonly string[];
+  shares_percent: Record<string, Record<string, number>>;
+}
+
+/** Данные ВЦИОМ передаются компоненту явно, чтобы источник был виден в DOM-узле. */
+export const VCIOM_VALUES_SOURCE = rawValuesSource as ValuesByAgeSource;
+
+/** Порог отчёта для долей по малому числу персон. На самом пороге график ещё скрывает доли. */
+export const VALUES_MIN_SAMPLE_SIZE = 5;
+
+export interface PersonaValuesInput {
+  dna?: unknown;
+}
+
+export interface ValueComparisonRow {
+  value: string;
+  audienceCount: number;
+  audiencePercent: number;
+  sourcePercent: number;
+}
+
+export interface ValueComparison {
+  sampleSize: number;
+  smallSample: boolean;
+  sampleMessage: string | null;
+  sourceBasis: string;
+  rows: ValueComparisonRow[];
+  outsideListCount: number;
+}
+
+function objectOf(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+function personaAgeGroup(persona: PersonaValuesInput): string | null {
+  const demographics = objectOf(objectOf(persona.dna).demographics);
+  const value = demographics.age_group;
+  return typeof value === "string" && value.length > 0 ? value : null;
+}
+
+function personaValues(persona: PersonaValuesInput): string[] {
+  const values = objectOf(objectOf(persona.dna).values_and_beliefs).important_values;
+  if (!Array.isArray(values)) return [];
+  return [...new Set(values.filter((value): value is string => typeof value === "string"))];
+}
+
+function weightedSourceShares(
+  source: ValuesByAgeSource,
+  ageGroups: Record<string, number>,
+): { shares: Record<string, number>; basis: string } {
+  const knownGroups = source.groups.filter((group) => (ageGroups[group] ?? 0) > 0);
+  const knownCount = knownGroups.reduce((sum, group) => sum + ageGroups[group], 0);
+
+  if (knownCount === 0) {
+    return {
+      shares: Object.fromEntries(
+        TRADITIONAL_VALUES.map((value) => [value, source.shares_percent[value]?.всего ?? 0]),
+      ),
+      basis: "всего",
+    };
+  }
+
+  const shares = Object.fromEntries(
+    TRADITIONAL_VALUES.map((value) => [
+      value,
+      knownGroups.reduce(
+        (sum, group) =>
+          sum +
+          (ageGroups[group] / knownCount) * (source.shares_percent[value]?.[group] ?? 0),
+        0,
+      ),
+    ]),
+  );
+
+  return {
+    shares,
+    basis: knownGroups.join(", "),
+  };
+}
+
+/**
+ * Сравнивает доли ценностей набора с ВЦИОМ.
+ *
+ * Счётчик аудитории идёт по персонам, а не по назначениям: если у персоны пять
+ * ценностей, она добавляет по одному к пяти строкам и один раз в знаменатель.
+ * Источник сначала сворачивается по возрастному составу этого же набора.
+ */
+export function valueComparison(
+  personas: readonly PersonaValuesInput[],
+  source: ValuesByAgeSource = VCIOM_VALUES_SOURCE,
+  minSampleSize = VALUES_MIN_SAMPLE_SIZE,
+): ValueComparison {
+  const counts: Record<string, number> = {};
+  for (const value of TRADITIONAL_VALUES) counts[value] = 0;
+  const ageGroups: Record<string, number> = {};
+  let outside = 0;
+
+  for (const persona of personas) {
+    const ageGroup = personaAgeGroup(persona);
+    if (ageGroup) ageGroups[ageGroup] = (ageGroups[ageGroup] ?? 0) + 1;
+    for (const value of personaValues(persona)) {
+      if (value in counts) counts[value] += 1;
+      else outside += 1;
+    }
+  }
+
+  const weighted = weightedSourceShares(source, ageGroups);
+  const sampleSize = personas.length;
+  const smallSample = sampleSize <= minSampleSize;
+
+  return {
+    sampleSize,
+    smallSample,
+    sampleMessage:
+      sampleSize === 0
+        ? "Сравнивать не с чем: в наборе пока нет персон."
+        : smallSample
+          ? `Малая выборка: ${sampleSize} персон. Доли могут заметно отличаться от источника случайно, это ожидаемый шум, а не дефект набора.`
+          : null,
+    sourceBasis: weighted.basis,
+    outsideListCount: outside,
+    rows: TRADITIONAL_VALUES.map((value) => ({
+      value,
+      audienceCount: counts[value],
+      audiencePercent: sampleSize > 0 ? (counts[value] / sampleSize) * 100 : 0,
+      sourcePercent: weighted.shares[value],
+    })),
+  };
+}
 
 export interface ValueChartRow {
   value: string;

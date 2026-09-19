@@ -4,8 +4,11 @@ import { join } from "node:path";
 import { test } from "node:test";
 
 import {
+  VCIOM_VALUES_SOURCE,
+  VALUES_MIN_SAMPLE_SIZE,
   outsideListCount,
   TRADITIONAL_VALUES,
+  valueComparison,
   valueChartRows,
 } from "./values-chart.ts";
 
@@ -113,22 +116,88 @@ test("неканоническое считается отдельно, а не 
   assert.equal(outsideListCount({ "Крепкая семья": 4 }), 0);
 });
 
+function valuePersona(ageGroup: string, values: string[]) {
+  return {
+    dna: {
+      demographics: { age_group: ageGroup },
+      values_and_beliefs: { important_values: values },
+    },
+  };
+}
+
+test("доля аудитории считается по персонам и показывает пару чисел", () => {
+  const personas = Array.from({ length: 40 }, (_, index) =>
+    valuePersona("35-44", index < 30 ? ["Крепкая семья"] : []),
+  );
+
+  const row = valueComparison(personas, VCIOM_VALUES_SOURCE).rows.find(
+    (item) => item.value === "Крепкая семья",
+  );
+
+  assert.ok(row);
+  assert.equal(row.audiencePercent, 75);
+  assert.equal(row.sourcePercent, 80);
+  assert.equal(row.audienceCount, 30);
+});
+
+test("источник взвешивается по возрасту набора, а не берётся из «всего»", () => {
+  const personas = Array.from({ length: 10 }, () => valuePersona("60+", ["Крепкая семья"]));
+  const row = valueComparison(personas, VCIOM_VALUES_SOURCE).rows.find(
+    (item) => item.value === "Крепкая семья",
+  );
+
+  assert.ok(row);
+  assert.equal(row.sourcePercent, 70);
+  assert.notEqual(row.sourcePercent, VCIOM_VALUES_SOURCE.shares_percent["Крепкая семья"].всего);
+  assert.equal(valueComparison(personas, VCIOM_VALUES_SOURCE).sourceBasis, "60+");
+});
+
+test("пять персон получают предупреждение о малой выборке", () => {
+  const result = valueComparison(
+    Array.from({ length: 5 }, () => valuePersona("60+", ["Крепкая семья"])),
+    VCIOM_VALUES_SOURCE,
+  );
+
+  assert.equal(VALUES_MIN_SAMPLE_SIZE, 5);
+  assert.equal(result.sampleSize, 5);
+  assert.equal(result.smallSample, true);
+  assert.match(result.sampleMessage ?? "", /малая выборка/i);
+});
+
+test("порог графика совпадает с порогом долей отчёта", () => {
+  const aggregate = read("../../services/agent-core/agent_core/analytics/aggregate.py");
+  const match = /MIN_SEGMENT_PERSONAS\s*=\s*(\d+)/.exec(aggregate);
+
+  assert.ok(match, "порог отчёта не найден");
+  assert.equal(Number(match[1]), VALUES_MIN_SAMPLE_SIZE);
+});
+
+test("страница набора и отчёт импортируют один компонент ValuesChart", () => {
+  const setPage = code(read("app/personas/sets/[id]/page.tsx"));
+  const reportBody = code(read("components/agora/ReportBody.tsx"));
+
+  assert.match(setPage, /import \{ ValuesChart \} from "@\/components\/agora\/ValuesChart"/);
+  assert.match(reportBody, /import \{ ValuesChart \} from "@\/components\/agora\/ValuesChart"/);
+  assert.doesNotMatch(reportBody, /import \{ ValuesChart \} from "[^"].*SurveyValuesChart/);
+});
+
+test("блоки заземления и графика складываются в одну колонку на телефоне", () => {
+  const setPage = code(read("app/personas/sets/[id]/page.tsx"));
+  const reportBody = code(read("components/agora/ReportBody.tsx"));
+
+  assert.match(setPage, /grid-cols-1[^\n]*lg:grid-cols-2/);
+  assert.match(reportBody, /grid-cols-1[^\n]*lg:grid-cols-2/);
+});
+
 // ─── Плитка ─────────────────────────────────────────────────────────────────
 
 test("плитка модели зрения заменена на ценности", () => {
   const body = code(read("components/agora/ReportBody.tsx"));
   const chart = code(read("components/agora/ValuesChart.tsx"));
 
-  // 17.09.2026 плитка сменила содержимое ещё раз: ценности АУДИТОРИИ уступили
-  // место ответам на вопрос 8 — «какие ценности стремились донести создатели».
-  // Разница в том, что они описывают: первое — свойство сгенерированных персон,
-  // второе — то, что аудитория увидела в материале, то есть ответ на вопрос
-  // исследования.
-  //
-  // Проверка здесь сохранена, а не удалена: она сторожит исходное требование —
-  // «плитки модели зрения в панели показателей нет». Требование про сам график
-  // ценностей переехало в report-survey.test.ts вместе с решением.
-  assert.ok(!/<ValuesChart/.test(body), "график ценностей аудитории ушёл из отчёта");
+  // График DNA аудитории и ответы на вопрос 8 описывают разные вещи. В отчёте
+  // должен быть первый, а в панели вопросов остаётся второй.
+  assert.ok(/<ValuesChart/.test(body), "график ценностей аудитории есть в отчёте");
   assert.ok(
     !/label="Модель зрения"/.test(body),
     "плитка модели зрения убрана — её место занято",

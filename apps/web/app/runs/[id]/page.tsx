@@ -10,6 +10,8 @@ import { withTenant } from "@/lib/server/db";
 import { requireSession } from "@/lib/server/guard";
 import { loadReport, loadReportPersonas } from "@/lib/server/reports";
 import { getTask, taskNumber, loadRunTiming } from "@/lib/server/tasks";
+import { listPersonas } from "@/lib/server/personas";
+import { snapshotRecordsOfPersonaSet } from "@/lib/server/corpus-db";
 import { notFound } from "next/navigation";
 import { resolveRun } from "@/lib/server/run-ref";
 import { runSlug } from "@/lib/run-slug";
@@ -20,6 +22,7 @@ import { researchTitle } from "@/lib/research-title";
 import { parseAnswer, parseReport } from "@/lib/report-view";
 import { compareScoreMaps } from "@/lib/rerun";
 import { CRITERIA_LABELS, type Criterion } from "@/lib/agora-types";
+import { groundingReport } from "@/lib/persona-grounding";
 
 /**
  * Экран отчёта (PRD §5.E, §6): агрегат и графики сверху, аккордеон по персонам снизу.
@@ -93,6 +96,15 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
     ? compareScoreMaps(view.scores, parentView.scores)
     : [];
   const answers = items.map(parseAnswer);
+  const personaSetId = task?.personaSetId;
+  const audienceData = personaSetId
+    ? await withTenant(tenantId, async (client) => ({
+        personas: await listPersonas(client, personaSetId),
+        records: await snapshotRecordsOfPersonaSet(client, personaSetId),
+      }))
+    : null;
+  const valuePersonas = audienceData?.personas ?? [];
+  const audienceGrounding = groundingReport(valuePersonas, audienceData?.records ?? []);
   // Номер — для человека, идентификатор — для ссылки. Заголовок «Исследование
   // e81feb92-97a2-43ad-8112-de7503699c60» нельзя ни произнести, ни запомнить, а
   // сослаться на прогон в разговоре нужно каждый день.
@@ -225,6 +237,8 @@ export default async function ReportPage({ params }: { params: Promise<{ id: str
           runId={id}
           qaNote={qaNote}
           scope="full"
+          valuePersonas={valuePersonas}
+          audienceGrounding={audienceGrounding}
           videoDurationSec={videoDurationSec}
           timeline={<Timeline runId={id} processingSec={timing?.totalSec ?? null} />}
           rawReport={
