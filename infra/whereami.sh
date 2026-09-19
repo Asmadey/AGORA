@@ -16,9 +16,22 @@ done
 
 echo
 echo "── Открытые PR и их проверки ────────────────────────────────────────"
-gh pr list --state open --json number,title,mergeable,statusCheckRollup \
+# gh ищется по известным местам, а не только по PATH. Причина конкретная: на
+# машине владельца `.zshenv` падает на первой строке (`. "$HOME/.cargo/env"`,
+# файла нет), интерактивная оболочка до настройки PATH не доходит, и
+# `command -v gh` там пусто — хотя сам gh стоит в /opt/homebrew/bin. Скрипт,
+# молча пропускающий раздел про PR, бесполезен ровно тогда, когда нужнее всего.
+GH=$(command -v gh 2>/dev/null \
+  || for c in /opt/homebrew/bin/gh /usr/local/bin/gh "$HOME/.local/bin/gh"; do
+       [ -x "$c" ] && { echo "$c"; break; }
+     done)
+if [ -z "${GH:-}" ]; then
+  echo "  gh не найден — установите (brew install gh) или добавьте в PATH"
+else
+"$GH" pr list --state open --json number,title,mergeable,statusCheckRollup \
   --jq '.[] | "  #\(.number) \(.mergeable) [\([.statusCheckRollup[]?.conclusion // "ждёт"] | join(","))] \(.title[0:44])"' 2>/dev/null \
-  || echo "  gh недоступен"
+  || echo "  gh есть, но список не получен — проверьте: $GH auth status"
+fi
 
 echo
 echo "── Исполнители Codex ────────────────────────────────────────────────"
