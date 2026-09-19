@@ -101,14 +101,17 @@ def classify_missing_imports(
     declared: set[str],
     importable: Callable[[str], bool] = _importable,
 ) -> tuple[dict[str, set[str]], dict[str, set[str]]]:
-    """Разделяет отсутствующие импорты на незаявленные и средовые."""
+    """Разделяет импорты на незаявленные и заявленные, но отсутствующие."""
     undeclared: dict[str, set[str]] = {}
     declared_but_missing: dict[str, set[str]] = {}
     for name, files in found.items():
-        if importable(name):
-            continue
-        target = declared_but_missing if _is_declared(name, declared) else undeclared
-        target[name] = files
+        if not _is_declared(name, declared):
+            # Декларация обязательна даже тогда, когда пакет случайно приехал
+            # транзитивно или уже установлен в окружении теста.
+            undeclared[name] = files
+        elif not importable(name):
+            # Заявленный, но отсутствующий пакет - честный SKIP для среды.
+            declared_but_missing[name] = files
     return undeclared, declared_but_missing
 
 
@@ -170,15 +173,15 @@ def test_model_client_is_declared():
     ослабить её случайно. Здесь названа конкретная причина: без openai воркер не
     выполнит ни одной задачи, где участвует модель, — а таких три из четырёх.
     """
-    if _importable("openai"):
-        return
-    if _is_declared("openai", declared_distributions()):
+    declared = declared_distributions()
+    if not _is_declared("openai", declared):
+        pytest.fail(
+            "openai импортируется кодом, но не объявлен в pyproject: разбор кадров (#16), "
+            "прогон респондентов (#18) и обогащение персон обращаются к нему во время работы"
+        )
+    if not _importable("openai"):
         pytest.skip(
             "openai объявлен в pyproject, но не установлен в этой среде. "
             "Запустите тест в образе воркера: "
             "./evals/run_in_worker.sh -- python -m pytest services/agent-core/tests"
         )
-    pytest.fail(
-        "openai импортируется кодом, но не объявлен в pyproject: разбор кадров (#16), "
-        "прогон респондентов (#18) и обогащение персон обращаются к нему во время работы"
-    )
