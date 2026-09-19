@@ -24,7 +24,8 @@ NPS, ретеншн, посегментный срез. Он стоит на ф�
 ─── Порог и состав аудитории — разные вещи ──────────────────────────────────
 Доля по группе из пяти человек шагает по двадцать процентных пунктов и выглядит
 на экране ровно так же, как доля по сотне. Поэтому доли и средние в срезе
-считаются от `min_segment` персон.
+считаются от фактического числа персон в срезе. `min_segment` только скрывает
+слишком маленький срез, но не меняет его знаменатель.
 
 Но ОПИСАНИЕ состава аудитории порога не имеет: заказчик прямо требует разрез по
 городам, а городов в корпусе семь, и при сотне персон в каждом около
@@ -96,16 +97,20 @@ def _answers_of(answer: dict[str, Any]) -> dict[str, Any]:
 # ─── Редьюсеры по типу вопроса ───────────────────────────────────────────────
 
 
-def _scale(question: dict[str, Any], raw_values: Iterable[Any]) -> dict[str, Any]:
+def _scale(
+    question: dict[str, Any], raw_values: Iterable[Any], base: int
+) -> dict[str, Any]:
     values: list[int] = []
     for raw in raw_values:
         parsed = parse_field_answer(question, raw)
         if parsed.value is not None:
             values.append(parsed.value)
-    if not values:
-        return {"n": 0, "mean": None, "top_box": None, "distribution": {}, "groups": {}}
 
-    top = sum(1 for v in values if v >= TOP_BOX_MIN) / len(values)
+    top = (
+        round(sum(1 for v in values if v >= TOP_BOX_MIN) / base, 4)
+        if base
+        else None
+    )
     # Ключ — СТРОКА, а не балл. Документ Mongo целых ключей не принимает
     # вовсе, и один такой ключ стоил отчёта прогона 0093 целиком: запись
     # упала на `InvalidDocument … key was 3`, задача при этом завершилась
@@ -116,15 +121,19 @@ def _scale(question: dict[str, Any], raw_values: Iterable[Any]) -> dict[str, Any
     # Читатель отчёта в вебе тоже ждёт строку — в JSON другого ключа не
     # бывает (см. lib/fixtures/survey-tally.json).
     distribution = {str(v): values.count(v) for v in sorted(set(values))}
-    groups = {
-        "9-10": sum(1 for v in values if v >= NPS_PROMOTER_MIN) / len(values),
-        "7-8": sum(1 for v in values if 7 <= v <= 8) / len(values),
-        "0-6": sum(1 for v in values if v <= NPS_DETRACTOR_MAX) / len(values),
-    }
+    groups = (
+        {
+            "9-10": sum(1 for v in values if v >= NPS_PROMOTER_MIN) / base,
+            "7-8": sum(1 for v in values if 7 <= v <= 8) / base,
+            "0-6": sum(1 for v in values if v <= NPS_DETRACTOR_MAX) / base,
+        }
+        if base
+        else None
+    )
     return {
         "n": len(values),
-        "mean": round(statistics.mean(values), 2),
-        "top_box": round(top, 4),
+        "mean": round(statistics.mean(values), 2) if values else None,
+        "top_box": top,
         "distribution": distribution,
         "groups": groups,
     }
@@ -133,14 +142,15 @@ def _scale(question: dict[str, Any], raw_values: Iterable[Any]) -> dict[str, Any
 def _choice(
     question: dict[str, Any],
     raw_values: Iterable[Any],
+    base: int,
     row: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """
     Доли по вариантам.
 
-    Знаменатель — число ОТВЕТИВШИХ персон, как подписано у заказчика
-    («в % от опрошенных»), а не число выборов. При мультивыборе сумма долей
-    поэтому больше единицы, и это не ошибка: персона называет до трёх эмоций.
+    Знаменатель — размер ОХВАТА опрошенных персон, а не число ответивших и не
+    число выборов. При мультивыборе сумма долей поэтому больше единицы, и это
+    не ошибка: персона называет до трёх эмоций.
 
     Невыбранный вариант получает ноль, а не исчезает из результата. Исчезнувшая
     строка на графике читается как «такого варианта не предлагали».
@@ -174,19 +184,21 @@ def _choice(
         for oid in parsed.option_ids:
             if oid in counts:
                 counts[oid] += 1
-    shares = {
-        oid: (round(counts[oid] / answered, 4) if answered else 0.0) for oid in option_ids
-    }
+    shares = (
+        {oid: round(counts[oid] / base, 4) for oid in option_ids}
+        if base
+        else None
+    )
     return {"n": answered, "counts": counts, "shares": shares, "errors": errors}
 
 
 def _matrix(
-    question: dict[str, Any], by_field: dict[str, list[Any]]
+    question: dict[str, Any], by_field: dict[str, list[Any]], base: int
 ) -> dict[str, Any]:
     rows: dict[str, Any] = {}
     for row in question_rows(question):
         rid = str(row.get("id"))
-        stats = _choice(question, by_field.get(rid, []), row)
+        stats = _choice(question, by_field.get(rid, []), base, row)
         stats["themeId"] = row.get("themeId")
         rows[rid] = stats
     answered = max((r["n"] for r in rows.values()), default=0)
@@ -277,9 +289,8 @@ def _tally_scope(
 
     `base` — сколько персон в охвате опрашивали. Он кладётся рядом с `n` в
     каждый результат намеренно: заказчик подписывает доли «в % от опрошенных»,
-    а считаются они от ОТВЕТИВШИХ. При полной анкете это одно и то же, при
-    замеренных 40 % пропусков — расходится вдвое. Выбирать знаменатель за
-    читателя нельзя, поэтому в данных стоят оба числа.
+    и знаменатель обязан быть именно этим числом. При замеренных пропусках `n`
+    и `base` расходятся, поэтому выбирать знаменатель за читателя нельзя.
     """
     by_field: dict[str, list[Any]] = {}
     for answer in answers:
@@ -291,13 +302,13 @@ def _tally_scope(
         qid = str(q.get("id"))
         qtype = str(q.get("type") or "open")
         if qtype == "matrix_single":
-            per_question[qid] = _matrix(q, by_field)
+            per_question[qid] = _matrix(q, by_field, base)
         elif qtype == "scale":
-            per_question[qid] = _scale(q, by_field.get(qid, []))
+            per_question[qid] = _scale(q, by_field.get(qid, []), base)
         elif qtype == "open":
             per_question[qid] = _open(q, by_field.get(qid, []))
         else:
-            per_question[qid] = _choice(q, by_field.get(qid, []))
+            per_question[qid] = _choice(q, by_field.get(qid, []), base)
 
     for stats in per_question.values():
         stats["base"] = base
