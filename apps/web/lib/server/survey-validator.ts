@@ -61,6 +61,7 @@ export type SurveyReportingGroup = "positive" | "negative" | "neutral" | "unknow
 export interface SurveyReporting {
   chart: SurveyChartType;
   center?: SurveyReportingGroup;
+  polarity?: "emotions";
   groups?: Partial<Record<SurveyReportingGroup, string[]>>;
 }
 
@@ -205,6 +206,10 @@ function checkReporting(
         errors.push(
           `${prefix}.reporting.center: должен быть одной из групп ${REPORTING_GROUPS.join(", ")}`,
         );
+      }
+
+      if (value.polarity !== undefined && value.polarity !== "emotions") {
+        errors.push(`${prefix}.reporting.polarity: должна быть равна emotions`);
       }
 
       const groups = value.groups;

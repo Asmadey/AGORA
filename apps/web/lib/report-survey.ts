@@ -152,17 +152,18 @@ export interface SurveyPairRow {
 }
 
 /**
- * Две эксклюзивные доли вопроса 7.
+ * Две эксклюзивные доли вопроса с reporting.polarity = "emotions".
  *
  * Значения приходят готовыми из `survey_tally`. Функция только даёт им подписи
  * и добавляет колонку среза, сохраняя `null`: подавленный срез нельзя выдавать
  * за измеренный ноль или подменять значением всей аудитории.
  */
 export function polarityPairs(
-  _question: SurveyQuestionView,
+  question: SurveyQuestionView,
   total: SurveyStats,
   target: SurveyStats,
 ): SurveyPairRow[] {
+  if (spec(question)?.reporting?.polarity !== "emotions") return [];
   if (total.onlyPositive === null && total.onlyNegative === null) return [];
   return [
     {

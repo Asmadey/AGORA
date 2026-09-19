@@ -15,6 +15,7 @@ const CUSTOMER_SURVEY = JSON.parse(
     options?: Array<{ id: string }>;
     reporting?: {
       chart: string;
+      polarity?: string;
       groups?: Record<string, string[]>;
     };
     keyOptionIds?: string[];
@@ -66,6 +67,14 @@ test("анкета заказчика хранит тип диаграммы д�
       `у вопроса ${question.number} нет ожидаемого reporting.chart`,
     );
   }
+});
+
+test("полярность эмоций явно включена только у вопроса 7", () => {
+  const flagged = CUSTOMER_SURVEY.questions
+    .filter((question) => question.reporting?.polarity !== undefined)
+    .map((question) => ({ number: question.number, polarity: question.reporting?.polarity }));
+
+  assert.deepEqual(flagged, [{ number: 7, polarity: "emotions" }]);
 });
 
 test("классификация покрывает каждый вариант ровно одной группой", () => {

@@ -155,8 +155,6 @@ function barRows(question: SurveyQuestionView, total: SurveyStats, target: Surve
 }
 
 function secondaryMetrics(question: SurveyQuestionView): SurveyMetricPair[] {
-  const groups = definitionFor(question)?.reporting?.groups;
-  if (!groups?.positive?.length || !groups.negative?.length) return [];
   return polarityPairs(question, question.total, question.target).map((row) => ({
     id: row.id,
     label: row.label,

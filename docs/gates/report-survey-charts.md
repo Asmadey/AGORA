@@ -40,3 +40,13 @@ and suppressed null values visible.
   CHECK: npm test --workspace apps/web && cd apps/web && npx tsc --noEmit && cd ../.. && npm run build
   EXPECT: exit code 0
   EVIDENCE: npm test 630/630 passed; report-survey.test.ts 26/26 passed; npx tsc --noEmit exit=0; npm run build exit=0
+
+- [x] G8: polarity metrics are enabled by survey data and do not spill into question 10
+  CHECK: cd apps/web && node --conditions=react-server --test lib/report-survey.test.ts lib/report-survey-charts.test.ts lib/survey-reporting.test.ts
+  EXPECT: exit code 0; question 7 keeps both metrics and question 10 gets none
+  EVIDENCE: exit=0; 39 targeted tests passed; full web run passed 632/632
+
+- [x] G9: the worker accepts the survey contract and remains lint-clean
+  CHECK: cd services/agent-core && env -u OPENAI_BASE_URL -u OPENAI_API_KEY -u AI_MODEL python3 -m pytest -q --ignore=tests/test_audience_identity.py && python3 -m ruff check .
+  EXPECT: exit code 0
+  EVIDENCE: exit=0 in the project virtualenv; pytest completed all collected tests, ruff reported All checks passed!

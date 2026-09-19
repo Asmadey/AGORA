@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 
 import { parseReport, type SurveyQuestionView, type SurveyStats, type SurveyView } from "./report-view.ts";
-import { surveyQuestion } from "./report-survey.ts";
+import { polarityPairs, surveyQuestion } from "./report-survey.ts";
 import { buildSurveyQuestionChart } from "./report-survey-charts.ts";
 
 const WEB = new URL("..", import.meta.url).pathname;
@@ -125,7 +125,7 @@ test("выбор диаграммы и ряды закрытых вопросо�
   assert.equal(scale.target.mean, 8);
 });
 
-test("полярность эмоций встроена в модель только для вопроса с reporting.groups", () => {
+test("полярность эмоций встроена в модель только для вопроса с reporting.polarity", () => {
   const counted = view(FIXTURE.counted);
   const emotions = buildSurveyQuestionChart(emotionsQuestion());
   assert.equal(emotions.kind, "bar");
@@ -153,7 +153,7 @@ test("полярность эмоций встроена в модель тол�
   });
   assert.equal(withoutGroups.kind, "bar");
   if (withoutGroups.kind !== "bar") return;
-  assert.deepEqual(withoutGroups.secondaryMetrics, [], "без reporting.groups производных показателей нет");
+  assert.deepEqual(withoutGroups.secondaryMetrics, [], "без reporting.polarity производных показателей нет");
 
   const suppressedQuestion = emotionsQuestion();
   const suppressed = buildSurveyQuestionChart({
@@ -172,6 +172,20 @@ test("полярность эмоций встроена в модель тол�
     suppressed.secondaryMetrics.map((metric) => metric.target),
     [null, null],
     "подавленный срез остаётся null, а не становится нулём",
+  );
+});
+
+test("полярность не протекает на вопрос 10 с теми же группами", () => {
+  const importance = question(view(FIXTURE.counted), 10);
+  const rows = polarityPairs(
+    importance,
+    { ...importance.total, onlyPositive: 0.75, onlyNegative: 0.1 },
+    { ...importance.target, onlyPositive: 0.5, onlyNegative: 0.2 },
+  );
+  assert.deepEqual(
+    rows,
+    [],
+    "наличие reporting.groups у вопроса 10 не означает полярность эмоций",
   );
 });
 
