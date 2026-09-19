@@ -1,5 +1,5 @@
 """
-Метрика `values_grounding`: следует ли назначение ценностей корпусу.
+Метрика `values_grounding`: следует ли назначение ценностей таблице ВЦИОМ по возрасту.
 
 ─── Почему её не было ───────────────────────────────────────────────────────
 `persona_grounding` называется «заземлением персоны», а сверяет возраст, гео,
@@ -71,8 +71,21 @@ def test_вырожденный_вход_не_делит_на_ноль():
 
 def test_замер_возвращает_три_числа():
     m = values_grounding(size=200, seed=20260916)
-    assert set(m) >= {"rank_correlation", "coverage", "max_share", "personas"}
+    assert set(m) >= {
+        "rank_correlation",
+        "coverage",
+        "max_share",
+        "personas",
+        "source",
+        "expected_counts",
+    }
     assert m["personas"] == 200
+
+
+def test_ожидание_берется_из_таблицы_вциом_по_возрасту():
+    m = values_grounding(size=200, seed=20260916)
+    assert m["source"] == "values_by_age_vciom.json"
+    assert m["expected_counts"]["Крепкая семья"] > m["expected_counts"]["Коллективизм"]
 
 
 def test_порядок_следует_корпусу():

@@ -32,11 +32,13 @@ import json
 import sys
 from collections import Counter
 from pathlib import Path
+from statistics import fmean, stdev
 
 REPO = Path(__file__).resolve().parents[2]
 SCHEMA_PATH = REPO / "packages" / "shared" / "schemas" / "persona-dna.schema.json"
 FIXTURE_PATH = REPO / "evals" / "fixtures" / "persona_reference.json"
 CORPUS_PATH = REPO / "data" / "grounding" / "unified_respondent_sessions.json"
+VALUES_BY_AGE_PATH = REPO / "data" / "values" / "values_by_age_vciom.json"
 PROMPT_PATH = REPO / "prompts" / "persona.generate.md"
 GENERATOR_PATH = REPO / "services" / "agent-core" / "agent_core" / "persona" / "generator.py"
 API_ROUTER_PATH = REPO / "services" / "agent-core" / "agent_core" / "api" / "routers" / "personas.py"
@@ -145,6 +147,17 @@ if generator_src:
         "заземление на verbatims",
         "verbatim" in generator_src.lower(),
     )
+    check(
+        "ценности берутся из ВЦИОМ по возрасту",
+        "values_by_age_vciom.json" in generator_src
+        and "age_group" in generator_src
+        and "rng.random" in generator_src,
+    )
+    check("таблица ВЦИОМ присутствует", VALUES_BY_AGE_PATH.exists())
+    check(
+        "старые фиксированные пять и сглаживание удалены",
+        "VALUES_PER_PERSONA" not in generator_src and "VALUES_SMOOTHING" not in generator_src,
+    )
 
 
 # ===========================================================================
@@ -237,6 +250,99 @@ if generator_available:
 
         except Exception as e:
             check("генерация и распределения", False, str(e))
+
+        # --- Values are independent Bernoulli draws by the sampled age group ---
+        # 20,000 is large enough to make the requested one percentage point
+        # checks about the observed output rather than a lucky small sample.
+        value_cache: dict[str, list[dict]] = {}
+
+        def age_personas(group: str, size: int = 20_000) -> list[dict]:
+            if group in value_cache:
+                return value_cache[group]
+            selected: list[dict] = []
+            for chunk, start in enumerate(range(0, size, 500)):
+                chunk_size = min(500, size - start)
+                selected.extend(
+                    gen.generate(
+                        config_cls(
+                            size=chunk_size,
+                            seed=20260919 + chunk,
+                            age_groups=[] if group == "весь корпус" else [group],
+                        )
+                    )
+                )
+            value_cache[group] = selected
+            return selected
+
+        def value_share(group: str, value: str, size: int = 20_000) -> tuple[float, list[dict]]:
+            selected = age_personas(group, size)
+            share = sum(value in p["values_and_beliefs"]["important_values"] for p in selected) / size
+            return share, selected
+
+        try:
+            family_35, personas_35 = value_share("35-44", "Крепкая семья")
+            collectivism_35, _ = value_share("35-44", "Коллективизм")
+            rights_18, personas_18 = value_share("18-24", "Права и свободы человека")
+            service_18, _ = value_share(
+                "18-24", "Служение Отечеству и ответственность за его судьбу"
+            )
+            service_60, _ = value_share(
+                "60+", "Служение Отечеству и ответственность за его судьбу"
+            )
+            check(
+                "35-44: Крепкая семья = 80% ± 1 п.п.",
+                abs(family_35 - 0.80) <= 0.01,
+                f"доля={family_35:.3%}",
+            )
+            check(
+                "35-44: Коллективизм = 29% ± 1 п.п.",
+                abs(collectivism_35 - 0.29) <= 0.01,
+                f"доля={collectivism_35:.3%}",
+            )
+            check(
+                "18-24: Права и свободы человека = 57% ± 1 п.п.",
+                abs(rights_18 - 0.57) <= 0.01,
+                f"доля={rights_18:.3%}",
+            )
+            check(
+                "18-24: Служение Отечеству = 30% ± 1 п.п.",
+                abs(service_18 - 0.30) <= 0.01,
+                f"доля={service_18:.3%}",
+            )
+            check(
+                "60+ отличается от 18-24 по служению Отечеству",
+                service_60 - service_18 > 0.12,
+                f"60+={service_60:.3%}, 18-24={service_18:.3%}",
+            )
+            check(
+                "restrict(age_groups) сохраняет возраст и ценности",
+                all(p["demographics"]["age_group"] == "35-44" for p in personas_35)
+                and family_35 > 0.72,
+                f"возрастов={set(p['demographics']['age_group'] for p in personas_35)}, семья={family_35:.3%}",
+            )
+
+            teenagers, _ = value_share("14-17", "Служение Отечеству и ответственность за его судьбу")
+            check(
+                "14-17 получает доли 18-24",
+                abs(teenagers - service_18) <= 0.02,
+                f"14-17={teenagers:.3%}, 18-24={service_18:.3%}",
+            )
+            all_values = personas_35 + personas_18
+            check(
+                "каждая персона имеет хотя бы одну ценность",
+                all(p["values_and_beliefs"]["important_values"] for p in all_values),
+            )
+            lengths = [
+                len(p["values_and_beliefs"]["important_values"])
+                for p in age_personas("весь корпус", 20_000)
+            ]
+            check(
+                "число ценностей: в среднем около 8, ст. отклонение около 2",
+                7.5 <= fmean(lengths) <= 8.5 and 1.5 <= stdev(lengths) <= 2.5,
+                f"mean={fmean(lengths):.3f}, stdev={stdev(lengths):.3f}",
+            )
+        except Exception as e:
+            check("возрастные доли ценностей", False, str(e))
 
         # --- 10. Same seed → identical output (diff == 0) ---
         try:

@@ -77,28 +77,6 @@ CORPUS_SCORE_RANGE: tuple[int, int] = (2, 9)
 # Маппинг ВЦИОМ-ценностей корпуса → канонические values для DNA.
 # Корпус содержит ~30 вариантов; схема принимает произвольные строки,
 # но мы нормализуем к топ-набору для консистентности.
-#: Сколько ценностей назначается персоне.
-#:
-#: Пять — решение владельца (16.09.2026). Число НЕ взято из корпуса и не
-#: притворяется им: реальный респондент называл одну-две ценности (среднее
-#: 1.45, медиана 1, максимум 2 из 165 записей). Пять — обогащение профиля ради
-#: генерации: модели-респонденту нужен более широкий набор опор, чем даёт
-#: анкета.
-#:
-#: Разница названа здесь, а не замазана, потому что карточка персоны подписывает
-#: этот блок словом «ВЦИОМ». Подпись описывает происхождение СПИСКА, из которого
-#: сделан выбор, а не число выбранных человеком.
-VALUES_PER_PERSONA = 5
-
-#: Прибавка к частоте каждой ценности при взвешенной выборке.
-#:
-#: Без неё «Созидательный труд» недостижим: его не выбрал ни один из 165
-#: респондентов, вес нулевой, и список из семнадцати был бы неполон на практике
-#: — молча. Единица читается как «будто одному человеку это было важно»: она
-#: даёт редким значениям право появиться, не переворачивая распределение
-#: («Крепкая семья» остаётся 28 % против 0.44 % у «Созидательного труда»).
-VALUES_SMOOTHING = 1
-
 #: Путь к каноническому перечню. Данные, а не константа программы: у списка
 #: есть внешний источник (Указ 809), и он несёт при себе происхождение и замеры.
 _VALUES_PATH = find_data_file("values/traditional_values.json")
@@ -140,6 +118,46 @@ def _load_traditional_values() -> tuple[str, ...]:
 #: Нормализация написаний не нужна: все шестнадцать канонических значений,
 #: встречающихся в корпусе, записаны там дословно так же (сверено 16.09.2026).
 TRADITIONAL_VALUES: tuple[str, ...] = _load_traditional_values()
+
+# До 19.09.2026 здесь были фиксированное число пять и сглаживание единицей.
+# Пять расширяло короткие ответы корпуса до фиксированного профиля, а единица
+# давала редким корпусным значениям шанс появиться. Оба приема искажали новые
+# возрастные доли ВЦИОМ, поэтому теперь число ценностей задается независимыми
+# розыгрышами, а нулевая выборка обрабатывается явным fallback ниже.
+_VALUES_BY_AGE_PATH = find_data_file("values/values_by_age_vciom.json")
+_VALUE_AGE_GROUP_FALLBACK: dict[str, str] = {"14-17": "18-24"}
+
+
+def _load_values_by_age() -> dict[str, dict[str, float]]:
+    """Load VCIOM marginal shares for each canonical value and age group."""
+    if _VALUES_BY_AGE_PATH is None:
+        raise FileNotFoundError(
+            "не найден data/values/values_by_age_vciom.json — возрастные доли "
+            "ценностей неизвестны"
+        )
+
+    doc = json.loads(_VALUES_BY_AGE_PATH.read_text("utf-8"))
+    groups = doc.get("groups") or []
+    shares = doc.get("shares_percent") or {}
+    if not groups or not isinstance(shares, dict):
+        raise ValueError("таблица ВЦИОМ не содержит groups и shares_percent")
+
+    result: dict[str, dict[str, float]] = {}
+    for group in groups:
+        group_shares: dict[str, float] = {}
+        for value in TRADITIONAL_VALUES:
+            row = shares.get(value)
+            if not isinstance(row, dict) or group not in row:
+                raise ValueError(f"в таблице ВЦИОМ нет доли «{value}» для группы «{group}»")
+            percent = float(row[group])
+            if not 0 <= percent <= 100:
+                raise ValueError(f"некорректная доля ВЦИОМ: {value}/{group}={percent}")
+            group_shares[value] = percent / 100.0
+        result[group] = group_shares
+    return result
+
+
+VALUE_SHARES_BY_AGE: dict[str, dict[str, float]] = _load_values_by_age()
 
 
 # Города по гео-группе — для правдоподобного сэмплинга.
@@ -219,14 +237,6 @@ class CorpusDistribution:
     score_stdevs: dict[str, float]
     verbatims: list[str]  # пул цитат для заземления стиля
     total: int
-    #: Сырые частоты ВСЕХ ценностей корпуса, без обрезки по топу.
-    #:
-    #: Отдельно от `values` намеренно. `values` — это `most_common(15)` в
-    #: долях, он нужен человеку: показать «что важно этой аудитории». Для
-    #: выборки он не годится дважды: обрезка по пятнадцати выкидывает часть
-    #: канонических значений, а доли теряют объём выборки, по которому
-    #: считается сглаживание.
-    value_counts: dict[str, int] = field(default_factory=dict)
 
     @classmethod
     def from_corpus(cls, records: list[dict[str, Any]]) -> CorpusDistribution:
@@ -258,7 +268,6 @@ class CorpusDistribution:
             for v in r.get("psychographics_and_values", {}).get("important_values", []):
                 vals_counter[v] += 1
         values = {k: v / total for k, v in vals_counter.most_common(15)}
-        value_counts = dict(vals_counter)
 
         # Баллы
         score_fields = list(CORPUS_SCORE_MEANS.keys())
@@ -304,7 +313,6 @@ class CorpusDistribution:
             serial=serial,
             serial_x_city=serial_x_city,
             values=values,
-            value_counts=value_counts,
             score_means=score_means,
             score_stdevs=score_stdevs,
             verbatims=verbatims,
@@ -556,42 +564,29 @@ class PersonaGenerator:
         val = int(round(rng.gauss(mean, stdev)))
         return max(lo, min(hi, val))
 
-    def _map_values(
-        self, rng: random.Random, n: int = VALUES_PER_PERSONA
-    ) -> list[str]:
+    def _map_values(self, rng: random.Random, age_group: str) -> list[str]:
+        """Разыгрывает каждую каноническую ценность независимо по возрасту.
+
+        Таблица ВЦИОМ содержит маргинальные доли ответов на мультивыбор, а не
+        индивидуальные наборы. Поэтому число ценностей не задается константой:
+        для каждого пункта выполняется отдельный Bernoulli-розыгрыш. Группа
+        14-17 явно получает доли 18-24, потому что подростков в источнике нет.
+
+        Схема DNA требует хотя бы одну ценность. Если все независимые розыгрыши
+        не сработали, добавляется самая вероятная ценность этой возрастной
+        группы. Это правило является частью выдачи, а не только документации.
         """
-        Назначает персоне `n` ценностей из канонических семнадцати.
+        source_group = _VALUE_AGE_GROUP_FALLBACK.get(age_group, age_group)
+        try:
+            shares = VALUE_SHARES_BY_AGE[source_group]
+        except KeyError as exc:
+            raise ValueError(f"нет возрастной группы ВЦИОМ: {age_group}") from exc
 
-        ─── Взвешенно и без повторов ─────────────────────────────────────────
-        Вес — частота значения в корпусе плюс `VALUES_SMOOTHING`. Так выборка
-        остаётся похожей на реальную («Крепкая семья» у большинства,
-        «Коллективизм» у единиц) и при этом достижимы все семнадцать.
-
-        ─── Чего здесь больше нет ────────────────────────────────────────────
-        Жёсткого `values_pool[:2]`. Он брал два самых частых значения корпуса
-        ВСЕГДА, и «Крепкая семья» со «Справедливостью» стояли у каждой персоны
-        набора без исключения. Это не выборка, а константа: из трёх ценностей
-        различала персон ровно одна.
-
-        Отказ от него меняет не только разнообразие. Прежний вариант завышал
-        долю топ-2 до 100 % против 38.8 % и 32.7 % в корпусе — то есть
-        заземление, ради которого пул и строился по корпусу, нарушалось самим
-        способом выбора.
-        """
-        counts = self.dist.value_counts
-        pool = list(TRADITIONAL_VALUES)
-        weights = [counts.get(v, 0) + VALUES_SMOOTHING for v in pool]
-
-        picked: list[str] = []
-        for _ in range(min(n, len(pool))):
-            # Выбор без повторов: взятое убирается из пула вместе со своим
-            # весом. `rng.choices` так не умеет — он выбирает с возвращением, и
-            # персона получила бы одну ценность дважды.
-            chosen = rng.choices(pool, weights=weights, k=1)[0]
-            index = pool.index(chosen)
-            pool.pop(index)
-            weights.pop(index)
-            picked.append(chosen)
+        picked = [
+            value for value in TRADITIONAL_VALUES if rng.random() < shares[value]
+        ]
+        if not picked:
+            picked = [max(TRADITIONAL_VALUES, key=shares.__getitem__)]
         return picked
 
     def _sample_verbatims(self, rng: random.Random, n: int = 3) -> list[str]:
@@ -695,11 +690,8 @@ class PersonaGenerator:
         None означает «без критериев» и берёт полный корпус: так остаются
         исполнимыми вызовы, сделанные до появления критериев.
 
-        Сужается только демография. Калибровка баллов, ценности и пул цитат
-        по-прежнему считаются по всему корпусу — сузить их до подвыборки было бы
-        точнее, но это меняет статистику, на которой стоит метрика
-        persona_grounding с числовым порогом, и такую правку надо делать вместе
-        с её перезамером, а не заодно.
+        Сужается демография, а возрастная группа передается в розыгрыш ценностей.
+        Калибровка баллов и пул цитат по-прежнему считаются по всему корпусу.
         """
         dist = dist or self.dist
 
@@ -727,7 +719,7 @@ class PersonaGenerator:
         }
 
         # 3. Ценности ВЦИОМ→DNA
-        values = self._map_values(rng)
+        values = self._map_values(rng, age_group)
 
         # Worldview / political / religious — из эвристики по значениям
         if "Патриотизм" in values or "Служение Отечеству и ответственность за его судьбу" in values:

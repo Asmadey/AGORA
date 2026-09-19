@@ -27,6 +27,7 @@ ROUTER_PATH = REPO / "services" / "agent-core" / "agent_core" / "api" / "routers
 API_INIT_PATH = REPO / "services" / "agent-core" / "agent_core" / "api" / "__init__.py"
 SCHEMA_PATH = REPO / "packages" / "shared" / "schemas" / "persona-dna.schema.json"
 CORPUS_PATH = REPO / "data" / "grounding" / "unified_respondent_sessions.json"
+PERSONAL_VALUES_QUESTION = "Какие из перечисленных ценностей являются для Вас наиболее важными?"
 
 results: list[tuple[str, str, str]] = []
 
@@ -91,6 +92,14 @@ check(
 check(
     "values overlap — коэффициент Жаккара",
     "len(intersection) / len(union)" in finder_src,
+)
+check(
+    "личные ценности читаются из all_survey_responses",
+    "all_survey_responses" in finder_src and PERSONAL_VALUES_QUESTION in finder_src,
+)
+check(
+    "creator values не используются для matching",
+    "psychographics_and_values" not in finder_src,
 )
 
 # Проверяем top-K
@@ -232,6 +241,29 @@ if corpus_ok and agent_core_ok:
             f"diff={matches_diff[0].similarity:.3f} < self={matches_self[0].similarity:.3f}"
             if matches_diff and matches_self
             else "",
+        )
+
+        # Тестируем именно нормировку по доступным признакам. У записи есть
+        # те же демография и proxy Big Five, но нет ответа на личный вопрос.
+        # Старый код читал psychographics_and_values (ценности создателей),
+        # давал values=0 для другого ответа и терял 30% score.
+        missing_values_record = json.loads(json.dumps(ref))
+        missing_responses = dict(missing_values_record.get("all_survey_responses") or {})
+        missing_responses.pop(PERSONAL_VALUES_QUESTION, None)
+        missing_values_record["all_survey_responses"] = missing_responses
+        missing_finder = RespondentFinder([missing_values_record])
+        missing_match = missing_finder.find(persona_dna, FindConfig(top_k=1))
+        missing_ok = (
+            len(missing_match) == 1
+            and missing_match[0].components["values"] == 0.0
+            and missing_match[0].similarity > 0.99
+        )
+        check(
+            "нет личных ценностей → вес перераспределен, score не обнулен",
+            missing_ok,
+            f"score={missing_match[0].similarity:.3f}, values={missing_match[0].components['values']:.3f}"
+            if missing_match
+            else "нет результата",
         )
 
     except ImportError as e:

@@ -180,7 +180,18 @@ class RespondentFinder:
             )
             vals = _values_overlap(persona_dna, r)
 
-            score = w_demo * demo + w_big5 * big5 + w_values * vals
+            # A missing personal-values answer means that this feature was not
+            # measured. Do not turn that absence into a zero similarity: move
+            # its weight to the components that were actually measured.
+            available = [(w_demo, demo), (w_big5, big5)]
+            if _personal_values(r) is not None:
+                available.append((w_values, vals))
+            weight_sum = sum(weight for weight, _ in available)
+            score = (
+                sum(weight * value for weight, value in available) / weight_sum
+                if weight_sum
+                else 0.0
+            )
             # Clamp для уверенности
             score = max(0.0, min(1.0, score))
 
@@ -275,12 +286,31 @@ def _big5_similarity(dna: dict[str, Any], proxy: dict[str, int]) -> float:
     return max(0.0, 1.0 - dist / _MAX_BIG5_DIST)
 
 
+_PERSONAL_VALUES_QUESTION = "Какие из перечисленных ценностей являются для Вас наиболее важными?"
+
+
+def _personal_values(respondent: dict[str, Any]) -> set[str] | None:
+    """Return the respondent's own values, or None when the answer is absent."""
+    responses = respondent.get("all_survey_responses")
+    if not isinstance(responses, dict) or _PERSONAL_VALUES_QUESTION not in responses:
+        return None
+
+    raw = responses[_PERSONAL_VALUES_QUESTION]
+    if isinstance(raw, str):
+        values = {raw.strip()} if raw.strip() else set()
+    elif isinstance(raw, (list, tuple, set)):
+        values = {item.strip() for item in raw if isinstance(item, str) and item.strip()}
+    else:
+        values = set()
+    return values or None
+
+
 def _values_overlap(dna: dict[str, Any], respondent: dict[str, Any]) -> float:
     """Values overlap: коэффициент Жаккара по списку ценностей.
 
     Args:
         dna: Persona DNA с values_and_beliefs.important_values.
-        respondent: запись корпуса с psychographics_and_values.important_values.
+        respondent: запись корпуса с ответом на личный вопрос о ценностях.
     """
     dna_vals: set[str] = set()
     try:
@@ -290,15 +320,7 @@ def _values_overlap(dna: dict[str, Any], respondent: dict[str, Any]) -> float:
     except (TypeError, AttributeError):
         pass
 
-    r_vals: set[str] = set()
-    try:
-        r_vals = set(
-            respondent.get("psychographics_and_values", {}).get(
-                "important_values", []
-            )
-        )
-    except (TypeError, AttributeError):
-        pass
+    r_vals = _personal_values(respondent) or set()
 
     if not dna_vals and not r_vals:
         return 0.0

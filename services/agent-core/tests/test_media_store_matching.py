@@ -199,6 +199,36 @@ def test_matches_carry_the_respondent_they_point_at():
     assert matches[0].respondent_id, "у совпадения нет идентификатора респондента"
 
 
+def test_missing_personal_values_are_not_a_zero_similarity():
+    """Неизвестная личная ценность не должна штрафовать остальные признаки."""
+    from agent_core.matching.finder import FindConfig, RespondentFinder, _proxy_big_five
+
+    record = {
+        "respondent_id": "without-personal-values",
+        "socio_demographics": {
+            "gender": "жен",
+            "age_group": "25-34",
+            "geo": "столицы",
+            "city": "Москва",
+            "children": "Не указано",
+        },
+        "perception_and_retention": {"interest_level": "Очень интересен", "emotions_evoked": []},
+        "qualitative_verbatims": {},
+        "focus_group_verbatims": [],
+        "all_survey_responses": {},
+        "psychographics_and_values": {"important_values": ["Крепкая семья"]},
+    }
+    dna = {
+        "demographics": record["socio_demographics"],
+        "big_five": _proxy_big_five(record),
+        "values_and_beliefs": {"important_values": ["Крепкая семья"]},
+    }
+
+    match = RespondentFinder([record]).find(dna, FindConfig(top_k=1))[0]
+    assert match.components["values"] == 0.0
+    assert match.similarity == 1.0
+
+
 def test_report_refuses_a_tenant_that_is_not_a_uuid():
     """
     Фильтр уезжает в Mongo. Строка произвольной формы там не совпадёт ни с чем
