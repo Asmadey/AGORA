@@ -171,7 +171,9 @@ export function polarityPairs(
       known: true,
       service: false,
       total: total.onlyPositive,
+      totalCount: null,
       target: target.onlyPositive,
+      targetCount: null,
     },
     {
       id: "only_negative",
@@ -179,7 +181,9 @@ export function polarityPairs(
       known: true,
       service: false,
       total: total.onlyNegative,
+      totalCount: null,
       target: target.onlyNegative,
+      targetCount: null,
     },
   ];
 }

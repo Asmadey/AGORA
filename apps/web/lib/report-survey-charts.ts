@@ -2,12 +2,14 @@ import { MANDATORY_QUESTIONS } from "./customer-survey.ts";
 import {
   matrixPairs,
   optionPairs,
+  polarityPairs,
   type SurveyPairRow,
 } from "./report-survey.ts";
 import type { SurveyQuestionView, SurveyStats, SurveyView } from "./report-view.ts";
 import type {
   SurveyBarRow,
   SurveyBarTarget,
+  SurveyMetricPair,
   SurveyMatrixGroup,
   SurveyMatrixRow,
   SurveyNpsValues,
@@ -42,6 +44,7 @@ export type SurveyQuestionChart =
       kind: "bar";
       rows: readonly SurveyBarRow[];
       target: SurveyBarTarget;
+      secondaryMetrics: readonly SurveyMetricPair[];
       sample: SurveySample;
     })
   | (ChartHeader & {
@@ -149,6 +152,17 @@ function barRows(question: SurveyQuestionView, total: SurveyStats, target: Surve
       rows: rows.map((row) => ({ id: row.id, label: row.label, share: row.target, count: row.targetCount })),
     },
   };
+}
+
+function secondaryMetrics(question: SurveyQuestionView): SurveyMetricPair[] {
+  const groups = definitionFor(question)?.reporting?.groups;
+  if (!groups?.positive?.length || !groups.negative?.length) return [];
+  return polarityPairs(question, question.total, question.target).map((row) => ({
+    id: row.id,
+    label: row.label,
+    total: row.total,
+    target: row.target,
+  }));
 }
 
 function stackedParts(question: SurveyQuestionView, rows: readonly SurveyPairRow[], side?: boolean): SurveyStackedPart[] {
@@ -296,6 +310,7 @@ export function buildSurveyQuestionChart(question: SurveyQuestionView): SurveyQu
       title: question.label,
       kind: "bar",
       ...bars,
+      secondaryMetrics: secondaryMetrics(question),
       sample: sample(question.total),
     };
   }

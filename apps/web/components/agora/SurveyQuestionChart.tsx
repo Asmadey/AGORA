@@ -54,7 +54,15 @@ export function SurveyQuestionChart({ chart }: { chart: SurveyQuestionChart }) {
 
   const title = questionTitle(chart);
   if (chart.kind === "bar") {
-    return <SurveyBarChart title={title} rows={chart.rows} target={chart.target} sample={chart.sample} />;
+    return (
+      <SurveyBarChart
+        title={title}
+        rows={chart.rows}
+        target={chart.target}
+        secondaryMetrics={chart.secondaryMetrics}
+        sample={chart.sample}
+      />
+    );
   }
   if (chart.kind === "stacked") {
     return <SurveyStackedBarChart title={title} parts={chart.parts} target={chart.target} sample={chart.sample} />;

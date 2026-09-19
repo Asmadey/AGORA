@@ -45,6 +45,8 @@ function stats(overrides: Partial<SurveyStats>): SurveyStats {
     topBox: null,
     groups: null,
     options: null,
+    onlyPositive: null,
+    onlyNegative: null,
     errors: null,
     texts: null,
     rows: null,
@@ -64,13 +66,20 @@ function emotionsQuestion(): SurveyQuestionView {
     total: stats({
       n: 3,
       base: 3,
+      onlyPositive: 0.6667,
+      onlyNegative: 0.1111,
       options: definition.options.map((option, index) => ({
         id: option.id,
         share: index === 0 ? 0.3333 : 0,
         count: index === 0 ? 1 : 0,
       })),
     }),
-    target: stats({ n: 2, base: 2, belowThreshold: true }),
+    target: stats({
+      n: 2,
+      base: 2,
+      onlyPositive: 0.5,
+      onlyNegative: 0.25,
+    }),
   };
 }
 
@@ -83,7 +92,6 @@ test("выбор диаграммы и ряды закрытых вопросо�
   assert.equal(emotions.rows.length, 15, "все эмоции, включая два служебных варианта");
   assert.equal(emotions.rows.filter((row) => row.service).length, 2);
   assert.equal(emotions.rows[0]?.count, 1, "у столбика остаётся счёт ответов");
-  assert.ok(emotions.target.rows.every((row) => row.share === null), "подавленный срез не стал нулём");
 
   const values = buildSurveyQuestionChart(question(counted, 8));
   assert.equal(values.kind, "bar");
@@ -115,6 +123,56 @@ test("выбор диаграммы и ряды закрытых вопросо�
   assert.equal(scale.topBox, 0.3333);
   assert.deepEqual(scale.groups.map((group) => group.id), ["9-10", "7-8", "0-6"]);
   assert.equal(scale.target.mean, 8);
+});
+
+test("полярность эмоций встроена в модель только для вопроса с reporting.groups", () => {
+  const counted = view(FIXTURE.counted);
+  const emotions = buildSurveyQuestionChart(emotionsQuestion());
+  assert.equal(emotions.kind, "bar");
+  if (emotions.kind !== "bar") return;
+  assert.deepEqual(emotions.secondaryMetrics, [
+    {
+      id: "only_positive",
+      label: "Респонденты, испытавшие только положительные эмоции",
+      total: 0.6667,
+      target: 0.5,
+    },
+    {
+      id: "only_negative",
+      label: "Респонденты, испытавшие только отрицательные эмоции",
+      total: 0.1111,
+      target: 0.25,
+    },
+  ]);
+
+  const values = question(counted, 8);
+  const withoutGroups = buildSurveyQuestionChart({
+    ...values,
+    total: { ...values.total, onlyPositive: 0.75, onlyNegative: 0.1 },
+    target: { ...values.target, onlyPositive: 0.5, onlyNegative: 0.2 },
+  });
+  assert.equal(withoutGroups.kind, "bar");
+  if (withoutGroups.kind !== "bar") return;
+  assert.deepEqual(withoutGroups.secondaryMetrics, [], "без reporting.groups производных показателей нет");
+
+  const suppressedQuestion = emotionsQuestion();
+  const suppressed = buildSurveyQuestionChart({
+    ...suppressedQuestion,
+    target: {
+      ...suppressedQuestion.target,
+      belowThreshold: true,
+      onlyPositive: null,
+      onlyNegative: null,
+    },
+  });
+  assert.equal(suppressed.kind, "bar");
+  if (suppressed.kind !== "bar") return;
+  assert.ok(suppressed.target.rows.every((row) => row.share === null), "подавленный срез не стал нулём");
+  assert.deepEqual(
+    suppressed.secondaryMetrics.map((metric) => metric.target),
+    [null, null],
+    "подавленный срез остаётся null, а не становится нулём",
+  );
 });
 
 test("шкала рекомендации сохраняет NPS, среднее и долю верхних баллов", () => {

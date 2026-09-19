@@ -10,13 +10,14 @@ import {
   toneColor,
   toneOpacity,
 } from "./shared";
-import type { SurveyBarRow, SurveyBarTarget, SurveySample } from "./types";
+import type { SurveyBarRow, SurveyBarTarget, SurveyMetricPair, SurveySample } from "./types";
 
 export interface SurveyBarChartProps {
   title: string;
   note?: string;
   rows: readonly SurveyBarRow[];
   target: SurveyBarTarget;
+  secondaryMetrics?: readonly SurveyMetricPair[];
   sample: SurveySample;
 }
 
@@ -48,7 +49,7 @@ function BarValue({ row, max }: { row: SurveyBarRow; max: number }) {
   );
 }
 
-export function SurveyBarChart({ title, note, rows, target, sample }: SurveyBarChartProps) {
+export function SurveyBarChart({ title, note, rows, target, secondaryMetrics = [], sample }: SurveyBarChartProps) {
   const overallMax = maxMeasuredShare(rows.map((row) => row.share));
   const targetMax = maxMeasuredShare(target.rows.map((row) => row.share));
   const targetNote = targetUnavailableNote(target);
@@ -104,6 +105,27 @@ export function SurveyBarChart({ title, note, rows, target, sample }: SurveyBarC
           );
         })}
       </div>
+      {secondaryMetrics.length > 0 ? (
+        <div className="mt-4 border-t border-hairline pt-3">
+          <p className="text-[10px] uppercase tracking-wide text-slate">Производные показатели</p>
+          <div className="mt-2 grid min-w-0 grid-cols-[minmax(0,1fr)_auto_auto] gap-x-3 text-[10px] uppercase tracking-wide text-slate">
+            <span />
+            <span>Общая выборка</span>
+            <span>{TARGET_LABEL}</span>
+          </div>
+          <div className="mt-1 space-y-2 text-xs">
+            {secondaryMetrics.map((metric) => (
+              <div key={metric.id} className="grid min-w-0 grid-cols-[minmax(0,1fr)_auto_auto] gap-x-3 gap-y-1">
+                <span className="min-w-0 break-words">{metric.label}</span>
+                <span className="tabular-nums">{barValueLabel({ share: metric.total })}</span>
+                <span className="tabular-nums">
+                  {targetNote ? targetNote : barValueLabel({ share: metric.target })}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
     </ChartCard>
   );
 }

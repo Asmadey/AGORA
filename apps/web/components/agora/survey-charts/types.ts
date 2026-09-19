@@ -73,6 +73,13 @@ export interface SurveyBarTarget extends SurveyTargetBase {
   rows: readonly SurveyBarTargetRow[];
 }
 
+export interface SurveyMetricPair {
+  id: string;
+  label: string;
+  total: NullableShare;
+  target: NullableShare;
+}
+
 export interface SurveyStackedTarget extends SurveyTargetBase {
   parts: readonly SurveyPart[];
 }
