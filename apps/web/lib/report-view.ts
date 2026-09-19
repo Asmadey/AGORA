@@ -208,8 +208,9 @@ export interface SurveyStats {
   n: number;
   /**
    * Сколько персон в этом охвате опрашивали. Стоит рядом с `n`, потому что
-   * заказчик подписывает доли «в % от опрошенных», а считаются они от
-   * ОТВЕТИВШИХ: при полной анкете это одно число, при пропусках — два разных.
+   * заказчик подписывает доли «в % от опрошенных», поэтому знаменатель — весь
+   * охват. `n` остаётся отдельным числом: он показывает, сколько персон дали
+   * ответ, и при пропусках может быть меньше `base`.
    */
   base: number | null;
   /** Срез меньше `minSegment`: числа не считались, размер остался. */
@@ -226,6 +227,10 @@ export interface SurveyStats {
    * графике читается как «такого варианта не предлагали».
    */
   options: { id: string; share: number | null; count: number | null }[] | null;
+  /** Доля персон, выбравших только положительные эмоции. */
+  onlyPositive: number | null;
+  /** Доля персон, выбравших только отрицательные эмоции. */
+  onlyNegative: number | null;
   /** Сколько ответов выброшено как нарушившие форму вопроса. */
   errors: number | null;
   /** Ответы на открытый вопрос. */
@@ -505,6 +510,8 @@ function surveyStats(value: unknown): SurveyStats {
     options: shares
       ? shares.map(({ id, share }) => ({ id, share, count: num(counts[id]) }))
       : null,
+    onlyPositive: num(s.only_positive),
+    onlyNegative: num(s.only_negative),
     errors: num(s.errors),
     texts: Array.isArray(s.texts) ? strings(s.texts) : null,
     rows:

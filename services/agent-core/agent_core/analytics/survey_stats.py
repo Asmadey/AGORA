@@ -158,9 +158,23 @@ def _choice(
     # Варианты строки, а не вопроса: у своей матрицы оператора они разные, и
     # раскладка ответа по чужому списку дала бы нули там, где ответы были.
     option_ids = [str(o.get("id")) for o in row_options(question, row)]
+    reporting = question.get("reporting")
+    groups = reporting.get("groups") if isinstance(reporting, dict) else None
+    positive_ids = {
+        str(option_id)
+        for option_id in (groups.get("positive") if isinstance(groups, dict) else [])
+        if option_id is not None
+    }
+    negative_ids = {
+        str(option_id)
+        for option_id in (groups.get("negative") if isinstance(groups, dict) else [])
+        if option_id is not None
+    }
     counts = dict.fromkeys(option_ids, 0)
     answered = 0
     errors = 0
+    only_positive = 0
+    only_negative = 0
     for raw in raw_values:
         parsed = parse_field_answer(question, raw, row)
         if parsed.error:
@@ -184,12 +198,32 @@ def _choice(
         for oid in parsed.option_ids:
             if oid in counts:
                 counts[oid] += 1
+        selected = set(parsed.option_ids)
+        if positive_ids and negative_ids:
+            if selected and selected <= positive_ids:
+                only_positive += 1
+            elif selected and selected <= negative_ids:
+                only_negative += 1
     shares = (
         {oid: round(counts[oid] / base, 4) for oid in option_ids}
         if base
         else None
     )
-    return {"n": answered, "counts": counts, "shares": shares, "errors": errors}
+    polarity = (
+        {
+            "only_positive": round(only_positive / base, 4),
+            "only_negative": round(only_negative / base, 4),
+        }
+        if positive_ids and negative_ids and base
+        else {"only_positive": None, "only_negative": None}
+    )
+    return {
+        "n": answered,
+        "counts": counts,
+        "shares": shares,
+        "errors": errors,
+        **polarity,
+    }
 
 
 def _matrix(

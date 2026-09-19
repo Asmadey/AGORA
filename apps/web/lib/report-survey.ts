@@ -149,6 +149,39 @@ export interface SurveyPairRow {
   target: number | null;
 }
 
+/**
+ * Две эксклюзивные доли вопроса 7.
+ *
+ * Значения приходят готовыми из `survey_tally`. Функция только даёт им подписи
+ * и добавляет колонку среза, сохраняя `null`: подавленный срез нельзя выдавать
+ * за измеренный ноль или подменять значением всей аудитории.
+ */
+export function polarityPairs(
+  _question: SurveyQuestionView,
+  total: SurveyStats,
+  target: SurveyStats,
+): SurveyPairRow[] {
+  if (total.onlyPositive === null && total.onlyNegative === null) return [];
+  return [
+    {
+      id: "only_positive",
+      label: "Респонденты, испытавшие только положительные эмоции",
+      known: true,
+      service: false,
+      total: total.onlyPositive,
+      target: target.onlyPositive,
+    },
+    {
+      id: "only_negative",
+      label: "Респонденты, испытавшие только отрицательные эмоции",
+      known: true,
+      service: false,
+      total: total.onlyNegative,
+      target: target.onlyNegative,
+    },
+  ];
+}
+
 export interface SurveyMatrixPair {
   id: string;
   label: string;
@@ -172,6 +205,8 @@ const EMPTY_STATS: SurveyStats = {
   topBox: null,
   groups: null,
   options: null,
+  onlyPositive: null,
+  onlyNegative: null,
   errors: null,
   texts: null,
   rows: null,
