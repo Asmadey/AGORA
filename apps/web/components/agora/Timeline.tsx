@@ -5,6 +5,12 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { humanDuration } from "@/lib/progress-state";
 import { sceneColumnShare } from "@/lib/timeline-columns";
 import type { TimelineCell, TimelineView } from "@/lib/server/content-pack";
+import {
+  isTimelineCellRendered,
+  TIMELINE_INITIAL_VISIBLE,
+  timelineRenderWindow,
+  TIMELINE_WINDOW_OVERSCAN,
+} from "@/lib/timeline-render-window";
 
 /**
  * Плеер и таймлайн материала: слева ролик, справа сцены по 5–30 секунд.
@@ -439,7 +445,161 @@ export function Timeline({
         два места, которые ничего общего не имеют. Строка держит их рядом по
         построению.
       */}
-      <div className="max-h-[600px] overflow-y-auto rounded-[5px] bg-secondary/50 p-3">
+      <TimelineList cells={cells} currentSec={currentSec} onSeek={seek} columns={columns} />
+    </div>
+  );
+}
+
+/**
+ * Окно списка. Пустые строки остаются лёгкими якорями, чтобы IntersectionObserver
+ * знал, где находится прокрутка; тяжёлая Cell монтируется только в окне.
+ */
+function TimelineList({
+  cells,
+  currentSec,
+  onSeek,
+  columns,
+}: {
+  cells: TimelineCell[];
+  currentSec: number;
+  onSeek: (sec: number) => void;
+  columns: React.CSSProperties;
+}) {
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const rowRefs = useRef(new Map<number, HTMLLIElement>());
+  const intersectionObserver = useRef<IntersectionObserver | null>(null);
+  const resizeObserver = useRef<ResizeObserver | null>(null);
+  const intersecting = useRef(new Set<number>());
+  const heights = useRef(new Map<number, number>());
+  const [rowHeights, setRowHeights] = useState<Record<number, number>>({});
+  const [renderWindow, setRenderWindow] = useState(() =>
+    timelineRenderWindow(cells.length, 0, Math.min(cells.length, TIMELINE_INITIAL_VISIBLE)),
+  );
+  const [printing, setPrinting] = useState(false);
+
+  const sceneNumbers = useMemo(() => {
+    let sceneNo = 0;
+    return cells.map((cell) => (cell.scene === null ? null : ++sceneNo));
+  }, [cells]);
+
+  const activeIndex = cells.findIndex(
+    (cell) => currentSec >= cell.start && currentSec < cell.end,
+  );
+
+  useEffect(() => {
+    setRenderWindow(
+      timelineRenderWindow(cells.length, 0, Math.min(cells.length, TIMELINE_INITIAL_VISIBLE)),
+    );
+    intersecting.current.clear();
+  }, [cells.length]);
+
+  useEffect(() => {
+    const updateWindow = () => {
+      const indexes = [...intersecting.current].sort((a, b) => a - b);
+      if (indexes.length === 0) return;
+      const next = timelineRenderWindow(
+        cells.length,
+        indexes[0],
+        indexes[indexes.length - 1] + 1,
+        TIMELINE_WINDOW_OVERSCAN,
+      );
+      setRenderWindow((previous) =>
+        previous.start === next.start && previous.end === next.end ? previous : next,
+      );
+    };
+
+    const root = scrollRef.current;
+    if (!root || typeof IntersectionObserver === "undefined") return;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          const index = Number((entry.target as HTMLElement).dataset.timelineIndex);
+          if (!Number.isInteger(index)) continue;
+          if (entry.isIntersecting) intersecting.current.add(index);
+          else intersecting.current.delete(index);
+        }
+        updateWindow();
+      },
+      { root, rootMargin: "0px", threshold: 0 },
+    );
+    intersectionObserver.current = observer;
+    for (const row of rowRefs.current.values()) observer.observe(row);
+
+    return () => {
+      observer.disconnect();
+      intersectionObserver.current = null;
+    };
+  }, [cells.length]);
+
+  useEffect(() => {
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver((entries) => {
+      let changed = false;
+      const updates: Array<[number, number]> = [];
+      for (const entry of entries) {
+        const index = Number((entry.target as HTMLElement).dataset.timelineIndex);
+        const height = Math.ceil(entry.contentRect.height);
+        if (!Number.isInteger(index) || height <= 0 || heights.current.get(index) === height) {
+          continue;
+        }
+        heights.current.set(index, height);
+        updates.push([index, height]);
+        changed = true;
+      }
+      if (changed) {
+        setRowHeights((previous) => {
+          const next = { ...previous };
+          for (const [index, height] of updates) next[index] = height;
+          return next;
+        });
+      }
+    });
+    resizeObserver.current = observer;
+    for (const row of rowRefs.current.values()) observer.observe(row);
+
+    return () => {
+      observer.disconnect();
+      resizeObserver.current = null;
+    };
+  }, [cells.length]);
+
+  useEffect(() => {
+    const beforePrint = () => setPrinting(true);
+    const afterPrint = () => setPrinting(false);
+    window.addEventListener("beforeprint", beforePrint);
+    window.addEventListener("afterprint", afterPrint);
+
+    const media = window.matchMedia("print");
+    const onMediaChange = (event: MediaQueryListEvent) => setPrinting(event.matches);
+    media.addEventListener?.("change", onMediaChange);
+
+    return () => {
+      window.removeEventListener("beforeprint", beforePrint);
+      window.removeEventListener("afterprint", afterPrint);
+      media.removeEventListener?.("change", onMediaChange);
+    };
+  }, []);
+
+  const registerRow = useCallback((index: number, node: HTMLLIElement | null) => {
+    const previous = rowRefs.current.get(index);
+    if (previous && previous !== node) {
+      intersectionObserver.current?.unobserve(previous);
+      resizeObserver.current?.unobserve(previous);
+    }
+    if (!node) {
+      rowRefs.current.delete(index);
+      intersecting.current.delete(index);
+      return;
+    }
+    node.dataset.timelineIndex = String(index);
+    rowRefs.current.set(index, node);
+    intersectionObserver.current?.observe(node);
+    resizeObserver.current?.observe(node);
+  }, []);
+
+  return (
+    <div ref={scrollRef} className="max-h-[600px] overflow-y-auto rounded-[5px] bg-secondary/50 p-3">
         <div
           className="mb-2 grid gap-3 px-2 text-[11px] uppercase tracking-wide text-slate"
           style={columns}
@@ -447,36 +607,41 @@ export function Timeline({
           <span>Сцена</span>
           <span>Речь</span>
         </div>
-        {/*
-          Перемотка передаётся ссылкой, а не встроенной стрелкой. Стрелка
-          `() => seek(cell.start)` создаёт новую функцию для каждой из 322
-          ячеек при каждой перерисовке — то есть props всегда разные, и
-          мемоизация ячейки не значит ничего. Начало ячейки уезжает отдельным
-          props, и `Cell` зовёт `onSeek(start)` сам.
-        */}
-        {/*
-          Номер считается здесь, а не в ячейке: ячейка своего места в списке не
-          знает, а индекс ей не годится. Первая ячейка может быть репликами ДО
-          первой сцены (`scene === null`) — это не сцена, и нумерация подряд по
-          индексу дала бы сдвиг на единицу против отчёта, причём молча.
-        */}
         <ol className="space-y-1">
-          {(() => {
-            let sceneNo = 0;
-            return cells.map((cell, index) => (
-              <Cell
+          {cells.map((cell, index) => {
+            const rendered = printing || isTimelineCellRendered(index, renderWindow, activeIndex);
+            const measuredHeight = rowHeights[index];
+
+            return (
+              <li
                 key={`${cell.start}-${index}`}
-                cell={cell}
-                sceneNumber={cell.scene === null ? null : ++sceneNo}
-                active={currentSec >= cell.start && currentSec < cell.end}
-                onSeek={seek}
-                columns={columns}
-              />
-            ));
-          })()}
+                ref={(node) => registerRow(index, node)}
+                style={{ minHeight: measuredHeight ?? 112 }}
+                className={rendered ? undefined : "[content-visibility:auto]"}
+                aria-hidden={rendered ? undefined : true}
+              >
+                {rendered ? (
+                  <Cell
+                    cell={cell}
+                    sceneNumber={sceneNumbers[index]}
+                    active={currentSec >= cell.start && currentSec < cell.end}
+                    onSeek={onSeek}
+                    columns={columns}
+                    printMode={printing}
+                  />
+                ) : null}
+              </li>
+            );
+          })}
         </ol>
+        <div className="sr-only" data-timeline-search-index>
+          {cells.map((cell, index) => (
+            <p key={`search-${cell.start}-${index}`}>
+              {cell.lines.map((line) => `${line.speaker ? `${line.speaker}: ` : ""}${line.text}`).join(" ")}
+            </p>
+          ))}
+        </div>
       </div>
-    </div>
   );
 }
 
@@ -501,12 +666,14 @@ const Cell = memo(function Cell({
   active,
   onSeek,
   columns,
+  printMode,
 }: {
   cell: TimelineCell;
   /** Порядковый номер сцены. null — реплики до первой сцены, это не сцена. */
   sceneNumber: number | null;
   active: boolean;
   onSeek: (sec: number) => void;
+  printMode: boolean;
   /**
    * Доли колонок «Сцена» и «Речь». Приходит СТАБИЛЬНОЙ ссылкой (`useMemo` у
    * родителя): пересобранный объект стилей — это новые props, и мемоизация
@@ -525,7 +692,7 @@ const Cell = memo(function Cell({
       высоту, когда ячейка один раз показалась, — дальше догадка не нужна.
       112px — медиана замеренных высот ячейки на прогоне 0091.
     */
-    <li className="[content-visibility:auto] [contain-intrinsic-size:auto_112px]">
+    <div className={printMode ? undefined : "[content-visibility:auto] [contain-intrinsic-size:auto_112px]"}>
       <button
         type="button"
         onClick={() => onSeek(cell.start)}
@@ -649,7 +816,7 @@ const Cell = memo(function Cell({
           )}
         </span>
       </button>
-    </li>
+    </div>
   );
 });
 
