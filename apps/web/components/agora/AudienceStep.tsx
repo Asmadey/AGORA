@@ -19,10 +19,13 @@ import {
 import {
   AGE_GROUPS,
   AUDIENCE_SIZE_BOUNDS,
+  EDUCATION_OPTIONS,
   GENDERS,
   GEOS,
   type AudienceCriteria,
 } from "@/lib/audience";
+import { EDUCATION_TOOLTIP } from "@/lib/education";
+import { Hint, HintText, HintTitle } from "@/components/agora/Hint";
 import { cn } from "@/lib/utils";
 
 /**
@@ -34,8 +37,8 @@ import { cn } from "@/lib/utils";
  * исследование, — а паспорт корпуса прямо описывает процедуру добавления, то
  * есть это ожидаемое событие. Теперь охват считается на сервере из самого
  * корпуса (lib/audience-grounding.ts), и тем же механизмом ловится второй
- * незаземлённый критерий, о котором в разметке не было ни слова: поля education
- * в корпусе нет ни у одной записи.
+ * критерий образования теперь заземляется возрастным паспортом, а не полем
+ * корпуса: корпус AGORA образования не спрашивал.
  *
  * ─── Почему пол обязателен ─────────────────────────────────────────────────
  * В корпусе он распределён 110/55 и участвует в калибровке, но до этой задачи
@@ -289,6 +292,7 @@ export function AudienceStep({
         age_groups: criteria.ageGroups,
         geos: criteria.geos,
         genders: criteria.genders,
+        education: criteria.education,
       });
       await refreshSets();
     } catch (e) {
@@ -432,26 +436,60 @@ export function AudienceStep({
               coverageNote(grounding.ageGroups, criteria.ageGroups, grounding.totalRecords)}
           </div>
 
-          <div>
-            <h2 className="text-sm font-semibold">Пол</h2>
-            <div className="mt-3 flex flex-wrap gap-2">
-              {GENDERS.map((g) => (
-                <button
-                  key={g}
-                  onClick={() => set({ genders: toggle(criteria.genders, g) })}
-                  className={cn(
-                    "rounded-full border px-3 py-1.5 text-sm transition-colors",
-                    criteria.genders.includes(g)
-                      ? "border-ink bg-secondary"
-                      : "border-hairline text-slate hover:bg-secondary",
-                  )}
-                >
-                  {g}
-                </button>
-              ))}
+          <div className="grid gap-6 sm:grid-cols-2">
+            <div>
+              <h2 className="text-sm font-semibold">Пол</h2>
+              <div className="mt-3 flex flex-wrap gap-2">
+                {GENDERS.map((g) => (
+                  <button
+                    type="button"
+                    key={g}
+                    onClick={() => set({ genders: toggle(criteria.genders, g) })}
+                    className={cn(
+                      "rounded-full border px-3 py-1.5 text-sm transition-colors",
+                      criteria.genders.includes(g)
+                        ? "border-ink bg-secondary"
+                        : "border-hairline text-slate hover:bg-secondary",
+                    )}
+                  >
+                    {g}
+                  </button>
+                ))}
+              </div>
+              {grounding &&
+                coverageNote(grounding.genders, criteria.genders, grounding.totalRecords)}
             </div>
-            {grounding &&
-              coverageNote(grounding.genders, criteria.genders, grounding.totalRecords)}
+
+            <div>
+              <h2 className="flex items-center gap-1 text-sm font-semibold">
+                Образование
+                <Hint label="Как образование влияет на аудиторию">
+                  <HintTitle>Образование</HintTitle>
+                  <HintText>{EDUCATION_TOOLTIP.single}</HintText>
+                  <HintText>{EDUCATION_TOOLTIP.both}</HintText>
+                  <HintText>{EDUCATION_TOOLTIP.source}</HintText>
+                  <HintText>{EDUCATION_TOOLTIP.caveat}</HintText>
+                </Hint>
+              </h2>
+              <div className="mt-3 flex flex-wrap gap-2">
+                {EDUCATION_OPTIONS.map((option) => (
+                  <button
+                    type="button"
+                    key={option}
+                    aria-pressed={criteria.education.includes(option)}
+                    onClick={() => set({ education: toggle(criteria.education, option) })}
+                    className={cn(
+                      "rounded-full border px-3 py-1.5 text-sm transition-colors",
+                      criteria.education.includes(option)
+                        ? "border-ink bg-secondary"
+                        : "border-hairline text-slate hover:bg-secondary",
+                    )}
+                  >
+                    {option}
+                  </button>
+                ))}
+              </div>
+            </div>
           </div>
 
           <div>
@@ -474,14 +512,6 @@ export function AudienceStep({
             </div>
             {grounding && coverageNote(grounding.geos, criteria.geos, grounding.totalRecords)}
           </div>
-
-          {/* Здесь был выбор образования. Убран, а не отключён.
-              Поля education нет ни у одной из 165 записей корпуса — заземлить
-              критерий нечем, и persona_grounding его не проверяет. Прежде экран
-              честно писал это предупреждением под выбором, но предупреждение не
-              лечит: пользователь всё равно заполняет поле, потому что оно есть,
-              и получает персон, чьё «высшее образование» ничем не подкреплено.
-              Поле, обещающее влияние на результат, хуже отсутствующего. */}
 
           <div>
             <h2 className="text-sm font-semibold">Размер аудитории</h2>

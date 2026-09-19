@@ -39,6 +39,7 @@ import re
 import statistics
 from collections import Counter
 from dataclasses import dataclass, field, replace
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
@@ -57,8 +58,74 @@ CORPUS_PATH = (
     find_data_file("grounding/unified_respondent_sessions.json")
     or _REPO_ROOT / "data" / "grounding" / "unified_respondent_sessions.json"
 )
+EDUCATION_DATA_PATH = (
+    find_data_file("demography/education_by_age.json")
+    or _REPO_ROOT / "data" / "demography" / "education_by_age.json"
+)
 PROMPT_PATH = _REPO_ROOT / "prompts" / "persona.generate.md"
 REFERENCE_PERSONA_PATH = _REPO_ROOT / "evals" / "fixtures" / "persona_reference.json"
+
+EDUCATION_LEVELS: tuple[str, ...] = (
+    "среднее",
+    "среднее специальное",
+    "неполное высшее",
+    "высшее",
+)
+EDUCATION_FILTERS: tuple[str, ...] = ("есть высшее", "нет высшего")
+AGE_RANGES: dict[str, tuple[int, int]] = {
+    "14-17": (14, 17),
+    "18-24": (18, 24),
+    "25-34": (25, 34),
+    "35-44": (35, 44),
+    "45-59": (45, 59),
+    "60+": (60, 75),
+}
+
+
+@lru_cache(maxsize=1)
+def _education_passport() -> dict[str, Any]:
+    """Загружает внешний паспорт образования, не дублируя его числа в коде."""
+    return json.loads(EDUCATION_DATA_PATH.read_text("utf-8"))
+
+
+def _education_group_rate(age_group: str) -> float:
+    groups = _education_passport()["groups"]
+    return float(groups[age_group]["с_высшим"]) / 100
+
+
+def _education_allowed_for_age(age: int) -> tuple[str, ...]:
+    passport = _education_passport()
+    if age <= 17:
+        gate = "14-17"
+    elif age <= 21:
+        gate = "18-21"
+    else:
+        gate = "22+"
+    return tuple(passport["age_gates"][gate])
+
+
+def _high_probability_for_group(age_group: str) -> float:
+    """Вероятность высшего среди разрешённых возрастом людей группы."""
+    lo, hi = AGE_RANGES[age_group]
+    eligible_lo = max(lo, 22)
+    eligible_count = max(0, hi - eligible_lo + 1)
+    if eligible_count == 0:
+        return 0.0
+    group_count = hi - lo + 1
+    return _education_group_rate(age_group) * group_count / eligible_count
+
+
+def _education_filter_weight(age_group: str, education: list[str]) -> float:
+    selected = set(education)
+    if not selected or selected == set(EDUCATION_FILTERS):
+        return 1.0
+    if selected == {"есть высшее"}:
+        return _high_probability_for_group(age_group)
+    if selected == {"нет высшего"}:
+        return 1.0 - _high_probability_for_group(age_group)
+    raise ValueError(
+        "образование: выберите «есть высшее», «нет высшего» или оба варианта"
+    )
 
 # --- константы калибровки (PRD §10, замер 27.07.2026) ---
 
@@ -330,6 +397,7 @@ class CorpusDistribution:
         age_groups: list[str] | None = None,
         geos: list[str] | None = None,
         genders: list[str] | None = None,
+        education: list[str] | None = None,
     ) -> CorpusDistribution:
         """Распределения, суженные до выбранных критериев (задача #9).
 
@@ -365,9 +433,25 @@ class CorpusDistribution:
             total = sum(kept.values())
             return {k: v / total for k, v in kept.items()}
 
+        narrowed_age = _narrow(self.age_group, age_groups, "возрастные группы")
+        if education:
+            weights = {
+                group: weight * _education_filter_weight(group, education)
+                for group, weight in narrowed_age.items()
+            }
+            total = sum(weights.values())
+            if total <= 0:
+                selected_ages = ", ".join(age_groups or sorted(narrowed_age))
+                raise ValueError(
+                    f"образование: выбранные значения ({', '.join(education)}) "
+                    f"не пересекаются с возрастными группами ({selected_ages}) — "
+                    "генерация невозможна"
+                )
+            narrowed_age = {k: v / total for k, v in weights.items() if v > 0}
+
         return replace(
             self,
-            age_group=_narrow(self.age_group, age_groups, "возрастные группы"),
+            age_group=narrowed_age,
             geo=_narrow(self.geo, geos, "гео"),
             gender=_narrow(self.gender, genders, "пол"),
         )
@@ -409,11 +493,8 @@ class GenerationConfig:
     age_groups: list[str] = field(default_factory=list)
     geos: list[str] = field(default_factory=list)
     genders: list[str] = field(default_factory=list)
-    #: Уровни образования. В корпусе такого поля НЕТ ни у одной из 165 записей
-    #: (замерено 04.08.2026), поэтому критерий не сужает распределения и не
-    #: участвует в заземлении — он доезжает до промпта persona.generate и влияет
-    #: на текст персоны, но не на её соцдем. Хранится здесь, а не отбрасывается,
-    #: чтобы снимок конфигурации набора отражал то, что выбрал пользователь.
+    #: Бинарный критерий образования. Корпус его не спрашивал, поэтому доли
+    #: загружаются из внешнего паспорта и условны по возрасту.
     education: list[str] = field(default_factory=list)
     #: Дистиллированный audienceContext из приложенного файла. Он влияет только
     #: на текстовый контекст persona.generate, а не на поля grounding.
@@ -424,6 +505,12 @@ class GenerationConfig:
             raise ValueError(f"size должен быть 1–500, получено {self.size}")
         if not isinstance(self.seed, int) or self.seed < 0:
             raise ValueError(f"seed должен быть неотрицательным целым, получено {self.seed}")
+        unknown_education = set(self.education) - set(EDUCATION_FILTERS)
+        if unknown_education:
+            raise ValueError(
+                "education должен содержать только «есть высшее» и «нет высшего», "
+                f"получено: {', '.join(sorted(unknown_education))}"
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -543,18 +630,52 @@ class PersonaGenerator:
         weights = [dist[k] for k in keys]
         return rng.choices(keys, weights=weights, k=1)[0]
 
-    def _sample_age_from_group(self, rng: random.Random, age_group: str) -> int:
+    def _sample_age_from_group(
+        self,
+        rng: random.Random,
+        age_group: str,
+        education: list[str],
+    ) -> int:
         """Сэмплирует возраст внутри возрастной группы."""
-        ranges: dict[str, tuple[int, int]] = {
-            "14-17": (14, 17),
-            "18-24": (18, 24),
-            "25-34": (25, 34),
-            "35-44": (35, 44),
-            "45-59": (45, 59),
-            "60+": (60, 75),
-        }
-        lo, hi = ranges.get(age_group, (25, 34))
+        lo, hi = AGE_RANGES.get(age_group, (25, 34))
+        ages = list(range(lo, hi + 1))
+        selected = set(education)
+        if selected == {"есть высшее"}:
+            eligible = [age for age in ages if "высшее" in _education_allowed_for_age(age)]
+            if not eligible:
+                raise ValueError(
+                    f"образование: в группе {age_group} нет возраста с высшим образованием"
+                )
+            return rng.choice(eligible)
+        if selected == {"нет высшего"}:
+            high_probability = _high_probability_for_group(age_group)
+            weights = [1.0 if age < 22 else 1.0 - high_probability for age in ages]
+            return rng.choices(ages, weights=weights, k=1)[0]
         return rng.randint(lo, hi)
+
+    def _sample_education_level(
+        self,
+        rng: random.Random,
+        age: int,
+        age_group: str,
+        education: list[str],
+    ) -> str:
+        allowed = list(_education_allowed_for_age(age))
+        selected = set(education)
+        if selected == {"есть высшее"}:
+            if "высшее" not in allowed:
+                raise ValueError(
+                    f"образование: для возраста {age} выбор «есть высшее» невозможен"
+                )
+            return "высшее"
+        if selected == {"нет высшего"}:
+            allowed = [level for level in allowed if level != "высшее"]
+            return rng.choice(allowed)
+
+        high_probability = _high_probability_for_group(age_group)
+        if "высшее" in allowed and rng.random() < high_probability:
+            return "высшее"
+        return rng.choice([level for level in allowed if level != "высшее"])
 
     def _calibrate_score(self, rng: random.Random, field_name: str) -> int:
         """Калибрует балл (1-10) по реальному среднему и стдеву корпуса."""
@@ -699,7 +820,7 @@ class PersonaGenerator:
         age_group = self._sample_weighted(rng, dist.age_group)
         geo = self._sample_weighted(rng, dist.geo)
         gender = self._sample_weighted(rng, dist.gender)
-        age = self._sample_age_from_group(rng, age_group)
+        age = self._sample_age_from_group(rng, age_group, config.education)
 
         # Город — из гео-группы (или из распределения корпуса)
         geo_cities = GEO_CITIES.get(geo, list(self.dist.city.keys()))
@@ -808,9 +929,9 @@ class PersonaGenerator:
             "media_consumption": rng.choice(["умеренное", "высокое", "очень высокое"]),
             "social_activity": rng.choice(["одиночка", "малый круг", "широкий круг", "тусовщик"]),
             "work_status": work_status,
-            "education_level": rng.choice([
-                "среднее", "среднее специальное", "неполное высшее", "высшее",
-            ]),
+            "education_level": self._sample_education_level(
+                rng, age, age_group, config.education
+            ),
         }
 
         # Narrative
@@ -885,6 +1006,7 @@ class PersonaGenerator:
             age_groups=config.age_groups,
             geos=config.geos,
             genders=config.genders,
+            education=config.education,
         )
 
         out: list[tuple[str, dict[str, Any]]] = []

@@ -1,4 +1,11 @@
 import { CONTEXT_LIMIT_CHARS, normalizeContext } from "./context-file.ts";
+import {
+  EDUCATION_OPTIONS,
+  educationIntersectionError,
+  type EducationCriterion,
+} from "./education.ts";
+
+export { EDUCATION_OPTIONS } from "./education.ts";
 
 /**
  * Критерии отбора аудитории (задача #9, PRD §10).
@@ -17,13 +24,9 @@ import { CONTEXT_LIMIT_CHARS, normalizeContext } from "./context-file.ts";
  * теряется по дороге.
  *
  * ─── Образование ──────────────────────────────────────────────────────────
- * Объявлено в cdd задачи, но в корпусе такого поля НЕТ ни у одной из 165
- * записей (замерено 04.08.2026). Поэтому оно есть в контракте, но помечено как
- * незаземлённое: см. audience-grounding.ts, где охват считается по корпусу, а
- * не по этому файлу. Убрать его из контракта нельзя — оно в приёмке; выдать
- * молча за равноправный критерий тоже нельзя — персоны по нему не заземлены, а
- * persona_grounding эту незаземлённость не увидит: метрика смотрит только на
- * age_group, geo и gender.
+ * В корпусе образование не спрашивали. Генератор получает внешний паспорт с
+ * возрастными долями, поэтому критерий условен по возрасту и не притворяется
+ * долей корпуса.
  */
 
 export const AGE_GROUPS = ["14-17", "18-24", "25-34", "35-44", "45-59", "60+"] as const;
@@ -36,16 +39,10 @@ export const GENDERS = ["муж", "жен"] as const;
 export type Gender = (typeof GENDERS)[number];
 
 /**
- * Уровни образования. В корпусе не представлены — критерий сквозной, но
- * незаземлённый. Значения взяты по шкале Росстата, чтобы при появлении данных
- * их не пришлось переименовывать.
+ * Бинарная свёртка шкалы образования для пользователя.
  */
-export const EDUCATION_LEVELS = [
-  "среднее",
-  "среднее специальное",
-  "высшее",
-] as const;
-export type EducationLevel = (typeof EDUCATION_LEVELS)[number];
+export const EDUCATION_LEVELS = EDUCATION_OPTIONS;
+export type EducationLevel = EducationCriterion;
 
 /**
  * Размер набора: границы и умолчание.
@@ -77,8 +74,8 @@ export interface AudienceCriteria {
   ageGroups: AgeGroup[];
   geos: Geo[];
   genders: Gender[];
-  /** Пустой массив — критерий не задан. Незаземлён, см. шапку файла. */
-  education: EducationLevel[];
+  /** Оба значения включены по умолчанию; один вариант сужает аудиторию. */
+  education: EducationCriterion[];
   /** Дистиллируется воркером до генерации; не меняет заземлённые доли. */
   audienceContext?: string;
   /** Строка audience_context_files для pdf/xls/xlsx; читается только воркером. */
@@ -90,7 +87,7 @@ export const DEFAULT_CRITERIA: AudienceCriteria = {
   ageGroups: ["25-34", "35-44", "45-59"],
   geos: ["столицы", "центры субъектов"],
   genders: ["муж", "жен"],
-  education: [],
+  education: [...EDUCATION_OPTIONS],
 };
 
 /**
@@ -194,11 +191,18 @@ export function parseAudienceChoice(
     errors.push(`genders: непустой набор из ${GENDERS.join(" | ")}`);
   }
 
-  // Образование необязательно: незаземлённый критерий не должен блокировать
-  // запуск. Но если задано — значение обязано быть из списка.
-  const education = raw.education === undefined ? [] : subset(raw.education, EDUCATION_LEVELS);
+  // Оба варианта включены по умолчанию. Пустой список сохраняем как режим без
+  // ограничения для совместимости со старыми снимками конфигурации.
+  const education = raw.education === undefined
+    ? [...EDUCATION_OPTIONS]
+    : subset(raw.education, EDUCATION_OPTIONS);
   if (!education) {
     errors.push(`education: набор из ${EDUCATION_LEVELS.join(" | ")} либо пусто`);
+  }
+
+  if (education && ageGroups) {
+    const intersectionError = educationIntersectionError(ageGroups, education);
+    if (intersectionError) errors.push(intersectionError);
   }
 
   if (errors.length > 0) return { ok: false, errors };

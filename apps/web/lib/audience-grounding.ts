@@ -143,13 +143,9 @@ export function warningsFor(selected: {
   describe(selected.geos, g.geos, "гео");
   describe(selected.genders, g.genders, "пол");
 
-  if (selected.education.length > 0 && g.ungroundedDimensions.includes("education")) {
-    out.push(
-      `образование: в корпусе нет такого поля ни у одной из ${g.totalRecords} записей — ` +
-        `критерий повлияет на текст персон, но не на заземление, и метрика ` +
-        `persona_grounding его не проверяет`,
-    );
-  }
+  // Образование не входит в корпус, но теперь получает условные возрастные
+  // доли из внешнего паспорта. Источник и оговорки показаны рядом с критерием,
+  // поэтому старое предупреждение про «влияние только на текст» было бы ложным.
 
   return out;
 }
