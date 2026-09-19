@@ -338,7 +338,7 @@ test("нулевой вариант не исчезает из строк зак
   const { optionRows } = await import("./report-survey.ts");
   const stats = { n: 2, base: null, belowThreshold: false, mean: null, topBox: null,
     groups: null, options: [{ id: "emotion-joy", share: 1, count: 2 }], errors: null,
-    texts: null, rows: null };
+    onlyPositive: null, onlyNegative: null, texts: null, rows: null };
   const rows = optionRows(
     { id: "q-7", number: 7, label: "Эмоции", type: "single_choice", block: null,
       total: stats, target: stats },

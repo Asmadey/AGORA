@@ -23,6 +23,7 @@ import {
 import {
   matrixPairs,
   optionPairs,
+  polarityPairs,
   surveyBlocks,
   surveyQuestion,
 } from "@/lib/report-survey";
@@ -160,9 +161,8 @@ function SurveyRow({
  * Сколько человек стоит за числом.
  *
  * `n` — ответившие, `base` — опрошенные. Заказчик подписывает доли «в % от
- * опрошенных», а считаются они от ответивших: при полной анкете это одно и то
- * же, при пропусках — расходится вдвое. Выбирать знаменатель за читателя
- * нельзя, поэтому на экране стоят оба числа.
+ * опрошенных», поэтому доля уже посчитана от `base`; оба числа нужны, чтобы
+ * пропуск не выглядел измеренным мнением.
  */
 function surveySize(stats: SurveyStats): string {
   return stats.base === null ? `${stats.n}` : `${stats.n} из ${stats.base}`;
@@ -188,6 +188,7 @@ function SurveyQuestionCard({
   // потому что подстановку «нет среза — покажем общее» разметка не сторожит
   // ничем, а выглядит такая подстановка как посчитанный срез.
   const options = optionPairs(question, question.total, question.target);
+  const polarity = polarityPairs(question, question.total, question.target);
   const rows = matrixPairs(question, question.total, question.target);
   const unlabelled = [...options, ...rows].some((r) => !r.known);
 
@@ -246,6 +247,15 @@ function SurveyQuestionCard({
             total={pct(o.total)}
             target={pct(o.target)}
             muted={o.service}
+          />
+        ))}
+
+        {polarity.map((row) => (
+          <SurveyRow
+            key={row.id}
+            label={row.label}
+            total={pct(row.total)}
+            target={pct(row.target)}
           />
         ))}
 

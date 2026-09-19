@@ -10,6 +10,7 @@ import {
   matrixRows,
   optionPairs,
   optionRows,
+  polarityPairs,
   surveyBlocks,
   surveyQuestion,
 } from "./report-survey.ts";
@@ -129,6 +130,51 @@ test("доли по вариантам не теряют невыбранные"
 test("выброшенные по форме ответы остаются видимыми", () => {
   const q = question(COUNTED(), 8);
   assert.equal(q.total.errors, 0, "ноль ошибок — это измеренный ноль, а не пусто");
+});
+
+test("полярность эмоций показывает измеренный ноль и не подменяет null среза", () => {
+  const parsed = parseReport({
+    aggregate: {
+      survey: {
+        questions: {
+          "q07-emotions": {
+            number: 7,
+            type: "multi_choice",
+            block: "b2",
+            label: "Эмоции",
+            total: {
+              n: 4,
+              base: 5,
+              only_positive: 0,
+              only_negative: 0.2,
+            },
+            target: {
+              n: 2,
+              base: 3,
+              below_threshold: true,
+              only_positive: null,
+              only_negative: null,
+            },
+          },
+        },
+        indices: {},
+        audience: { total: 5, target: 3, target_range: "14-35" },
+        min_segment: 20,
+      },
+    },
+  }).survey;
+  assert.ok(parsed);
+  const question = surveyQuestion(parsed, 7);
+  assert.ok(question);
+  const rows = polarityPairs(question, question.total, question.target);
+  assert.deepEqual(rows.map((row) => row.label), [
+    "Респонденты, испытавшие только положительные эмоции",
+    "Респонденты, испытавшие только отрицательные эмоции",
+  ]);
+  assert.equal(rows[0]?.total, 0);
+  assert.equal(rows[1]?.total, 0.2);
+  assert.equal(rows[0]?.target, null);
+  assert.equal(rows[1]?.target, null);
 });
 
 // ─── Матрица ────────────────────────────────────────────────────────────────
