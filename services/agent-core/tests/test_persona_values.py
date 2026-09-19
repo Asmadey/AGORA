@@ -1,5 +1,5 @@
 """
-Ценности персоны: пять штук из канонических семнадцати.
+Проверки канонического пула и независимого возрастного розыгрыша ценностей.
 
 ─── Что было ────────────────────────────────────────────────────────────────
 16.09.2026 у каждой персоны было ровно три ценности, и первые две совпадали у
@@ -36,7 +36,6 @@ import pathlib
 
 from agent_core.persona.generator import (
     TRADITIONAL_VALUES,
-    VALUES_PER_PERSONA,
     GenerationConfig,
     PersonaGenerator,
 )
@@ -96,13 +95,25 @@ def test_справочник_и_код_не_расходятся():
     assert len(TRADITIONAL_VALUES) == 17
 
 
-# ─── Ровно пять ─────────────────────────────────────────────────────────────
+# ─── Независимый розыгрыш по возрасту ───────────────────────────────────────
 
 
-def test_ровно_пять_ценностей_у_каждой_персоны():
-    assert VALUES_PER_PERSONA == 5
-    for p in _gen():
-        assert len(_values(p)) == VALUES_PER_PERSONA, _values(p)
+def test_число_ценностей_переменное_и_непустое():
+    personas = _gen(size=500)
+    lengths = [len(_values(p)) for p in personas]
+    assert all(1 <= length <= 17 for length in lengths), lengths
+    assert len(set(lengths)) > 1, lengths
+    assert 6.5 <= sum(lengths) / len(lengths) <= 9.5
+
+
+def test_персона_с_нулевым_розыгрышем_получает_самую_вероятную_ценность():
+    class AlwaysFailRandom:
+        def random(self):
+            return 1.0
+
+    generator = PersonaGenerator.from_corpus()
+    values = generator._map_values(AlwaysFailRandom(), "18-24")
+    assert values == ["Крепкая семья"]
 
 
 def test_ценности_не_повторяются_внутри_персоны():
@@ -142,10 +153,10 @@ def test_набор_покрывает_заметную_часть_справо�
     assert len(distinct) >= 12, f"на 40 персон встретилось только {len(distinct)}: {distinct}"
 
 
-def test_частые_в_корпусе_остаются_частыми():
+def test_частые_ценности_остаются_частыми():
     """
-    Сглаживание не должно превращать выборку в равномерную: «Крепкая семья»
-    (38.8 % корпуса) обязана оставаться заметно частее «Коллективизма» (0.6 %).
+    Возрастные доли ВЦИОМ должны сохранять различие между частой и редкой
+    ценностью, а не превращать выборку в равномерную.
     """
     personas = _gen(size=60)
     counts = collections.Counter(v for p in personas for v in _values(p))
@@ -154,9 +165,7 @@ def test_частые_в_корпусе_остаются_частыми():
 
 def test_редкая_ценность_достижима():
     """
-    «Созидательный труд» не выбрал ни один из 165 респондентов. Сглаживание
-    даёт ему ненулевой вес — иначе список из 17 неполон на практике, и это
-    расхождение не видно ниоткуда.
+    Даже ценность с небольшой долей ВЦИОМ должна быть достижима.
     """
     personas = _gen(size=400)
     distinct = {v for p in personas for v in _values(p)}
