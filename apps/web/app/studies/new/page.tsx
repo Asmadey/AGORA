@@ -15,6 +15,7 @@ import { DRAFT_SURVEY_ID, draftSurveyName } from "@/lib/survey-sync";
 import { AudienceStep } from "@/components/agora/AudienceStep";
 import { ProjectPicker, type ProjectOption } from "@/components/agora/ProjectPicker";
 import { DEFAULT_CRITERIA, type AudienceCriteria } from "@/lib/audience";
+import { educationAgePreview } from "@/lib/education";
 import type { ContextFileSelection } from "@/lib/context-file";
 import type { SurveyQuestion } from "@/lib/agora-types";
 import type { RerunPrefill } from "@/lib/rerun";
@@ -238,6 +239,18 @@ export default function NewStudyPage() {
     if (!Array.isArray(raw)) return null;
     return raw.length ? raw.map(String).join(", ") : "без ограничения";
   }
+
+  function setValues(key: string): string[] | null {
+    if (!personaSetId || !personaSetConfig) return null;
+    const raw = personaSetConfig[key];
+    return Array.isArray(raw) ? raw.map(String) : null;
+  }
+
+  const summaryAgeGroups = setValues("age_groups") ?? criteria.ageGroups;
+  const summaryEducation = personaSetId
+    ? setValues("education") ?? []
+    : criteria.education;
+  const educationPreview = educationAgePreview(summaryAgeGroups, summaryEducation);
 
   // Загрузка идёт по маршрутам #8, уже подтверждённым на стенде: presign → PUT
   // байтов прямо в S3 → complete с ffprobe-валидацией. Веб файл не проксирует:
@@ -706,6 +719,13 @@ export default function NewStudyPage() {
                 // раньше, читался как «данных нет», хотя набор описан целиком.
                 ["Возраст", setList("age_groups") ?? (criteria.ageGroups.join(", ") || "не выбран")],
                 ["География", setList("geos") ?? (criteria.geos.join(", ") || "не выбрана")],
+                [
+                  "Образование",
+                  summaryEducation.length ? summaryEducation.join(", ") : "оба варианта",
+                ],
+                ...(educationPreview
+                  ? [["Следствие для возраста", educationPreview]]
+                  : []),
                 ["Доп. контекст", contextFile?.name ?? "не приложен"],
                 [
                   "Анкета",
