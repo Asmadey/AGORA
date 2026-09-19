@@ -41,9 +41,10 @@ TIMECODE_TOLERANCE_SEC = 1.0
 #: девять, но посоветую на три»: не редкая позиция, а несходящаяся.
 SCORE_NPS_MAX_GAP = 5
 
-#: Баллы, при которых оценка и намерение досмотреть обязаны согласовываться.
-#: Середина шкалы (4–7) намеренно оставлена свободной: «на шесть, но выключил
-#: бы» — обычная зрительская позиция, и флаг на ней был бы ложным.
+#: Крайние баллы, при которых оценка и намерение досмотреть получают
+#: информирующий флаг. Середина шкалы (4-7) намеренно оставлена свободной:
+#: «на шесть, но выключил бы» - обычная зрительская позиция, и флаг на ней был
+#: бы ложным.
 HIGH_SCORE = 8
 LOW_SCORE = 3
 
@@ -219,16 +220,27 @@ def _score_bounds(survey: Any) -> dict[str, tuple[int, int]]:
     return out
 
 
-def consistency_reasons(answer: dict[str, Any], survey: dict[str, Any] | None = None) -> list[str]:
+def consistency_reason_groups(
+    answer: dict[str, Any], survey: dict[str, Any] | None = None
+) -> tuple[list[str], list[str]]:
     """
-    Внутренние противоречия ответа. Пустой список — правила ничего не нашли.
+    Возвращает гейтящие и информирующие причины согласованности.
 
-    Слово «внутренние» здесь существенно: все проверки смотрят только внутрь
+    Гейтящие причины описывают дефект данных или проверяемого контракта:
+    неправильный тип или диапазон, невозможный разрыв NPS, пустое обоснование
+    и противоречие фактически просмотренной доли с намерением. Информирующие
+    причины описывают только вкус зрителя: высокая или низкая оценка сама по
+    себе ничего не доказывает о намерении смотреть.
+
+    Слово «внутренние» существенно: все проверки смотрят только внутрь
     одного ответа и не заглядывают ни в профиль персоны, ни в материал. Такой
     дефект не зависит ни от ролика, ни от того, кто отвечал, и потому ловится
     без модели.
+
+    Порядок результата: (gating, informing).
     """
-    reasons: list[str] = []
+    gating: list[str] = []
+    informing: list[str] = []
     scores = answer.get("scores") if isinstance(answer.get("scores"), dict) else {}
     perception = answer.get("perception") if isinstance(answer.get("perception"), dict) else {}
 
@@ -249,15 +261,15 @@ def consistency_reasons(answer: dict[str, Any], survey: dict[str, Any] | None = 
         value = _int_or_none(scores.get(field))
         low, high = bounds.get(field, (DEFAULT_SCORE_MIN, DEFAULT_SCORE_MAX))
         if scores.get(field) is not None and value is None:
-            reasons.append(f"балл {field} не число: {scores.get(field)!r}")
+            gating.append(f"балл {field} не число: {scores.get(field)!r}")
         elif value is not None and not low <= value <= high:
-            reasons.append(f"балл {field}={value} вне шкалы {low}–{high}")
+            gating.append(f"балл {field}={value} вне шкалы {low}–{high}")
 
     nps = _int_or_none(perception.get("recommendation_nps_1_to_10"))
     if perception.get("recommendation_nps_1_to_10") is not None and nps is None:
-        reasons.append("NPS не число")
+        gating.append("NPS не число")
     elif nps is not None and not 1 <= nps <= 10:
-        reasons.append(f"NPS={nps} вне шкалы 1–10")
+        gating.append(f"NPS={nps} вне шкалы 1–10")
 
     overall = _int_or_none(scores.get("overall_impression"))
     stance = retention_stance(perception.get("retention_intent"))
@@ -267,25 +279,31 @@ def consistency_reasons(answer: dict[str, Any], survey: dict[str, Any] | None = 
 
     if overall is not None and overall_low <= overall <= overall_high:
         if overall >= HIGH_SCORE and stance == "stop":
-            reasons.append(
+            informing.append(
                 f"впечатление {overall}/10 при намерении прекратить просмотр "
                 f"({perception.get('retention_intent')!r})"
             )
         if overall <= LOW_SCORE and stance == "continue":
-            reasons.append(
+            informing.append(
                 f"впечатление {overall}/10 при намерении досмотреть "
                 f"({perception.get('retention_intent')!r})"
             )
         if nps is not None and 1 <= nps <= 10 and abs(overall - nps) >= SCORE_NPS_MAX_GAP:
-            reasons.append(f"впечатление {overall}/10 против рекомендации {nps}/10")
+            gating.append(f"впечатление {overall}/10 против рекомендации {nps}/10")
 
-    reasons.extend(_watched_share_reasons(perception, stance))
+    gating.extend(_watched_share_reasons(perception, stance))
 
     verbatims = answer.get("verbatims") if isinstance(answer.get("verbatims"), dict) else {}
     if not any(str(v).strip() for v in verbatims.values()):
-        reasons.append("вербатимы пусты: обоснования оценок нет")
+        gating.append("вербатимы пусты: обоснования оценок нет")
 
-    return reasons
+    return gating, informing
+
+
+def consistency_reasons(answer: dict[str, Any], survey: dict[str, Any] | None = None) -> list[str]:
+    """Все причины согласованности, для совместимости с прежним API проверок."""
+    gating, informing = consistency_reason_groups(answer, survey)
+    return gating + informing
 
 
 def grounding_reasons(answer: dict[str, Any], pack: dict[str, Any] | None = None) -> list[str]:
