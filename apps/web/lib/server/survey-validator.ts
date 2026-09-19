@@ -44,6 +44,24 @@ export interface SurveyQuestion {
   scaleMin?: number;
   scaleMax?: number;
   hint?: string;
+  reporting?: SurveyReporting;
+  keyOptionIds?: string[];
+}
+
+export type SurveyChartType =
+  | "scale"
+  | "scale_top_box"
+  | "bars"
+  | "donut"
+  | "matrix_stacked"
+  | "nps";
+
+export type SurveyReportingGroup = "positive" | "negative" | "neutral" | "unknown";
+
+export interface SurveyReporting {
+  chart: SurveyChartType;
+  center?: SurveyReportingGroup;
+  groups?: Partial<Record<SurveyReportingGroup, string[]>>;
 }
 
 export interface SurveyDocument {
@@ -88,6 +106,22 @@ export const ALLOWED_QUESTION_TYPES: QuestionType[] = [
 /** Типы, ответ на которые обязан быть одним из объявленных вариантов. */
 const CLOSED_TYPES: QuestionType[] = ["single_choice", "multi_choice", "matrix_single"];
 
+const REPORTING_CHARTS: SurveyChartType[] = [
+  "scale",
+  "scale_top_box",
+  "bars",
+  "donut",
+  "matrix_stacked",
+  "nps",
+];
+
+const REPORTING_GROUPS: SurveyReportingGroup[] = [
+  "positive",
+  "negative",
+  "neutral",
+  "unknown",
+];
+
 /**
  * Варианты одного списка: объект, непустой идентификатор, уникальность, подпись.
  *
@@ -117,6 +151,129 @@ function checkOptions(options: unknown[], prefix: string, errors: string[]): voi
   }
 }
 
+function optionIdsForQuestion(question: Record<string, unknown>): Set<string> {
+  const ids = new Set<string>();
+
+  const addOptions = (options: unknown): void => {
+    if (!Array.isArray(options)) return;
+    for (const option of options) {
+      if (typeof option !== "object" || option === null) continue;
+      const id = (option as Record<string, unknown>).id;
+      if (typeof id === "string") ids.add(id);
+    }
+  };
+
+  addOptions(question.options);
+  if (Array.isArray(question.rows)) {
+    for (const row of question.rows) {
+      if (typeof row === "object" && row !== null) {
+        addOptions((row as Record<string, unknown>).options);
+      }
+    }
+  }
+
+  return ids;
+}
+
+function checkReporting(
+  question: Record<string, unknown>,
+  prefix: string,
+  errors: string[],
+): void {
+  const reporting = question.reporting;
+  const optionIds = optionIdsForQuestion(question);
+
+  if (reporting !== undefined) {
+    if (typeof reporting !== "object" || reporting === null || Array.isArray(reporting)) {
+      errors.push(`${prefix}.reporting: должен быть объектом`);
+    } else {
+      const value = reporting as Record<string, unknown>;
+      if (
+        typeof value.chart !== "string" ||
+        !REPORTING_CHARTS.includes(value.chart as SurveyChartType)
+      ) {
+        errors.push(
+          `${prefix}.reporting.chart: должен быть одним из ${REPORTING_CHARTS.join(", ")}`,
+        );
+      }
+
+      if (
+        value.center !== undefined &&
+        (typeof value.center !== "string" ||
+          !REPORTING_GROUPS.includes(value.center as SurveyReportingGroup))
+      ) {
+        errors.push(
+          `${prefix}.reporting.center: должен быть одной из групп ${REPORTING_GROUPS.join(", ")}`,
+        );
+      }
+
+      const groups = value.groups;
+      if (groups !== undefined) {
+        if (typeof groups !== "object" || groups === null || Array.isArray(groups)) {
+          errors.push(`${prefix}.reporting.groups: должен быть объектом`);
+        } else {
+          const seen = new Map<string, string>();
+          for (const [group, rawIds] of Object.entries(groups)) {
+            if (!REPORTING_GROUPS.includes(group as SurveyReportingGroup)) {
+              errors.push(
+                `${prefix}.reporting.groups.${group}: неизвестная группа; допустимы ${REPORTING_GROUPS.join(", ")}`,
+              );
+              continue;
+            }
+            if (!Array.isArray(rawIds)) {
+              errors.push(`${prefix}.reporting.groups.${group}: должен быть массивом строк`);
+              continue;
+            }
+            for (let j = 0; j < rawIds.length; j++) {
+              const id = rawIds[j];
+              const idPrefix = `${prefix}.reporting.groups.${group}[${j}]`;
+              if (typeof id !== "string") {
+                errors.push(`${idPrefix}: должен быть строкой`);
+                continue;
+              }
+              const previousGroup = seen.get(id);
+              if (previousGroup !== undefined) {
+                errors.push(
+                  `${idPrefix}: вариант «${id}» находится в двух группах «${previousGroup}» и «${group}»`,
+                );
+              } else {
+                seen.set(id, group);
+              }
+              if (!optionIds.has(id)) {
+                errors.push(`${idPrefix}: вариант «${id}» отсутствует в options вопроса`);
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  const keyOptionIds = question.keyOptionIds;
+  if (keyOptionIds !== undefined) {
+    if (!Array.isArray(keyOptionIds)) {
+      errors.push(`${prefix}.keyOptionIds: должен быть массивом строк`);
+    } else {
+      const seen = new Set<string>();
+      for (let j = 0; j < keyOptionIds.length; j++) {
+        const id = keyOptionIds[j];
+        const idPrefix = `${prefix}.keyOptionIds[${j}]`;
+        if (typeof id !== "string") {
+          errors.push(`${idPrefix}: должен быть строкой`);
+          continue;
+        }
+        if (seen.has(id)) {
+          errors.push(`${idPrefix}: дубликат варианта «${id}»`);
+        }
+        seen.add(id);
+        if (!optionIds.has(id)) {
+          errors.push(`${idPrefix}: вариант «${id}» отсутствует в options вопроса`);
+        }
+      }
+    }
+  }
+}
+
 // ─── Результат валидации ────────────────────────────────────────────────
 
 export interface ValidationResult {
@@ -138,6 +295,8 @@ export interface ValidationResult {
  * 6. Базовый критерий, ЕСЛИ присутствует, — type=scale, scaleMin=1, scaleMax=10
  * 7. При type=scale: scaleMax > scaleMin
  * 8. baseKey — один из BASE_CRITERIA (если задан)
+ * 9. reporting и keyOptionIds ссылаются только на существующие варианты
+ * 10. Один вариант не может попасть в две reporting-группы
  *
  * ─── Почему базовые критерии перестали быть обязательными ──────────────
  * Требование всех пяти делало непринимаемой анкету, в которой владелец снял
@@ -373,6 +532,8 @@ export function validateSurvey(doc: unknown): ValidationResult {
         errors.push(`${prefix}.hint: не длиннее 1000 символов`);
       }
     }
+
+    checkReporting(question, prefix, errors);
   }
 
   // Базовые критерии одной анкеты — на ОДНОЙ шкале.

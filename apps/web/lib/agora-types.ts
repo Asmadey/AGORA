@@ -268,6 +268,22 @@ export interface SurveyTheme {
   label: string;
 }
 
+export type SurveyChartType =
+  | "scale"
+  | "scale_top_box"
+  | "bars"
+  | "donut"
+  | "matrix_stacked"
+  | "nps";
+
+export type SurveyReportingGroup = "positive" | "negative" | "neutral" | "unknown";
+
+export interface SurveyReporting {
+  chart: SurveyChartType;
+  center?: SurveyReportingGroup;
+  groups?: Partial<Record<SurveyReportingGroup, string[]>>;
+}
+
 export interface SurveyQuestion {
   id: string;
   /** Задан только у пяти базовых критериев; у пользовательских вопросов — undefined. */
@@ -300,4 +316,8 @@ export interface SurveyQuestion {
   dependsOnQuestion?: string;
   /** Единица выбора оператора у матрицы. */
   selectableBy?: "theme";
+  /** Классификация вариантов и тип диаграммы для отчета. */
+  reporting?: SurveyReporting;
+  /** Варианты, отмеченные оператором как ключевые для отдельного расчета. */
+  keyOptionIds?: string[];
 }

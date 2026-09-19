@@ -1,6 +1,6 @@
 {
-  "source": "ТРЕБОВАНИЯ К ОТЧЕТУ + анкета Агора, Приложение 1. Получено от заказчика 17.09.2026.",
-  "version": "2026-09-17",
+  "source": "ТРЕБОВАНИЯ К ОТЧЕТУ + анкета Агора, Приложение 1. Получено от заказчика 17.09.2026. Классификация вариантов для отчета добавлена 19.09.2026.",
+  "version": "2026-09-19",
   "note": "Обязательная анкета. Ни один из пятнадцати вопросов не выключается (решение владельца 17.09.2026): гибкость оператора — в выборе тем вопроса 9 и в дополнительных вопросах. Шкала 0-10 взята из требований; в полевых анкетах заказчика та же шкала подписана «от 1 до 10», поэтому средние наших прогонов и его волн напрямую не сравнимы — сравнимы доли 8-10 и NPS.",
   "blocks": [
     {
@@ -37,7 +37,10 @@
       "scaleMin": 0,
       "scaleMax": 10,
       "block": "b1",
-      "baseKey": "plot"
+      "baseKey": "plot",
+      "reporting": {
+        "chart": "scale"
+      }
     },
     {
       "number": 2,
@@ -47,7 +50,10 @@
       "scaleMin": 0,
       "scaleMax": 10,
       "block": "b1",
-      "baseKey": "acting"
+      "baseKey": "acting",
+      "reporting": {
+        "chart": "scale"
+      }
     },
     {
       "number": 3,
@@ -57,7 +63,10 @@
       "scaleMin": 0,
       "scaleMax": 10,
       "block": "b1",
-      "baseKey": "cinematography"
+      "baseKey": "cinematography",
+      "reporting": {
+        "chart": "scale"
+      }
     },
     {
       "number": 4,
@@ -67,7 +76,10 @@
       "scaleMin": 0,
       "scaleMax": 10,
       "block": "b1",
-      "baseKey": "music"
+      "baseKey": "music",
+      "reporting": {
+        "chart": "scale"
+      }
     },
     {
       "number": 5,
@@ -77,7 +89,10 @@
       "scaleMin": 0,
       "scaleMax": 10,
       "block": "b1",
-      "baseKey": "overall_impression"
+      "baseKey": "overall_impression",
+      "reporting": {
+        "chart": "scale"
+      }
     },
     {
       "number": 6,
@@ -86,7 +101,10 @@
       "type": "scale",
       "scaleMin": 0,
       "scaleMax": 10,
-      "block": "b1"
+      "block": "b1",
+      "reporting": {
+        "chart": "scale_top_box"
+      }
     },
     {
       "number": 7,
@@ -162,7 +180,15 @@
       "exclusiveOptionIds": [
         "e-s1",
         "e-s2"
-      ]
+      ],
+      "reporting": {
+        "chart": "bars",
+        "groups": {
+          "positive": ["e-1", "e-2", "e-3", "e-4", "e-5", "e-6", "e-7"],
+          "negative": ["e-8", "e-9", "e-10", "e-11", "e-12", "e-13"],
+          "unknown": ["e-s1", "e-s2"]
+        }
+      }
     },
     {
       "number": 8,
@@ -255,6 +281,10 @@
         "v-s1",
         "v-s2"
       ],
+      "reporting": {
+        "chart": "bars"
+      },
+      "keyOptionIds": [],
       "note": "Перечень вариантов обязан совпадать с data/values/traditional_values.json. Второй копии списка в репозитории нет намеренно."
     },
     {
@@ -536,7 +566,15 @@
           "label": "10.4. Наличие в России возможности реализовать любую смелую идею"
         }
       ],
-      "selectableBy": "theme"
+      "selectableBy": "theme",
+      "reporting": {
+        "chart": "matrix_stacked",
+        "groups": {
+          "positive": ["m-1"],
+          "negative": ["m-2"],
+          "unknown": ["m-3"]
+        }
+      }
     },
     {
       "number": 10,
@@ -558,7 +596,16 @@
           "label": "Затрудняюсь ответить",
           "service": true
         }
-      ]
+      ],
+      "reporting": {
+        "chart": "donut",
+        "center": "positive",
+        "groups": {
+          "positive": ["i-1"],
+          "negative": ["i-2"],
+          "unknown": ["i-s1"]
+        }
+      }
     },
     {
       "number": 11,
@@ -633,7 +680,14 @@
           "label": "Согласны ли вы с тем, что в просмотренном контенте показано, что в нашей стране есть возможности или стало больше возможностей для реализации себя, найти применение своим способностям, добиться успеха в жизни."
         }
       ],
-      "dependsOnQuestion": "q09-themes"
+      "dependsOnQuestion": "q09-themes",
+      "reporting": {
+        "chart": "matrix_stacked",
+        "groups": {
+          "positive": ["y-1"],
+          "negative": ["y-2"]
+        }
+      }
     },
     {
       "number": 12,
@@ -667,7 +721,17 @@
           "label": "Затрудняюсь ответить",
           "service": true
         }
-      ]
+      ],
+      "reporting": {
+        "chart": "donut",
+        "center": "positive",
+        "groups": {
+          "positive": ["j-1", "j-2"],
+          "negative": ["j-4", "j-5"],
+          "neutral": ["j-3"],
+          "unknown": ["j-s1"]
+        }
+      }
     },
     {
       "number": 13,
@@ -689,7 +753,16 @@
           "label": "Затрудняюсь ответить",
           "service": true
         }
-      ]
+      ],
+      "reporting": {
+        "chart": "donut",
+        "center": "positive",
+        "groups": {
+          "positive": ["w-1"],
+          "negative": ["w-2"],
+          "unknown": ["w-s1"]
+        }
+      }
     },
     {
       "number": 14,
@@ -711,7 +784,16 @@
           "label": "Затрудняюсь ответить",
           "service": true
         }
-      ]
+      ],
+      "reporting": {
+        "chart": "donut",
+        "center": "positive",
+        "groups": {
+          "positive": ["p-1"],
+          "negative": ["p-2"],
+          "unknown": ["p-s1"]
+        }
+      }
     },
     {
       "number": 15,
@@ -720,7 +802,10 @@
       "type": "scale",
       "scaleMin": 0,
       "scaleMax": 10,
-      "block": "b1"
+      "block": "b1",
+      "reporting": {
+        "chart": "nps"
+      }
     }
   ]
 }
