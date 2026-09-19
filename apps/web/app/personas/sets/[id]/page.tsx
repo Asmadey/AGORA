@@ -7,6 +7,7 @@ import { Chip } from "@/components/agora/Primitives";
 import { AudienceSetActions } from "@/components/agora/AudienceSetActions";
 import { GenerationCriteria } from "@/components/agora/GenerationCriteria";
 import { EmptyState } from "@/components/agora/States";
+import { ValuesChart } from "@/components/agora/ValuesChart";
 import { withTenant } from "@/lib/server/db";
 import { requireSession } from "@/lib/server/guard";
 import { listPersonas, listPersonaSets } from "@/lib/server/personas";
@@ -95,43 +96,46 @@ export default async function PersonaSetPage({
           датасет» задают, глядя на набор, и отвечать на него приходилось на
           слово.
         */}
-        <section className="rounded-lg border border-hairline bg-card p-6">
-          <h2 className="text-sm font-semibold">Заземление на датасет</h2>
-          {!grounding.comparable ? (
-            <p className="mt-2 text-xs leading-relaxed text-slate">
-              Сравнивать не с чем: слепок датасета пуст либо набор ещё собирается.
-              Это «не проверено», а не «всё в порядке».
-            </p>
-          ) : grounding.deviations.length === 0 ? (
-            <p className="mt-2 text-xs leading-relaxed text-slate">
-              Доли возраста, типа населённого пункта и пола совпадают с датасетом
-              в пределах {Math.round(GROUNDING_PROP_TOL * 100)} процентных пунктов.
-            </p>
-          ) : (
-            <>
+        <div className="grid grid-cols-1 items-start gap-6 lg:grid-cols-2">
+          <section className="rounded-lg border border-hairline bg-card p-6">
+            <h2 className="text-sm font-semibold">Заземление на датасет</h2>
+            {!grounding.comparable ? (
               <p className="mt-2 text-xs leading-relaxed text-slate">
-                Доли разошлись с датасетом больше чем на{" "}
-                {Math.round(GROUNDING_PROP_TOL * 100)} процентных пунктов. Само по
-                себе это не дефект — набор меньше корпуса, и округление на
-                маленьком наборе даёт перекос. Но выводы по перекошенному срезу
-                относятся к нему, а не к аудитории.
+                Сравнивать не с чем: слепок датасета пуст либо набор ещё собирается.
+                Это «не проверено», а не «всё в порядке».
               </p>
-              <dl className="mt-3 space-y-1 text-xs">
-                {grounding.deviations.map((d) => (
-                  <div key={`${d.dimension}-${d.bucket}`} className="flex items-baseline gap-2">
-                    <dt className="text-slate">
-                      {d.dimension} · {d.bucket}
-                    </dt>
-                    <dd className="tabular-nums">
-                      набор {Math.round(d.generated * 100)}% против{" "}
-                      {Math.round(d.real * 100)}% в датасете
-                    </dd>
-                  </div>
-                ))}
-              </dl>
-            </>
-          )}
-        </section>
+            ) : grounding.deviations.length === 0 ? (
+              <p className="mt-2 text-xs leading-relaxed text-slate">
+                Доли возраста, типа населённого пункта и пола совпадают с датасетом
+                в пределах {Math.round(GROUNDING_PROP_TOL * 100)} процентных пунктов.
+              </p>
+            ) : (
+              <>
+                <p className="mt-2 text-xs leading-relaxed text-slate">
+                  Доли разошлись с датасетом больше чем на{" "}
+                  {Math.round(GROUNDING_PROP_TOL * 100)} процентных пунктов. Само по
+                  себе это не дефект — набор меньше корпуса, и округление на
+                  маленьком наборе даёт перекос. Но выводы по перекошенному срезу
+                  относятся к нему, а не к аудитории.
+                </p>
+                <dl className="mt-3 space-y-1 text-xs">
+                  {grounding.deviations.map((d) => (
+                    <div key={`${d.dimension}-${d.bucket}`} className="flex items-baseline gap-2">
+                      <dt className="text-slate">
+                        {d.dimension} · {d.bucket}
+                      </dt>
+                      <dd className="tabular-nums">
+                        набор {Math.round(d.generated * 100)}% против{" "}
+                        {Math.round(d.real * 100)}% в датасете
+                      </dd>
+                    </div>
+                  ))}
+                </dl>
+              </>
+            )}
+          </section>
+          <ValuesChart personas={personas} />
+        </div>
 
         {incomplete && (
           <p className="rounded-lg border border-warning/30 bg-warning-soft/60 p-4 text-sm leading-relaxed">

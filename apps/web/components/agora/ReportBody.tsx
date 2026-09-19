@@ -3,6 +3,7 @@ import type { ReactNode } from "react";
 import { Chip, Metric, ScoreBar, TimecodeRef } from "@/components/agora/Primitives";
 import { PersonaAccordion } from "@/components/agora/PersonaAccordion";
 import { SurveyValuesChart } from "@/components/agora/SurveyValuesChart";
+import { ValuesChart } from "@/components/agora/ValuesChart";
 import { MetricProvenance } from "@/components/agora/MetricProvenance";
 import { MetricInfo } from "@/components/agora/MetricInfo";
 import { CRITERIA, CRITERIA_LABELS } from "@/lib/agora-types";
@@ -26,6 +27,8 @@ import {
   surveyQuestion,
 } from "@/lib/report-survey";
 import { showsSection, type ReportScope } from "@/lib/share-scope";
+import { GROUNDING_PROP_TOL, type GroundingReport } from "@/lib/persona-grounding";
+import type { PersonaValuesInput } from "@/lib/values-chart";
 import type {
   AnswerView,
   ReportView,
@@ -70,6 +73,9 @@ export interface ReportBodyProps {
   /** Подпись про отбраковку QA рядом со списком персон. */
   qaNote: string | null;
   scope: ReportScope;
+  /** DNA набора и заземление читаются на сервере, а тело отчёта только рисует. */
+  valuePersonas?: readonly PersonaValuesInput[];
+  audienceGrounding?: GroundingReport;
   /**
    * Материал: плеер и таймлайн. Проп, а не собственный `<Timeline>`, потому
    * что данные для него берутся под сессией на внутренней странице и под
@@ -507,6 +513,8 @@ export function ReportBody({
   runId,
   qaNote,
   scope,
+  valuePersonas,
+  audienceGrounding,
   timeline,
   rawReport,
   videoDurationSec = null,
@@ -599,6 +607,49 @@ export function ReportBody({
         )}
 
         {rawReport}
+
+        {valuePersonas && audienceGrounding && (
+          <div className="grid grid-cols-1 items-start gap-6 lg:grid-cols-2">
+            <section className="rounded-lg border border-hairline bg-card p-6">
+              <h2 className="text-sm font-semibold">Заземление на датасет</h2>
+              {!audienceGrounding.comparable ? (
+                <p className="mt-2 text-xs leading-relaxed text-slate">
+                  Сравнивать не с чем: слепок датасета пуст либо набор ещё собирается.
+                  Это «не проверено», а не «всё в порядке».
+                </p>
+              ) : audienceGrounding.deviations.length === 0 ? (
+                <p className="mt-2 text-xs leading-relaxed text-slate">
+                  Доли возраста, типа населённого пункта и пола совпадают с датасетом
+                  в пределах {Math.round(GROUNDING_PROP_TOL * 100)} процентных пунктов.
+                </p>
+              ) : (
+                <>
+                  <p className="mt-2 text-xs leading-relaxed text-slate">
+                    Доли разошлись с датасетом больше чем на{" "}
+                    {Math.round(GROUNDING_PROP_TOL * 100)} процентных пунктов. Само по
+                    себе это не дефект - набор меньше корпуса, и округление на
+                    маленьком наборе даёт перекос. Но выводы по перекошенному срезу
+                    относятся к нему, а не к аудитории.
+                  </p>
+                  <dl className="mt-3 space-y-1 text-xs">
+                    {audienceGrounding.deviations.map((d) => (
+                      <div key={`${d.dimension}-${d.bucket}`} className="flex items-baseline gap-2">
+                        <dt className="text-slate">
+                          {d.dimension} · {d.bucket}
+                        </dt>
+                        <dd className="tabular-nums">
+                          набор {Math.round(d.generated * 100)}% против{" "}
+                          {Math.round(d.real * 100)}% в датасете
+                        </dd>
+                      </div>
+                    ))}
+                  </dl>
+                </>
+              )}
+            </section>
+            <ValuesChart personas={valuePersonas} minSampleSize={view.minSegmentPersonas || undefined} />
+          </div>
+        )}
 
         {/* Происхождение числа: раскрытие под каждой метрикой ведёт к ответам
             персон, из которых она посчитана, а оттуда — таймкодом в плеер.

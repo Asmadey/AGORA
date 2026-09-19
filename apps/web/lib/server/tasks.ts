@@ -62,6 +62,7 @@ export interface LaunchParams {
 
 export interface LaunchedTask {
   id: string;
+  personaSetId: string | null;
   /**
    * Человеческий номер исследования в пределах команды.
    *
@@ -128,6 +129,7 @@ export interface PinnedPrompt {
 
 interface TaskRow {
   id: string;
+  persona_set_id: string | null;
   seq_no: number | null;
   mode: string;
   video_ref: string | null;
@@ -332,6 +334,7 @@ export function idempotencyKey(
 function toTask(row: TaskRow, created: boolean): LaunchedTask {
   return {
     id: row.id,
+    personaSetId: row.persona_set_id ?? null,
     seqNo: row.seq_no ?? null,
     sourceName: row.source_name ?? null,
     title: row.title ?? null,
@@ -429,7 +432,7 @@ export async function launchTask(
      FROM next
      ON CONFLICT (tenant_id, idempotency_key) WHERE idempotency_key IS NOT NULL
      DO NOTHING
-     RETURNING id, seq_no, mode, video_ref, source_name, title, poster_ref, replication_count, prompts_snapshot, settings_snapshot, parent_task_id, carry_over_memory, status, created_at, (SELECT COALESCE(u.name, u.email) FROM users u WHERE u.id = tasks.created_by) AS author`,
+     RETURNING id, persona_set_id, seq_no, mode, video_ref, source_name, title, poster_ref, replication_count, prompts_snapshot, settings_snapshot, parent_task_id, carry_over_memory, status, created_at, (SELECT COALESCE(u.name, u.email) FROM users u WHERE u.id = tasks.created_by) AS author`,
     [
       params.projectId,
       params.personaSetId,
@@ -453,7 +456,7 @@ export async function launchTask(
   // Конфликт: задача с таким ключом уже есть. Возвращаем её, а не ошибку —
   // для вызывающего повторный запуск обязан выглядеть как успешный.
   const existing = await client.query<TaskRow>(
-    `SELECT id, seq_no, mode, video_ref, source_name, title, poster_ref, replication_count, prompts_snapshot, settings_snapshot, parent_task_id, carry_over_memory, status, created_at, (SELECT COALESCE(u.name, u.email) FROM users u WHERE u.id = tasks.created_by) AS author
+    `SELECT id, persona_set_id, seq_no, mode, video_ref, source_name, title, poster_ref, replication_count, prompts_snapshot, settings_snapshot, parent_task_id, carry_over_memory, status, created_at, (SELECT COALESCE(u.name, u.email) FROM users u WHERE u.id = tasks.created_by) AS author
      FROM tasks WHERE idempotency_key = $1`,
     [key],
   );
@@ -531,7 +534,7 @@ export async function getTask(
   id: string,
 ): Promise<LaunchedTask | null> {
   const { rows } = await client.query<TaskRow>(
-    `SELECT id, seq_no, mode, video_ref, source_name, title, poster_ref, replication_count, prompts_snapshot, settings_snapshot, parent_task_id, carry_over_memory, status, created_at, (SELECT COALESCE(u.name, u.email) FROM users u WHERE u.id = tasks.created_by) AS author
+    `SELECT id, persona_set_id, seq_no, mode, video_ref, source_name, title, poster_ref, replication_count, prompts_snapshot, settings_snapshot, parent_task_id, carry_over_memory, status, created_at, (SELECT COALESCE(u.name, u.email) FROM users u WHERE u.id = tasks.created_by) AS author
      FROM tasks WHERE id = $1`,
     [id],
   );
@@ -540,7 +543,7 @@ export async function getTask(
 
 export async function listTasks(client: PoolClient): Promise<LaunchedTask[]> {
   const { rows } = await client.query<TaskRow>(
-    `SELECT id, seq_no, mode, video_ref, source_name, title, poster_ref, replication_count, prompts_snapshot, settings_snapshot, parent_task_id, carry_over_memory, status, created_at, (SELECT COALESCE(u.name, u.email) FROM users u WHERE u.id = tasks.created_by) AS author
+    `SELECT id, persona_set_id, seq_no, mode, video_ref, source_name, title, poster_ref, replication_count, prompts_snapshot, settings_snapshot, parent_task_id, carry_over_memory, status, created_at, (SELECT COALESCE(u.name, u.email) FROM users u WHERE u.id = tasks.created_by) AS author
      FROM tasks ORDER BY created_at DESC LIMIT 100`,
   );
   return rows.map((r) => toTask(r, false));
@@ -571,7 +574,7 @@ export async function getTaskBySeqNo(
   seqNo: number,
 ): Promise<LaunchedTask | null> {
   const { rows } = await client.query<TaskRow>(
-    `SELECT id, seq_no, mode, video_ref, source_name, title, poster_ref, replication_count, prompts_snapshot, settings_snapshot, parent_task_id, carry_over_memory, status, created_at, (SELECT COALESCE(u.name, u.email) FROM users u WHERE u.id = tasks.created_by) AS author
+    `SELECT id, persona_set_id, seq_no, mode, video_ref, source_name, title, poster_ref, replication_count, prompts_snapshot, settings_snapshot, parent_task_id, carry_over_memory, status, created_at, (SELECT COALESCE(u.name, u.email) FROM users u WHERE u.id = tasks.created_by) AS author
        FROM tasks WHERE seq_no = $1`,
     [seqNo],
   );
