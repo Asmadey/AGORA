@@ -171,6 +171,18 @@
           ],
           "description": "Единица выбора оператора. «theme» — тема включается целиком со всеми строками; иначе интегральный показатель восприятия считался бы по разному числу строк и стал бы несравним между прогонами."
         },
+        "reporting": {
+          "$ref": "#/$defs/Reporting",
+          "description": "Метаданные диаграммы и классификация вариантов для отчета. Необязательно для старых анкет."
+        },
+        "keyOptionIds": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 64
+          },
+          "description": "Идентификаторы вариантов, которые оператор отметил ключевыми для отдельного расчета."
+        },
         "note": {
           "type": "string",
           "maxLength": 1000,
@@ -315,6 +327,75 @@
           }
         }
       ]
+    },
+    "ReportingChart": {
+      "type": "string",
+      "enum": [
+        "scale",
+        "scale_top_box",
+        "bars",
+        "donut",
+        "matrix_stacked",
+        "nps"
+      ]
+    },
+    "ReportingGroup": {
+      "type": "string",
+      "enum": [
+        "positive",
+        "negative",
+        "neutral",
+        "unknown"
+      ]
+    },
+    "Reporting": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "chart"
+      ],
+      "properties": {
+        "chart": {
+          "$ref": "#/$defs/ReportingChart"
+        },
+        "center": {
+          "$ref": "#/$defs/ReportingGroup"
+        },
+        "groups": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "positive": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "maxLength": 64
+              }
+            },
+            "negative": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "maxLength": 64
+              }
+            },
+            "neutral": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "maxLength": 64
+              }
+            },
+            "unknown": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "maxLength": 64
+              }
+            }
+          }
+        }
+      }
     },
     "Option": {
       "type": "object",
