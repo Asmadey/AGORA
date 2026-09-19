@@ -47,11 +47,13 @@ import hashlib
 import json
 import os
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
 
 from ..prompt_text import body_of
+from ..tracing import submit_in_context
 from .portraits import portrait_for
 
 DEFAULT_MODEL = "qwen3.6"
@@ -88,6 +90,12 @@ REQUEST_TIMEOUT_SEC = 60
 #: Нижняя граница длины из canonical JSON Schema (#4). Ответ короче — брак:
 #: схема его отвергнет, и персона не сохранится.
 MIN_NARRATIVE_LEN = 100
+
+# Размер партии из PRD §8. Пять - потолок одновременных обращений к провайдеру:
+# без него большая аудитория уехала бы к провайдеру одним всплеском и получила
+# 429 вместе с оплачиваемыми повторами. Партия также остаётся единицей
+# отказоустойчивости: отказ одной персоны не отменяет остальные четыре.
+BATCH_SIZE = 5
 
 #: Поля, которые модель не видит и не может изменить.
 #:
@@ -535,6 +543,7 @@ def enrich_personas(
             pass
 
     result = EnrichResult()
+    prepared: list[dict[str, Any]] = []
     for index, persona in enumerate(personas, start=1):
         enriched = copy.deepcopy(persona)
         # Портрет сегмента — часть промпта этой персоны, поэтому входит и в
@@ -559,64 +568,103 @@ def enrich_personas(
         # одинаковом списке претензий второй заход не может взять первый
         # результат: именно первый мог быть тем, что судья забраковал.
         use_cache = cache is not None and not revision_issues
-        cached = cache.get(key) if use_cache and cache else None
-        if cached is not None:
-            enriched["narrative"] = cached
-            result.personas.append(enriched)
-            result.sources.append("model")
-            result.cache_hits += 1
-            report(index)
-            continue
+        prepared.append(
+            {
+                "index": index,
+                "persona": persona,
+                "enriched": enriched,
+                "portrait": portrait,
+                "name": name,
+                "key": key,
+                "use_cache": use_cache,
+            }
+        )
 
-        try:
-            text = client.complete(
-                prompt=render_prompt(
-                    prompt,
-                    persona,
-                    portrait_md=portrait,
-                    name=name,
-                    revision_issues=revision_issues,
+    # Партия - единица параллелизма. Результаты сначала раскладываются по
+    # индексам, а затем добавляются в ответ в исходном порядке: завершившийся
+    # раньше вызов не имеет права приклеить narrative к соседней персоне.
+    for start in range(0, len(prepared), BATCH_SIZE):
+        chunk = prepared[start:start + BATCH_SIZE]
+        pending: dict[str, list[dict[str, Any]]] = {}
+        for job in chunk:
+            cached = None
+            if job["use_cache"] and cache:
+                try:
+                    cached = cache.get(job["key"])
+                except Exception as exc:  # noqa: BLE001 - кэш не должен ронять аудиторию
+                    result.degraded_reason = (
+                        f"чтение кэша не удалось: {type(exc).__name__}: {exc}"
+                    )
+            job["cached"] = cached
+            if cached is None:
+                # Группировка до запуска потоков устраняет гонку на записи в
+                # кэш: одинаковый ключ в партии имеет ровно один оплаченный
+                # вызов, а его результат получают все владельцы ключа.
+                pending.setdefault(job["key"], []).append(job)
+            else:
+                job["status"] = "cache"
+
+        if pending:
+            def complete_job(job: dict[str, Any]) -> str:
+                return client.complete(
+                    prompt=render_prompt(
+                        prompt,
+                        job["persona"],
+                        portrait_md=job["portrait"],
+                        name=job["name"],
+                        revision_issues=revision_issues,
+                    )
                 )
-            )
-        except Exception as exc:
-            # Отказ на середине списка: уже обогащённые персоны сохраняются,
-            # остальные остаются с шаблонным narrative. Наполовину обогащённый
-            # набор честнее, чем откат к шаблону целиком, — оплаченные вызовы не
-            # выбрасываются.
-            result.degraded_reason = f"вызов модели не удался: {type(exc).__name__}: {exc}"
-            result.personas.append(enriched)
-            result.sources.append("template")
-            report(index)
-            continue
 
-        result.calls_made += 1
-        if len(text) < MIN_NARRATIVE_LEN:
-            result.personas.append(enriched)
-            result.sources.append("template")
-            report(index)
-            continue
+            with ThreadPoolExecutor(
+                max_workers=min(BATCH_SIZE, len(pending)),
+                thread_name_prefix="enrich",
+            ) as pool:
+                futures = {
+                    key: submit_in_context(pool, complete_job, jobs[0])
+                    for key, jobs in pending.items()
+                }
+                for key, jobs in pending.items():
+                    try:
+                        text = futures[key].result()
+                    except Exception as exc:  # noqa: BLE001 - обогащение необязательно
+                        result.degraded_reason = (
+                            f"вызов модели не удался: {type(exc).__name__}: {exc}"
+                        )
+                        for job in jobs:
+                            job["status"] = "template"
+                        continue
 
-        # Чужое имя в портрете — тот же класс отказа, что и слишком короткий
-        # текст: портрет не про эту персону, и оставлять его нельзя. Персона
-        # «Наталья» с портретом «Анна, 41-летняя жительница Санкт-Петербурга»
-        # уезжала в промпт опроса как описание себя — то есть расхождение не
-        # косметическое, оно доезжало до ответов.
-        #
-        # Шаблонный narrative беднее хорошего портрета, но он хотя бы не врёт.
-        # В кэш такой текст не кладётся: иначе следующая персона с тем же
-        # скелетом получила бы его готовым.
-        stranger = foreign_name(name, text) if name else None
-        if stranger:
-            result.personas.append(enriched)
-            result.sources.append("template")
-            report(index)
-            continue
+                    result.calls_made += 1
+                    accepted = len(text) >= MIN_NARRATIVE_LEN and not (
+                        foreign_name(jobs[0]["name"], text)
+                        if jobs[0]["name"]
+                        else None
+                    )
+                    for job in jobs:
+                        job["text"] = text
+                        job["status"] = "model" if accepted else "template"
 
-        if use_cache and cache:
-            cache.set(key, text)
-        enriched["narrative"] = text
-        result.personas.append(enriched)
-        result.sources.append("model")
-        report(index)
+                    if accepted and jobs[0]["use_cache"] and cache:
+                        try:
+                            cache.set(key, text)
+                        except Exception as exc:  # noqa: BLE001 - результат уже готов
+                            result.degraded_reason = (
+                                f"запись кэша не удалась: {type(exc).__name__}: {exc}"
+                            )
+
+        for job in chunk:
+            enriched = job["enriched"]
+            if job["status"] == "cache":
+                enriched["narrative"] = job["cached"]
+                result.sources.append("model")
+                result.cache_hits += 1
+            elif job["status"] == "model":
+                enriched["narrative"] = job["text"]
+                result.sources.append("model")
+            else:
+                result.sources.append("template")
+            result.personas.append(enriched)
+            report(job["index"])
 
     return result
