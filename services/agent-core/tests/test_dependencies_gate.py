@@ -40,3 +40,19 @@ def test_missing_declared_import_is_a_skip(monkeypatch: pytest.MonkeyPatch) -> N
 
     with pytest.raises(pytest.skip.Exception, match="объявлен.*не установлен"):
         dependencies_gate.test_every_import_resolves()
+
+
+def test_installed_undeclared_import_is_a_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Установленность не заменяет объявление в pyproject."""
+    name = "fixture_dependency_that_is_installed_but_not_declared"
+    assert name not in PYPROJECT.read_text("utf-8")
+
+    monkeypatch.setattr(
+        dependencies_gate,
+        "external_imports",
+        lambda: {name: {"agent_core/fixture.py"}},
+    )
+    monkeypatch.setattr(dependencies_gate, "find_spec", lambda module: object())
+
+    with pytest.raises(AssertionError, match="не объявлено в pyproject"):
+        dependencies_gate.test_every_import_resolves()

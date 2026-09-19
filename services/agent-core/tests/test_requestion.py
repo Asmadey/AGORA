@@ -233,11 +233,81 @@ def test_node_reads_the_cap_from_the_settings_snapshot(monkeypatch):
     )
 
 
+def test_product_qa_keeps_informative_flag_without_requestion(monkeypatch, tmp_path):
+    """Информирующий флаг виден, но узел не вызывает модель повторно."""
+    import json
+
+    from agent_core.config import ConfigError
+    from agent_core.pipeline import nodes
+    from agent_core.qa import judge as judge_module
+    from agent_core.respondent import run as respondent_run
+
+    calls = 0
+
+    def low_score_body() -> dict:
+        return {
+            "scores": {
+                "overall_impression": 3,
+                "plot": 3,
+                "acting": 3,
+                "music": 3,
+                "cinematography": 3,
+            },
+            "perception": {
+                "retention_intent": "досмотреть до конца",
+                "recommendation_nps_1_to_10": 3,
+            },
+            "verbatims": {"why_impression": "Тема удерживает внимание."},
+            "grounding_refs": ["00:10 начало"],
+        }
+
+    class NoJudge:
+        def __init__(self, *args, **kwargs):
+            raise ConfigError("тест отключил судью")
+
+    class CountingRespondent:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def complete(self, *, system: str, user: str) -> str:
+            nonlocal calls
+            calls += 1
+            return json.dumps(low_score_body())
+
+    monkeypatch.setattr(judge_module, "QwenJudgeClient", NoJudge)
+    monkeypatch.setattr(respondent_run, "QwenRespondentClient", CountingRespondent)
+    monkeypatch.setattr(nodes, "_model_config", lambda state: object())
+    monkeypatch.setattr(nodes, "_load_personas", lambda state: [{"id": "p-low"}])
+    monkeypatch.setattr(nodes, "workdir", lambda state: tmp_path)
+
+    result = nodes.qa({
+        "task_id": "qa-requestion-test",
+        "tenant_id": "tenant-test",
+        "settings_snapshot": {},
+        "content_pack_compact": {"duration_sec": 100.0},
+        "survey": {},
+        "persona_answers": [{
+            "persona_id": "p-low",
+            "replication": 0,
+            "answer": low_score_body(),
+        }],
+    })
+
+    informative = [
+        flag for flag in result["qa_flags"]
+        if flag["source"] == "rule_informative"
+    ]
+    assert informative, "информирующий флаг должен остаться видимым оператору"
+    assert calls == 0, f"информирующий флаг вызвал модель повторно: {calls} раз"
+    assert result["qa_requestioned"] == 0
+
+
 class _Outcome:
     """Минимальный итог опроса: узлу от него нужны только вердикты QA."""
 
     def __init__(self, flagged):
         self.flagged = flagged
+        self.requestionable = flagged
         self.answers = []
         self.failures = 0
         self.failure_reasons = []
