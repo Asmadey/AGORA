@@ -1285,6 +1285,31 @@ def _corpus_verbatims(state: PipelineState, degraded: list[str]) -> list[str]:
         return []
 
 
+def _personas_or_degraded(
+    state: PipelineState, degraded: list[str], where: str
+) -> list[dict[str, Any]]:
+    """
+    Реестр персон там, где его отсутствие не должно ронять прогон.
+
+    `_load_personas` бросает исключение осознанно: молчаливый пустой список
+    превращался в охват 0, и отчёт выглядел посчитанным. Но узлы ПОСЛЕ опроса
+    стоят за уже оплаченными ответами персон, расшифровкой и разбором кадров.
+    Персону могли удалить после старта прогона — удаление разрешено, — и тогда
+    неполный реестр обменивал бы весь оплаченный прогон на исключение.
+
+    Поэтому здесь отказ чтения становится строкой в `degraded` и пустым
+    списком: проверка пойдёт правилами, переспрос не состоится, а отчёт будет
+    собран и скажет об этом словами.
+    """
+    try:
+        return _load_personas(state)
+    except Exception as exc:  # noqa: BLE001
+        degraded.append(
+            f"{where}: персоны не прочитаны ({type(exc).__name__}: {exc})"
+        )
+        return []
+
+
 def _personas_for_segments(
     state: PipelineState, degraded: list[str]
 ) -> list[dict[str, Any]]:
@@ -1373,7 +1398,7 @@ def qa(state: PipelineState) -> dict[str, Any]:
         return run_qa(
             answers=current,
             pack=state.get("content_pack_compact") or state.get("content_pack_full") or {},
-            personas=_load_personas(state),
+            personas=_personas_or_degraded(state, degraded, "qa"),
             survey=state.get("survey") or {},
             judge=judge,
             policy=policy,
@@ -1478,7 +1503,10 @@ def _requestion_flagged(
             f"выбывают только нарушившие правило). "
             f"Потолок меняется в настройках команды"
         )
-    personas = {str(p.get("id")): p for p in _load_personas(state)}
+    personas = {
+        str(p.get("id")): p
+        for p in _personas_or_degraded(state, degraded, "qa: переспрос")
+    }
     to_ask = [personas[pid] for pid, _ in sorted(targets) if pid in personas]
     if not to_ask:
         return answers, 0

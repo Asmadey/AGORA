@@ -279,7 +279,7 @@ class FieldAnswer:
     будет выглядеть мнением аудитории.
     """
 
-    value: int | None = None
+    value: float | None = None
     option_ids: list[str] = field(default_factory=list)
     text: str = ""
     missing: bool = False
@@ -377,15 +377,22 @@ def parse_field_answer(
         return FieldAnswer(text=str(raw).strip())
 
     if qtype == "scale":
+        # `float`, а не `int`: персона отвечает целым, но повторы одной персоны
+        # сводятся в одну запись средним (`survey_stats._collapse_values`), и
+        # среднее ответов 7 и 8 — это 7.5. Прежний `int()` такую запись не
+        # разбирал вовсе и возвращал «балл не разобран», то есть терял ответ
+        # ровно там, где повтор и нужен.
         try:
-            value = int(str(raw).strip())
+            number = float(str(raw).strip())
         except (TypeError, ValueError):
             return FieldAnswer(error=f"балл не разобран: {raw!r}")
         low = int(question.get("scaleMin", 0))
         high = int(question.get("scaleMax", 10))
-        if not low <= value <= high:
-            return FieldAnswer(error=f"балл {value} вне шкалы {low}–{high}")
-        return FieldAnswer(value=value)
+        if not low <= number <= high:
+            return FieldAnswer(error=f"балл {number:g} вне шкалы {low}–{high}")
+        # Целое остаётся целым: оно уезжает в ключи распределения и в выгрузку,
+        # и «8.0» вместо «8» читалось бы как другой балл.
+        return FieldAnswer(value=int(number) if float(number).is_integer() else number)
 
     # Варианты берутся у СТРОКИ, когда она названа: у своей матрицы оператора
     # списки у вопросов внутри темы разные, и разбор против общего принял бы
