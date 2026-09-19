@@ -137,6 +137,7 @@ def cache_key(
     model: str,
     portrait_md: str = "",
     name: str = "",
+    revision_issues: list[Any] | None = None,
 ) -> str:
     """
     Ключ обогащения одной персоны.
@@ -171,6 +172,14 @@ def cache_key(
     # целиком в день выкладки, и первый же прогон оплатил бы обогащение заново.
     if name:
         h.update(name.encode("utf-8"))
+    # Обратная связь судьи меняет тот же промпт и потому обязана менять ключ.
+    # При самом переписывании кэш всё равно отключается: две попытки с одним и
+    # тем же списком претензий не должны получить первый, возможно плохой текст.
+    if revision_issues:
+        h.update(b"\x00revision_issues\x00")
+        h.update(
+            json.dumps(revision_issues, sort_keys=True, ensure_ascii=False).encode("utf-8")
+        )
     return h.hexdigest()
 
 
@@ -358,7 +367,11 @@ def foreign_name(name: str, narrative: str) -> str | None:
 
 
 def render_prompt(
-    template: str, persona: dict[str, Any], portrait_md: str = "", name: str = ""
+    template: str,
+    persona: dict[str, Any],
+    portrait_md: str = "",
+    name: str = "",
+    revision_issues: list[Any] | None = None,
 ) -> str:
     """
     Подставляет скелет в шаблон persona.enrich.md.
@@ -399,7 +412,7 @@ def render_prompt(
 
         return "; ".join(f"{k}: {show(v)}" for k, v in data.items()) or "не задано"
 
-    return (
+    rendered = (
         template
         # Пустая строка, а не пропуск подстановки: оставленный `{{portrait_md}}`
         # уехал бы в модель буквально, и она приняла бы фигурные скобки за часть
@@ -443,6 +456,17 @@ def render_prompt(
         .replace("{{children}}", str(demo.get("children", "не задано")))
         .replace("{{min_len}}", str(MIN_NARRATIVE_LEN))
     )
+    if revision_issues:
+        rendered += (
+            "\n\n## Что исправить в текущем портрете\n"
+            "Перепиши только narrative, сохранив тот же скелет и имя. "
+            "Устрани именно эти претензии судьи:\n"
+            + "\n".join(
+                f"- {json.dumps(issue, ensure_ascii=False, sort_keys=True)}"
+                for issue in revision_issues
+            )
+        )
+    return rendered
 
 
 def enrich_personas(
@@ -456,6 +480,7 @@ def enrich_personas(
     on_progress: Callable[[int, int], None] | None = None,
     temperature: float | None = None,
     portraits: dict[str, str] | None = None,
+    revision_issues: list[Any] | None = None,
 ) -> EnrichResult:
     """
     Переписывает narrative каждой персоны моделью, оставляя скелет нетронутым.
@@ -522,10 +547,19 @@ def enrich_personas(
         # неотличимый от нынешнего, но уже необъяснимый.
         name = names[index - 1] if names and index - 1 < len(names) else ""
         key = cache_key(
-            _skeleton(persona), prompt, model_name, portrait_md=portrait, name=name
+            _skeleton(persona),
+            prompt,
+            model_name,
+            portrait_md=portrait,
+            name=name,
+            revision_issues=revision_issues,
         )
 
-        cached = cache.get(key) if cache else None
+        # Исправление текста должно действительно вызвать модель. Даже при
+        # одинаковом списке претензий второй заход не может взять первый
+        # результат: именно первый мог быть тем, что судья забраковал.
+        use_cache = cache is not None and not revision_issues
+        cached = cache.get(key) if use_cache and cache else None
         if cached is not None:
             enriched["narrative"] = cached
             result.personas.append(enriched)
@@ -536,7 +570,13 @@ def enrich_personas(
 
         try:
             text = client.complete(
-                prompt=render_prompt(prompt, persona, portrait_md=portrait, name=name)
+                prompt=render_prompt(
+                    prompt,
+                    persona,
+                    portrait_md=portrait,
+                    name=name,
+                    revision_issues=revision_issues,
+                )
             )
         except Exception as exc:
             # Отказ на середине списка: уже обогащённые персоны сохраняются,
@@ -572,7 +612,7 @@ def enrich_personas(
             report(index)
             continue
 
-        if cache:
+        if use_cache and cache:
             cache.set(key, text)
         enriched["narrative"] = text
         result.personas.append(enriched)

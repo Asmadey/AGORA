@@ -104,7 +104,10 @@ class Verdict:
     """Итог проверки одной персоны."""
 
     consistent: bool
-    issues: list[str] = field(default_factory=list)
+    # В ответе модели это список объектов с kind, severity и message. Строки
+    # сохраняются только для старых арендаторов и тестовых клиентов, которые
+    # ещё отвечают до включения строгой схемы.
+    issues: list[Any] = field(default_factory=list)
     confidence: float = 0.0
     #: Проверка не состоялась — модель недоступна или ответ не разобрался.
     #: Это НЕ то же самое, что «связна»: неизвестность обязана быть видна.
@@ -169,7 +172,7 @@ def _parse(text: str) -> Verdict:
 
     consistent = bool(parsed.get("consistent", True))
     raw_issues = parsed.get("issues") or []
-    issues = [str(i) for i in raw_issues] if isinstance(raw_issues, list) else []
+    issues = list(raw_issues) if isinstance(raw_issues, list) else []
     try:
         confidence = float(parsed.get("confidence", 0.0))
     except (TypeError, ValueError):
@@ -231,6 +234,8 @@ class ValidationOutcome:
     personas: list[dict[str, Any]]
     verdicts: list[Verdict]
     regenerated: int = 0
+    reenriched: int = 0
+    attribute_conflicts: int = 0
     failed: int = 0
     calls: int = 0
 
@@ -239,17 +244,46 @@ class ValidationOutcome:
         return sum(1 for v in self.verdicts if v.checked)
 
 
+_TEXT_ISSUE_KINDS = {"contradiction", "invented", "impersonal"}
+
+
+def _issue_kind(issue: Any) -> str | None:
+    """Возвращает тип структурированной претензии, если он есть."""
+    return issue.get("kind") if isinstance(issue, dict) else None
+
+
+def _is_attribute_conflict(issue: Any) -> bool:
+    return _issue_kind(issue) == "attribute_conflict"
+
+
+def _is_hard_text_issue(issue: Any) -> bool:
+    # Строка означает старый ответ до миграции строгой схемы. Сохраняем его
+    # старое безопасное поведение: явная строковая претензия считалась жёсткой.
+    if isinstance(issue, str):
+        return True
+    return (
+        isinstance(issue, dict)
+        and issue.get("kind") in _TEXT_ISSUE_KINDS
+        and issue.get("severity") == "hard"
+    )
+
+
+def _hard_text_issues(issues: list[Any]) -> list[Any]:
+    return [issue for issue in issues if _is_hard_text_issue(issue)]
+
+
 def validate_set(
     personas: list[dict[str, Any]],
     *,
     client: ValidatorClient,
     regenerate: Callable[[int, int], dict[str, Any] | None],
+    reenrich: Callable[[int, list[Any]], dict[str, Any] | None] | None = None,
     template: str | None = None,
     verbatim_pool: list[str] | None = None,
     max_attempts: int = MAX_ATTEMPTS,
 ) -> ValidationOutcome:
     """
-    Проверяет набор, пересоздавая непрошедших.
+    Проверяет набор, сначала исправляя текст на том же скелете.
 
     `regenerate(index, attempt)` обязан вернуть персону с ДРУГИМ seed либо None,
     если пересоздать нечем. Пересоздание вынесено наружу намеренно: здесь нет
@@ -274,8 +308,35 @@ def validate_set(
         # иначе теряется вместе с самой персоной.
         first = verdict
 
-        while not verdict.consistent and attempt < max_attempts:
-            replacement = regenerate(index, attempt)
+        result.attribute_conflicts += sum(
+            1 for issue in first.issues if _is_attribute_conflict(issue)
+        )
+
+        # Переписывание имеет собственный бюджет: иначе три дешёвых попытки
+        # на том же скелете исчезают из статистики, а новый seed берётся раньше
+        # согласованного порога. После него действует прежний bounded loop для
+        # действительно новой персоны.
+        rewrite_attempts = 0
+        while _hard_text_issues(verdict.issues) and reenrich is not None:
+            if rewrite_attempts >= max_attempts:
+                break
+            issues = _hard_text_issues(verdict.issues)
+            replacement = reenrich(index, issues)
+            if replacement is None:
+                break
+            rewrite_attempts += 1
+            attempt += 1
+            current = replacement
+            verdict = validate_persona(
+                current, client=client, template=template, verbatim_pool=verbatim_pool
+            )
+            result.calls += 1
+            result.reenriched += 1
+
+        seed_attempts = 0
+        while _hard_text_issues(verdict.issues) and seed_attempts < max_attempts - 1:
+            seed_attempts += 1
+            replacement = regenerate(index, seed_attempts)
             if replacement is None:
                 break
             attempt += 1
@@ -292,7 +353,9 @@ def validate_set(
         # дубль в базе отличить от настоящей отбраковки было бы нельзя.
         if attempt > 1:
             verdict.first = first
-        if not verdict.consistent:
+        # Мягкая претензия и конфликт атрибутов записываются, но не делают
+        # персону failed: отказ касается только жёсткого дефекта текста.
+        if _hard_text_issues(verdict.issues):
             result.failed += 1
 
         result.personas[index] = current
