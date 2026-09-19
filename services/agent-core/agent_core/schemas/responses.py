@@ -284,9 +284,18 @@ RESPONDENT: dict[str, Any] = _obj({
 # `social_activity: тусовщик`. То есть найденное расхождение пропало по дороге,
 # и персона прошла как непроверенная.
 
+_PERSONA_ISSUE = _obj({
+    "kind": {
+        "type": "string",
+        "enum": ["contradiction", "invented", "impersonal", "attribute_conflict"],
+    },
+    "severity": {"type": "string", "enum": ["hard", "soft"]},
+    "message": {"type": "string"},
+})
+
 PERSONA_VALIDATION: dict[str, Any] = _obj({
     "consistent": {"type": "boolean"},
-    "issues": _str_array(),
+    "issues": {"type": "array", "items": _PERSONA_ISSUE},
     "confidence": {"type": "number"},
 })
 

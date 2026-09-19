@@ -477,6 +477,15 @@ def _generate_audience_once(
     validation_meta: dict[str, Any] = {
         "checked": 0,
         "regenerated": 0,
+        # Сколько портретов переписано на ТОМ ЖЕ скелете вместо розыгрыша
+        # нового. Отдельно от `regenerated`, потому что это разные события:
+        # переписывание сохраняет выборку из корпуса, пересоздание её меняет.
+        "reenriched": 0,
+        # Сколько раз судья нашёл несовместимость МЕЖДУ атрибутами, а не между
+        # текстом и атрибутами. Это счётчик про генератор, а не про персону, и
+        # он отвечает на отдельный вопрос: стоит ли переходить к связанному
+        # сэмплированию. Раньше такого числа не было ни у кого.
+        "attribute_conflicts": 0,
         "failed": 0,
         "calls": 0,
     }
@@ -513,6 +522,36 @@ def _generate_audience_once(
             if config.use_llm and batch_personas:
                 validated_names = list(batch_names)
                 absolute_start = start + batch_start
+                # Источник для переписывания — текущее состояние персоны в
+                # партии. Скелет, имя и портрет сегмента остаются прежними:
+                # виноват текст, и менять из-за него розыгрыш из корпуса
+                # значит смещать состав набора в сторону персон, которых легко
+                # описать прозой.
+                reenrich_sources = list(batch_personas)
+
+                def reenrich(
+                    index: int,
+                    issues: list[Any],
+                    *,
+                    reenrich_sources: list[dict[str, Any]] = reenrich_sources,
+                    validated_names: list[str] = validated_names,
+                ) -> dict[str, Any] | None:
+                    """Переписывает narrative, сохраняя скелет, имя и портрет."""
+                    try:
+                        outcome = enrich_personas(
+                            [reenrich_sources[index]],
+                            names=[validated_names[index]],
+                            temperature=temperatures.personaCreation,
+                            portraits=portraits,
+                            revision_issues=issues,
+                        )
+                        if not outcome.personas:
+                            return None
+                        replacement = outcome.personas[0]
+                        reenrich_sources[index] = replacement
+                        return replacement
+                    except Exception:  # noqa: BLE001 — следующая ступень возьмёт новый seed
+                        return None
 
                 def regenerate(
                     index: int,
@@ -561,6 +600,7 @@ def _generate_audience_once(
                             response_schema=("PersonaValidation", PERSONA_VALIDATION),
                             max_tokens=MAX_TOKENS["persona_validation"],
                         ),
+                        reenrich=reenrich,
                         regenerate=regenerate,
                         verbatim_pool=_judge_pool(gen.dist.verbatims),
                         max_attempts=attempts,
@@ -573,7 +613,14 @@ def _generate_audience_once(
                     batch_personas = validation.personas
                     batch_names = validated_names
                     batch_verdicts = validation.verdicts
-                    for key in ("checked", "regenerated", "failed", "calls"):
+                    for key in (
+                        "checked",
+                        "regenerated",
+                        "reenriched",
+                        "attribute_conflicts",
+                        "failed",
+                        "calls",
+                    ):
                         validation_meta[key] += getattr(validation, key)
 
             _write_persona_batch(
