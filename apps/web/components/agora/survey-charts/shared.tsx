@@ -8,7 +8,7 @@ import type { SurveySample, SurveyTone } from "./types";
 
 export { targetUnavailableNote } from "@/lib/survey-charts";
 
-export const TARGET_LABEL = "14-35 лет";
+export const TARGET_LABEL = "14-35";
 
 export const printSafeStyle: CSSProperties = {
   printColorAdjust: "exact",
@@ -70,6 +70,7 @@ export function ChartCard({
   legend,
   note,
   table,
+  targetN,
 }: {
   title: string;
   sample: SurveySample;
@@ -77,6 +78,7 @@ export function ChartCard({
   legend?: ReactNode;
   note?: string | null;
   table: ReactNode;
+  targetN?: number | null;
 }) {
   return (
     <article
@@ -87,6 +89,7 @@ export function ChartCard({
         <h2 className="break-words text-sm font-semibold leading-snug">{title}</h2>
         <p className="mt-1 text-[11px] uppercase tracking-wide text-slate">
           в % от опрошенных · {sampleText(sample)}
+          {targetN !== undefined ? " · " + TARGET_LABEL + ": n=" + (targetN ?? "—") : ""}
         </p>
       </header>
       <div className="mt-4 min-w-0">{children}</div>

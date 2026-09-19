@@ -353,6 +353,8 @@ test("посчитанный срез в колонку доезжает", () =>
 // ─── Экран ──────────────────────────────────────────────────────────────────
 
 const body = code(read("components/agora/ReportBody.tsx"));
+const surveyChartSource = code(read("components/agora/SurveyQuestionChart.tsx"))
+  + code(read("lib/report-survey-charts.ts"));
 
 test("отчёт показывает блоки анкеты", () => {
   assert.ok(/surveyBlocks/.test(body), "тело отчёта группирует вопросы по блокам");
@@ -371,15 +373,15 @@ test("у каждого показателя стоит колонка срез�
   assert.ok(!/["'>]14–35/.test(body), "диапазон не набран в разметке руками");
   assert.ok(/targetRange/.test(body), "подпись среза приходит из данных");
   assert.ok(
-    /target\.n|surveySize/.test(body),
-    "рядом с числом среза стоит его размер",
+    /target\.n|targetN|surveySize/.test(surveyChartSource),
+    "модель и отрисовка знают размер среза",
   );
 });
 
 test("неподсчитанное названо, а не показано нулём", () => {
   assert.ok(
-    /belowThreshold/.test(body),
-    "подавленный срез отмечается на экране",
+    /belowThreshold|targetUnavailableNote/.test(surveyChartSource),
+    "подавленный срез доезжает до примитива и получает подпись",
   );
 });
 

@@ -29,6 +29,7 @@ export interface SurveyPart {
   label: string;
   tone: SurveyTone;
   share: NullableShare;
+  service?: boolean;
 }
 
 export interface SurveySecondaryMetric {
@@ -39,6 +40,13 @@ export interface SurveySecondaryMetric {
 export interface SurveyScaleTarget extends SurveyTargetBase {
   mean: number | null;
   topBox: NullableShare;
+  groups?: readonly SurveyScaleGroup[];
+}
+
+export interface SurveyScaleGroup {
+  id: string;
+  label: string;
+  share: NullableShare;
 }
 
 export interface SurveyDonutTarget extends SurveyTargetBase {
@@ -49,6 +57,8 @@ export interface SurveyBarRow {
   id: string;
   label: string;
   share: NullableShare;
+  count?: number | null;
+  service?: boolean;
   tone?: "regular" | "key";
 }
 
@@ -56,6 +66,7 @@ export interface SurveyBarTargetRow {
   id: string;
   label?: string;
   share: NullableShare;
+  count?: number | null;
 }
 
 export interface SurveyBarTarget extends SurveyTargetBase {
@@ -98,4 +109,6 @@ export interface SurveyNpsValues {
 
 export interface SurveyNpsTarget extends SurveyTargetBase {
   values: SurveyNpsValues;
+  mean?: number | null;
+  topBox?: NullableShare;
 }

@@ -25,6 +25,7 @@ export function SurveyMetricCard({ title, value, caption, target, sample, note }
     <ChartCard
       title={title}
       sample={sample}
+      targetN={target.n}
       legend={<Legend items={[{ label: "Общая выборка", tone: "positive" }, { label: TARGET_LABEL, tone: "slice" }]} />}
       note={targetNote ?? note ?? null}
       table={(

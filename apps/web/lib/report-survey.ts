@@ -145,8 +145,10 @@ export interface SurveyPairRow {
   known: boolean;
   service: boolean;
   total: number | null;
+  totalCount: number | null;
   /** `null` — в срезе этого варианта нет: он подавлен порогом или не спрошен. */
   target: number | null;
+  targetCount: number | null;
 }
 
 /**
@@ -218,14 +220,16 @@ export function optionPairs(
   total: SurveyStats,
   target: SurveyStats,
 ): SurveyPairRow[] {
-  const inTarget = new Map(optionRows(question, target).map((o) => [o.id, o.share]));
+  const inTarget = new Map(optionRows(question, target).map((o) => [o.id, o]));
   return optionRows(question, total).map((o) => ({
     id: o.id,
     label: o.label,
     known: o.known,
     service: o.service,
     total: o.share,
-    target: inTarget.has(o.id) ? (inTarget.get(o.id) ?? null) : null,
+    totalCount: o.count,
+    target: inTarget.has(o.id) ? (inTarget.get(o.id)?.share ?? null) : null,
+    targetCount: inTarget.has(o.id) ? (inTarget.get(o.id)?.count ?? null) : null,
   }));
 }
 

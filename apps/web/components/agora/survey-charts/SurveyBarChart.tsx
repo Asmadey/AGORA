@@ -20,6 +20,11 @@ export interface SurveyBarChartProps {
   sample: SurveySample;
 }
 
+function barValueLabel(row: { share: number | null; count?: number | null }): string {
+  const share = formatShare(row.share);
+  return row.count === undefined ? share : `${row.count ?? "—"} · ${share}`;
+}
+
 function BarValue({ row, max }: { row: SurveyBarRow; max: number }) {
   const width = row.share === null ? 0 : barLengthPercent(row.share, max);
   return (
@@ -31,13 +36,13 @@ function BarValue({ row, max }: { row: SurveyBarRow; max: number }) {
               className="block h-full rounded-sm"
               style={{
                 width: `${width}%`,
-                backgroundColor: toneColor(row.tone === "key" ? "key" : "bar"),
-                opacity: toneOpacity(row.tone === "key" ? "key" : "bar"),
+                backgroundColor: toneColor(row.service ? "unknown" : row.tone === "key" ? "key" : "bar"),
+                opacity: toneOpacity(row.service ? "unknown" : row.tone === "key" ? "key" : "bar"),
               }}
             />
           ) : null}
         </div>
-        <span className="w-10 shrink-0 text-right text-xs tabular-nums">{formatShare(row.share)}</span>
+        <span className="w-20 shrink-0 text-right text-xs tabular-nums">{barValueLabel(row)}</span>
       </div>
     </div>
   );
@@ -53,6 +58,7 @@ export function SurveyBarChart({ title, note, rows, target, sample }: SurveyBarC
     <ChartCard
       title={title}
       sample={sample}
+      targetN={target.n}
       legend={<Legend items={[{ label: "Общая выборка", tone: "bar" }, { label: "Ключевой вариант", tone: "key" }, { label: TARGET_LABEL, tone: "slice" }]} />}
       note={targetNote ?? note ?? null}
       table={(
@@ -60,8 +66,8 @@ export function SurveyBarChart({ title, note, rows, target, sample }: SurveyBarC
           headers={["Вариант", "Общая выборка", TARGET_LABEL]}
           rows={rows.map((row) => [
             row.label,
-            formatShare(row.share),
-            targetNote ? targetNote : formatShare(targetById.get(row.id)?.share ?? null),
+            barValueLabel(row),
+            targetNote ? targetNote : barValueLabel(targetById.get(row.id) ?? { share: null }),
           ])}
         />
       )}
@@ -73,7 +79,7 @@ export function SurveyBarChart({ title, note, rows, target, sample }: SurveyBarC
           const targetRow = targetById.get(row.id);
           return (
             <div key={row.id} className="contents">
-              <div className="min-w-0 self-center break-words text-xs leading-snug">{row.label}</div>
+              <div className={`min-w-0 self-center break-words text-xs leading-snug ${row.service ? "text-slate" : ""}`}>{row.label}</div>
               <div className="min-w-0 space-y-1">
                 <BarValue row={row} max={overallMax} />
                 {targetNote ? (
@@ -88,8 +94,8 @@ export function SurveyBarChart({ title, note, rows, target, sample }: SurveyBarC
                         />
                       ) : null}
                     </div>
-                    <span className="w-10 shrink-0 text-right text-[11px] tabular-nums">
-                      {formatShare(targetRow?.share ?? null)}
+                    <span className="w-20 shrink-0 text-right text-[11px] tabular-nums">
+                      {barValueLabel(targetRow ?? { share: null })}
                     </span>
                   </div>
                 )}

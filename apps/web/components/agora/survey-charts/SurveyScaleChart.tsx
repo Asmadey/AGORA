@@ -15,7 +15,7 @@ import {
   targetUnavailableNote,
   toneColor,
 } from "./shared";
-import type { SurveySample, SurveyScaleTarget } from "./types";
+import type { SurveySample, SurveyScaleGroup, SurveyScaleTarget } from "./types";
 
 export interface SurveyScaleChartProps {
   title: string;
@@ -25,6 +25,7 @@ export interface SurveyScaleChartProps {
   topBox: number | null;
   minLabel: string;
   maxLabel: string;
+  groups?: readonly SurveyScaleGroup[];
   target: SurveyScaleTarget;
   sample: SurveySample;
 }
@@ -37,6 +38,7 @@ export function SurveyScaleChart({
   topBox,
   minLabel,
   maxLabel,
+  groups = [],
   target,
   sample,
 }: SurveyScaleChartProps) {
@@ -49,6 +51,7 @@ export function SurveyScaleChart({
     <ChartCard
       title={title}
       sample={sample}
+      targetN={target.n}
       legend={<Legend items={[{ label: "Общая выборка", tone: "scale" }, { label: TARGET_LABEL, tone: "slice" }]} />}
       note={targetNote}
       table={(
@@ -57,6 +60,11 @@ export function SurveyScaleChart({
           rows={[
             ["Среднее", formatMean(mean), targetNote ? targetNote : formatMean(target.mean)],
             ["Доля 8-10", formatShare(topBox), targetNote ? targetNote : formatShare(target.topBox)],
+            ...groups.map((group) => [
+              group.label,
+              formatShare(group.share),
+              targetNote ? targetNote : formatShare(target.groups?.find((item) => item.id === group.id)?.share ?? null),
+            ]),
           ]}
         />
       )}
@@ -117,6 +125,16 @@ export function SurveyScaleChart({
               ) : null}
             </div>
           </div>
+          {groups.length > 0 ? (
+            <div className="mt-4 min-w-0 space-y-1.5">
+              {groups.map((group) => (
+                <div key={group.id} className="flex items-baseline justify-between gap-2 text-xs">
+                  <span className="break-words text-slate">{group.label}</span>
+                  <span className="shrink-0 tabular-nums">{formatShare(group.share)}</span>
+                </div>
+              ))}
+            </div>
+          ) : null}
         </div>
         <aside className="min-w-0 border-l border-hairline pl-3">
           <TargetLabel>Показатель в ЦА</TargetLabel>
