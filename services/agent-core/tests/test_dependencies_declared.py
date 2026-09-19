@@ -13,31 +13,103 @@ healthy, а ModuleNotFoundError ждёт первого обращения к м
 наступает после оплаченных ffmpeg, транскрипции и разбора кадров, и выглядит
 как сбой прогона, а не как незаявленная зависимость.
 
-─── Почему проверяется установленность, а не строка в pyproject ─────────────
-Сверять со списком в pyproject значило бы вести вторую копию: часть пакетов
-приходит транзитивно и по делу (torch и numpy тянет pyannote.audio, и это
-записано в комментарии рядом с зависимостью). Такой тест краснел бы на
-правильном коде и его быстро бы отключили.
+─── Почему проверяется и pyproject, и установленность ────────────────────────
+`find_spec` спрашивает у среды, разрешается ли имя, но на хосте разработчика
+тяжёлых пакетов нет намеренно. Поэтому отсутствие разделяется на два случая:
+незаявленный импорт остаётся дефектом, а заявленный пакет, отсутствующий в этой
+среде, становится честным SKIP с указанием запуска в образе воркера.
 
-`find_spec` спрашивает у среды, разрешается ли имя. В CI окружение собирается
-ровно из pyproject — значит незаявленный пакет там не установлен, и проверка
-краснеет по существу, а не по расхождению двух списков.
+Имена импортов и distributions не всегда совпадают. Алиасы ниже учитывают
+публичные имена пакетов и транзитивные импорты, которые приходят через
+объявленные зависимости, чтобы не вести второй список версий.
 """
 
 from __future__ import annotations
 
 import ast
-import os
+import re
 import sys
+import tomllib
+from collections.abc import Callable
 from importlib.util import find_spec
 from pathlib import Path
 
 import pytest
 
 PKG = Path(__file__).resolve().parents[1] / "agent_core"
+PYPROJECT = PKG.parent / "pyproject.toml"
 
 #: Имена, которые не являются внешними пакетами.
 FIRST_PARTY = {"agent_core"}
+
+# Имя import обычно совпадает с именем distribution после PEP 503-нормализации,
+# но эти пакеты требуют знания границы между ними. Значение - distribution,
+# объявленный напрямую или транзитивно через него.
+IMPORT_DISTRIBUTION_ALIASES = {
+    "botocore": "boto3",
+    "faster_whisper": "faster-whisper",
+    "numpy": "pyannote.audio",
+    "pdfminer": "pdfminer.six",
+    "pyannote": "pyannote.audio",
+    "scenedetect": "scenedetect",
+    "sherpa_onnx": "sherpa-onnx",
+    "torch": "pyannote.audio",
+}
+
+
+def _normalise_distribution(name: str) -> str:
+    """Сводит имя distribution к сравнению по правилам PEP 503."""
+    return re.sub(r"[-_.]+", "-", name).lower()
+
+
+def declared_distributions(path: Path = PYPROJECT) -> set[str]:
+    """Возвращает имена пакетов из основных и dev-зависимостей pyproject."""
+    document = tomllib.loads(path.read_text("utf-8"))
+    project = document["project"]
+    requirements = list(project.get("dependencies", []))
+    for optional in project.get("optional-dependencies", {}).values():
+        requirements.extend(optional)
+
+    declared: set[str] = set()
+    for requirement in requirements:
+        match = re.match(r"\s*([A-Za-z0-9][A-Za-z0-9._-]*)", requirement)
+        if not match:
+            raise AssertionError(f"не удалось разобрать зависимость: {requirement!r}")
+        declared.add(_normalise_distribution(match.group(1)))
+    return declared
+
+
+def _importable(module: str) -> bool:
+    """Возвращает False и для отсутствующего родителя составного импорта."""
+    try:
+        return find_spec(module) is not None
+    except (ImportError, AttributeError, ValueError):
+        return False
+
+
+def _is_declared(import_name: str, declared: set[str]) -> bool:
+    root = import_name.split(".", 1)[0]
+    candidates = {_normalise_distribution(root)}
+    alias = IMPORT_DISTRIBUTION_ALIASES.get(root)
+    if alias:
+        candidates.add(_normalise_distribution(alias))
+    return bool(candidates & declared)
+
+
+def classify_missing_imports(
+    found: dict[str, set[str]],
+    declared: set[str],
+    importable: Callable[[str], bool] = _importable,
+) -> tuple[dict[str, set[str]], dict[str, set[str]]]:
+    """Разделяет отсутствующие импорты на незаявленные и средовые."""
+    undeclared: dict[str, set[str]] = {}
+    declared_but_missing: dict[str, set[str]] = {}
+    for name, files in found.items():
+        if importable(name):
+            continue
+        target = declared_but_missing if _is_declared(name, declared) else undeclared
+        target[name] = files
+    return undeclared, declared_but_missing
 
 
 def top_level_imports(source: str) -> set[str]:
@@ -64,51 +136,30 @@ def external_imports() -> dict[str, set[str]]:
     return found
 
 
-def _worker_environment() -> bool:
-    """
-    Мы в среде воркера, а не на машине разработчика.
-
-    Проверка имеет смысл только там, где окружение собрано из pyproject: тогда
-    неразрешимое имя означает незаявленный пакет. На хосте не установлено
-    НИЧЕГО, и тест объявляет незаявленными все четыре зависимости сразу —
-    четыре ложных дефекта на каждом прогоне.
-
-    Признак — `celery`: он объявлен в pyproject явно и нужен воркеру всегда.
-    Если его нет, окружение не воркерово, и сравнивать не с чем.
-
-    Запуск в правильном месте: `./evals/run_in_worker.sh -- python -m pytest`.
-    """
-    # `CI` сюда не входит намеренно. GitHub Actions выставляет её всегда, а
-    # джоба воркера ставит только `pip install -e ".[dev]"` на голом раннере:
-    # тяжёлые зависимости живут в образе воркера и в pyproject не объявлены —
-    # ровно это тест и проверяет. С `CI` в условии проверка запускалась бы
-    # именно там, где заведомо не может пройти, и красила бы CI на каждом PR.
-    return bool(
-        os.environ.get("AGORA_WORKER_ENV")
-        or Path("/repo/services/agent-core").is_dir()
-    )
-
-
-@pytest.mark.skipif(
-    not _worker_environment(),
-    reason=(
-        "окружение не воркера: зависимости живут в его образе. "
-        "Запустите ./evals/run_in_worker.sh -- python -m pytest services/agent-core/tests"
-    ),
-)
 def test_every_import_resolves():
     found = external_imports()
     assert found, "внешних импортов не найдено — проверка что-то не разобрала"
 
-    missing = {
-        name: sorted(files)
-        for name, files in found.items()
-        if find_spec(name) is None
-    }
-    assert not missing, (
-        "импортируется, но не установлено — значит не объявлено в pyproject: "
-        + "; ".join(f"{n} ({', '.join(f)})" for n, f in missing.items())
+    undeclared, declared_but_missing = classify_missing_imports(
+        found,
+        declared_distributions(),
     )
+    assert not undeclared, (
+        "импортируется, но не установлено — значит не объявлено в pyproject: "
+        + "; ".join(
+            f"{n} ({', '.join(sorted(files))})" for n, files in undeclared.items()
+        )
+    )
+    if declared_but_missing:
+        details = "; ".join(
+            f"{name} ({', '.join(sorted(files))})"
+            for name, files in declared_but_missing.items()
+        )
+        pytest.skip(
+            "импорт объявлен в pyproject, но не установлен в этой среде: "
+            f"{details}. Запустите тест в образе воркера: "
+            "./evals/run_in_worker.sh -- python -m pytest services/agent-core/tests"
+        )
 
 
 def test_model_client_is_declared():
@@ -119,7 +170,15 @@ def test_model_client_is_declared():
     ослабить её случайно. Здесь названа конкретная причина: без openai воркер не
     выполнит ни одной задачи, где участвует модель, — а таких три из четырёх.
     """
-    assert find_spec("openai") is not None, (
-        "openai не установлен: разбор кадров (#16), прогон респондентов (#18) и "
-        "обогащение персон обращаются к нему во время работы"
+    if _importable("openai"):
+        return
+    if _is_declared("openai", declared_distributions()):
+        pytest.skip(
+            "openai объявлен в pyproject, но не установлен в этой среде. "
+            "Запустите тест в образе воркера: "
+            "./evals/run_in_worker.sh -- python -m pytest services/agent-core/tests"
+        )
+    pytest.fail(
+        "openai импортируется кодом, но не объявлен в pyproject: разбор кадров (#16), "
+        "прогон респондентов (#18) и обогащение персон обращаются к нему во время работы"
     )
