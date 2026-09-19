@@ -37,7 +37,7 @@ export type WhisperModel = (typeof WHISPER_MODELS)[number];
  */
 export const WHISPER_LABELS: Record<WhisperModel, { title: string; hint: string }> = {
   "gigaam-v3-e2e-rnnt": {
-    title: "GigaAM v3",
+    title: "parakeet-tdt-0.6b-v2",
     hint: "русская речь: втрое быстрее parakeet и на 60 % больше распознанных слов",
   },
   "large-v3": {
