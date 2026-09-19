@@ -214,3 +214,85 @@ test("открытый вопрос возвращается текстовым 
   assert.deepEqual(chart.texts, ["финал", "музыка"]);
   assert.equal(chart.sample.answered, 2);
 });
+
+// ─── Дефекты, найденные третьим ревью ───────────────────────────────────────
+
+test("размер среза берётся из охвата, а не из числа ответивших", () => {
+  // Воркер пишет два разных числа: `n` — сколько персон ответило, `base` —
+  // сколько персон в срезе. Порог показа осмыслен только для второго: доля по
+  // пяти людям шагает по двадцать пунктов независимо от того, сколько из них
+  // промолчало. Читая `n` как размер среза, отчёт прятал нормальные показатели
+  // среза из двадцати пяти человек, если ответил один.
+  const chart = buildSurveyQuestionChart({
+    id: "q06-affect",
+    number: 6,
+    type: "scale",
+    block: "b1",
+    label: "Насколько проект Вас эмоционально затронул?",
+    total: stats({ n: 30, base: 30, mean: 7.2, topBox: 0.4 }),
+    target: stats({ n: 1, base: 25, mean: 8, topBox: 0.04 }),
+  });
+
+  assert.equal(chart.kind, "scale");
+  if (chart.kind !== "scale") return;
+  assert.equal(
+    chart.target.n,
+    25,
+    "размер среза — это охват среза, а не число ответивших в нём",
+  );
+});
+
+test("числа среза матрицы находятся у своих вариантов, а не только у m-1 и y-1", () => {
+  // Конструктор позволяет завести свою матрицу с любыми идентификаторами.
+  // Поиск по зашитым `m-1` / `y-1` не находил измеренный срез, и посчитанное
+  // воркером значение выглядело на экране неизмеренным.
+  const chart = buildSurveyQuestionChart({
+    id: "custom-matrix",
+    number: 42,
+    type: "matrix_single",
+    block: "b3",
+    label: "Своя матрица оператора",
+    total: stats({
+      n: 2,
+      base: 2,
+      rows: [
+        {
+          id: "r1",
+          themeId: "t1",
+          stats: stats({
+            n: 2,
+            base: 2,
+            options: [
+              { id: "yes", share: 1, count: 2 },
+              { id: "no", share: 0, count: 0 },
+            ],
+          }),
+        },
+      ],
+    }),
+    target: stats({
+      n: 1,
+      base: 2,
+      rows: [
+        {
+          id: "r1",
+          themeId: "t1",
+          stats: stats({
+            n: 1,
+            base: 2,
+            options: [
+              { id: "yes", share: 0.5, count: 1 },
+              { id: "no", share: 0, count: 0 },
+            ],
+          }),
+        },
+      ],
+    }),
+  });
+
+  assert.equal(chart.kind, "matrix");
+  if (chart.kind !== "matrix") return;
+  const row = chart.groups.flatMap((group) => group.rows)[0];
+  assert.equal(row?.target.share, 0.5, "измеренный срез своей матрицы обязан доехать до экрана");
+  assert.equal(row?.target.count, 1);
+});

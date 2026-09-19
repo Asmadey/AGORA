@@ -103,7 +103,16 @@ function sample(stats: SurveyStats): SurveySample {
 }
 
 function targetBase(stats: SurveyStats) {
-  return { n: stats.n, belowThreshold: stats.belowThreshold };
+  // Размер среза — это `base`, а не `n`. Писатель кладёт два разных числа:
+  // `n` — сколько персон ответило, `base` — сколько персон в срезе. Порог
+  // показа осмыслен только для второго: доля по пяти людям шагает по двадцать
+  // пунктов независимо от того, сколько из них промолчало. Читая `n`, отчёт
+  // прятал нормальные показатели среза из двадцати пяти человек, стоило
+  // ответить одному, и сообщал «срез содержит 1 персону» про пятерых.
+  //
+  // `?? stats.n` — для отчётов, снятых до появления `base`: у них другого
+  // числа нет, и вести себя иначе, чем вчера, они не должны.
+  return { n: stats.base ?? stats.n, belowThreshold: stats.belowThreshold };
 }
 
 function groupLabel(id: string): string {
@@ -198,7 +207,16 @@ function matrixChart(question: SurveyQuestionView): SurveyQuestionChart {
   const groups = new Map<string, SurveyMatrixRow[]>();
   for (const row of rows) {
     const id = row.themeId ?? "unknown";
-    const targetPositive = row.options.find((option) => option.id === "m-1" || option.id === "y-1");
+    // Утвердительный вариант строки берётся из ОПРЕДЕЛЕНИЯ вопроса, а не из
+    // зашитых `m-1` / `y-1`. Те идентификаторы принадлежат анкете заказчика, а
+    // конструктор позволяет завести свою матрицу с любыми — и у неё посчитанный
+    // воркером срез не находился вовсе: измеренное значение выглядело на экране
+    // неизмеренным, то есть ровно то различие, которое весь раздел бережёт.
+    const positiveIds = definitionFor(question)?.reporting?.groups?.positive ?? [];
+    const targetPositive =
+      row.options.find((option) => positiveIds.includes(option.id)) ??
+      row.options.find((option) => !option.service) ??
+      row.options[0];
     const matrixRow: SurveyMatrixRow = {
       id: row.id,
       label: row.label,
